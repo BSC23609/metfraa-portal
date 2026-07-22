@@ -1,0 +1,12 @@
+{
+  "builds": [
+    { "src": "index.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "index.py" }
+  ],
+  "crons": [
+    { "path": "/cron/missed-day", "schedule": "30 4 * * *" },
+    { "path": "/cron/daily-task-report", "schedule": "35 4 * * *" }
+  ]
+}
