@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}EHS — Metfraa Portal{% endblock %}
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 pt-8 pb-16">
+  <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
+    <div>
+      <h1 class="display text-2xl font-bold text-metfraa-ink">EHS Portal</h1>
+      <p class="text-sm text-metfraa-gray-500">Safety records, inspections & approvals</p>
+    </div>
+    <div class="flex gap-2">
+      <a href="/ehs/submissions" class="px-3 py-2 text-sm font-semibold rounded-lg ring-1 ring-metfraa-gray-200 bg-white hover:bg-metfraa-gray-50">My Submissions</a>
+      {% if is_approver %}
+      <a href="/ehs/approvals" class="px-3 py-2 text-sm font-semibold rounded-lg bg-metfraa-blue text-white hover:opacity-90">
+        Approvals{% if pending_count %} <span class="ml-1 px-1.5 py-0.5 text-xs bg-white/20 rounded-full">{{ pending_count }}</span>{% endif %}
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <h2 class="text-xs font-bold uppercase tracking-wider text-metfraa-gray-400 mb-3">General EHS Records</h2>
+  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
+    {% for f in forms if f.category == 'general' %}
+    <a href="/ehs/form/{{ f.id }}" class="card-hover bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4 text-center">
+      <div class="text-2xl mb-2">{{ f.icon }}</div>
+      <div class="text-sm font-semibold text-metfraa-ink leading-tight">{{ f.title }}</div>
+      <div class="text-[10px] text-metfraa-gray-400 mt-1">{{ f.code }}</div>
+    </a>
+    {% endfor %}
+  </div>
+
+  <h2 class="text-xs font-bold uppercase tracking-wider text-metfraa-gray-400 mb-3">Equipment Inspections</h2>
+  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-10">
+    {% for f in forms if f.category == 'equipment' %}
+    <a href="/ehs/form/{{ f.id }}" class="card-hover bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4 text-center">
+      <div class="text-2xl mb-2">{{ f.icon }}</div>
+      <div class="text-sm font-semibold text-metfraa-ink leading-tight">{{ f.title }}</div>
+      <div class="text-[10px] text-metfraa-gray-400 mt-1">{{ f.code }} · {{ f.checklist|length }} checks</div>
+    </a>
+    {% endfor %}
+  </div>
+
+  {% if my_recent %}
+  <h2 class="text-xs font-bold uppercase tracking-wider text-metfraa-gray-400 mb-3">My Recent Submissions</h2>
+  <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 divide-y divide-metfraa-gray-100">
+    {% for s in my_recent %}
+    <div class="px-4 py-3 flex items-center justify-between gap-3">
+      <div>
+        <div class="text-sm font-semibold text-metfraa-ink">{{ s.form_title }}</div>
+        <div class="text-xs text-metfraa-gray-400">{{ s.submission_id }} · {{ s.submitted_at_ist }}</div>
+      </div>
+      <span class="px-2 py-0.5 text-xs font-bold rounded-full
+        {% if s.status == 'approved' %}bg-emerald-50 text-emerald-700
+        {% elif s.status == 'rejected' %}bg-red-50 text-red-700
+        {% else %}bg-amber-50 text-amber-700{% endif %}">{{ s.status|capitalize }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

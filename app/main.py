@@ -24,6 +24,7 @@ from .routes import task_reports as task_reports_routes
 from .routes import monthly_kpi as monthly_kpi_routes
 from .routes import site_visits as site_visits_routes
 from .routes import cron as cron_routes
+from .routes import ehs as ehs_routes
 from .services.scheduler import start_scheduler
 from .startup_migrations import run_startup_migrations
 
@@ -93,6 +94,7 @@ app.include_router(task_reports_routes.router)
 app.include_router(monthly_kpi_routes.router)
 app.include_router(site_visits_routes.router)
 app.include_router(cron_routes.router)
+app.include_router(ehs_routes.router)
 
 
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
@@ -150,7 +152,19 @@ def root(
         except Exception:
             pending_unlocks = pending_resets = kpi_submitted = kpi_total = draft_visits = 0
 
+        try:
+            from .models import EHSSubmission
+
+            ehs_pending = (
+                db.query(EHSSubmission)
+                .filter(EHSSubmission.status == "pending")
+                .count()
+            )
+        except Exception:
+            ehs_pending = 0
+
         admin_stats = {
+            "ehs_pending": ehs_pending,
             "pending_unlocks": pending_unlocks,
             "pending_resets": pending_resets,
             "kpi_submitted": kpi_submitted,
@@ -185,24 +199,6 @@ def expense_stub(
     )
 
 
-@app.get("/ehs/", response_class=HTMLResponse)
-@app.get("/ehs", response_class=HTMLResponse, include_in_schema=False)
-def ehs_stub(
-    request: Request,
-    user: Employee | None = Depends(get_optional_user),
-):
-    if not user:
-        return RedirectResponse("/auth/login", status_code=303)
-    return templates.TemplateResponse(
-        request,
-        "coming_soon.html",
-        {
-            "user": user,
-            "module_name": "EHS Portal",
-            "module_desc": "Safety inspections, incident reports, toolbox talks and all EHS forms — with photos and approvals.",
-            "phase": "Phase 1",
-        },
-    )
 
 
 @app.get("/health")

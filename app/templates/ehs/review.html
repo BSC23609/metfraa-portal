@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Review {{ sub.submission_id }} — EHS{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 sm:px-6 pt-8 pb-20">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/ehs/approvals" class="text-metfraa-gray-400 hover:text-metfraa-ink">←</a>
+    <div>
+      <h1 class="display text-xl font-bold text-metfraa-ink">{{ form.icon }} {{ form.title }}</h1>
+      <p class="text-xs text-metfraa-gray-400">{{ sub.submission_id }} · by {{ sub.submitted_by_name }} · {{ sub.submitted_at_ist }}</p>
+    </div>
+  </div>
+
+  <div class="space-y-3 mb-6">
+    {% for f in form.fields %}
+    <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4">
+      <div class="text-xs font-bold uppercase tracking-wider text-metfraa-gray-400 mb-1">{{ f.label }}</div>
+      {% if f.type == 'photo' %}
+        <div class="flex flex-wrap gap-2">
+          {% for p in (sub.photos or {}).get('fields', {}).get(f.key, []) %}
+          <img src="/ehs/api/photo?path={{ p.path | urlencode }}" class="h-28 rounded-lg ring-1 ring-metfraa-gray-200 object-cover" loading="lazy">
+          {% else %}<span class="text-sm text-metfraa-gray-400">No photo</span>{% endfor %}
+        </div>
+      {% else %}
+        <input data-field="{{ f.key }}" value="{{ (sub.fields or {}).get(f.key, '') }}" class="ehs-edit w-full rounded-lg border-metfraa-gray-200 text-sm">
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if form.checklist %}
+    <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4">
+      <div class="text-sm font-semibold text-metfraa-ink mb-3">Checklist</div>
+      <div class="space-y-2">
+        {% for item in form.checklist %}
+        {% set answer = (sub.checklist or [])[loop.index0] if loop.index0 < (sub.checklist or [])|length else {} %}
+        <div class="border border-metfraa-gray-100 rounded-lg p-3">
+          <div class="text-sm text-metfraa-ink mb-2"><span class="font-bold text-metfraa-gray-400">{{ loop.index }}.</span> {{ item }}</div>
+          <div class="flex flex-wrap items-center gap-2">
+            <select data-cl-result="{{ loop.index0 }}" class="rounded-md border-metfraa-gray-200 text-xs py-1">
+              {% for opt in ['', 'OK', 'Not OK', 'N/A'] %}
+              <option value="{{ opt }}" {% if (answer or {}).get('result') == opt %}selected{% endif %}>{{ opt or '—' }}</option>
+              {% endfor %}
+            </select>
+            <input data-cl-remarks="{{ loop.index0 }}" value="{{ (answer or {}).get('remarks', '') }}" placeholder="Remarks" class="flex-1 min-w-[120px] rounded-md border-metfraa-gray-200 text-xs py-1">
+          </div>
+          {% set clphotos = (sub.photos or {}).get('checklist', {}).get(loop.index0|string, []) or (sub.photos or {}).get('checklist', {}).get(loop.index0, []) %}
+          {% if clphotos %}
+          <div class="flex gap-2 mt-2">
+            {% for p in clphotos %}<img src="/ehs/api/photo?path={{ p.path | urlencode }}" class="h-20 rounded-md ring-1 ring-metfraa-gray-200 object-cover" loading="lazy">{% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div id="review-msg" class="hidden rounded-lg p-3 text-sm mb-3"></div>
+  <div class="flex gap-3">
+    <button onclick="decide('approve')" id="btn-approve" class="flex-1 py-3 rounded-xl bg-emerald-600 text-white font-bold hover:opacity-90 disabled:opacity-50">Approve</button>
+    <button onclick="promptReject()" id="btn-reject" class="flex-1 py-3 rounded-xl bg-red-600 text-white font-bold hover:opacity-90 disabled:opacity-50">Reject</button>
+  </div>
+  <p class="text-xs text-metfraa-gray-400 mt-3">Edits made above are saved on approval and recorded in the audit trail. Approval generates the PDF and appends to the master log.</p>
+</div>
+
+<script>
+function collect() {
+  const fields = {}, checklist = [];
+  document.querySelectorAll('.ehs-edit').forEach(el => fields[el.dataset.field] = el.value);
+  const n = {{ form.checklist|length if form.checklist else 0 }};
+  for (let i = 0; i < n; i++) {
+    checklist.push({
+      result: (document.querySelector(`[data-cl-result="${i}"]`) || {}).value || '',
+      remarks: (document.querySelector(`[data-cl-remarks="${i}"]`) || {}).value || '',
+    });
+  }
+  return { fields, checklist };
+}
+async function decide(action, reason) {
+  const msg = document.getElementById('review-msg');
+  document.getElementById('btn-approve').disabled = true;
+  document.getElementById('btn-reject').disabled = true;
+  const body = action === 'approve' ? collect() : { reason };
+  try {
+    const r = await fetch(`/ehs/api/approvals/{{ sub.submission_id }}/${action}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    msg.classList.remove('hidden');
+    if (r.ok && j.ok) {
+      msg.className = 'rounded-lg p-3 text-sm mb-3 bg-emerald-50 text-emerald-800';
+      msg.textContent = action === 'approve' ? '✅ Approved — PDF generated & logged' : 'Rejected & logged';
+      setTimeout(() => window.location = '/ehs/approvals', 1500);
+    } else {
+      msg.className = 'rounded-lg p-3 text-sm mb-3 bg-red-50 text-red-800';
+      msg.textContent = j.detail || 'Action failed';
+      document.getElementById('btn-approve').disabled = false;
+      document.getElementById('btn-reject').disabled = false;
+    }
+  } catch (e) {
+    msg.classList.remove('hidden');
+    msg.className = 'rounded-lg p-3 text-sm mb-3 bg-red-50 text-red-800';
+    msg.textContent = 'Network error';
+    document.getElementById('btn-approve').disabled = false;
+    document.getElementById('btn-reject').disabled = false;
+  }
+}
+function promptReject() {
+  const reason = prompt('Rejection reason (required):');
+  if (reason && reason.trim()) decide('reject', reason.trim());
+}
+</script>
+{% endblock %}

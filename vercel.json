@@ -1,9 +1,13 @@
 {
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
-  ],
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    { "path": "/cron/missed-day", "schedule": "30 4 * * *" },
-    { "path": "/cron/daily-task-report", "schedule": "35 4 * * *" }
+    {
+      "path": "/cron/missed-day",
+      "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/cron/daily-task-report",
+      "schedule": "35 4 * * *"
+    }
   ]
 }

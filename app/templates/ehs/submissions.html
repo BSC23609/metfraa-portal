@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}EHS Submissions — Metfraa Portal{% endblock %}
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 pt-8 pb-16">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="display text-2xl font-bold text-metfraa-ink">{% if is_approver %}All Submissions{% else %}My Submissions{% endif %}</h1>
+      <p class="text-sm text-metfraa-gray-500">Latest 200</p>
+    </div>
+    <a href="/ehs/" class="px-3 py-2 text-sm font-semibold rounded-lg ring-1 ring-metfraa-gray-200 bg-white hover:bg-metfraa-gray-50">← EHS Home</a>
+  </div>
+  <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-xs uppercase tracking-wider text-metfraa-gray-400 border-b border-metfraa-gray-100">
+          <th class="px-4 py-3">ID</th><th class="px-4 py-3">Form</th>
+          {% if is_approver %}<th class="px-4 py-3">By</th>{% endif %}
+          <th class="px-4 py-3">Submitted</th><th class="px-4 py-3">Status</th><th class="px-4 py-3">PDF</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-metfraa-gray-100">
+        {% for s in subs %}
+        <tr>
+          <td class="px-4 py-3 font-mono text-xs">{{ s.submission_id }}</td>
+          <td class="px-4 py-3 font-semibold text-metfraa-ink">{{ s.form_title }}</td>
+          {% if is_approver %}<td class="px-4 py-3">{{ s.submitted_by_name }}</td>{% endif %}
+          <td class="px-4 py-3 text-metfraa-gray-500">{{ s.submitted_at_ist }}</td>
+          <td class="px-4 py-3">
+            <span class="px-2 py-0.5 text-xs font-bold rounded-full
+              {% if s.status == 'approved' %}bg-emerald-50 text-emerald-700
+              {% elif s.status == 'rejected' %}bg-red-50 text-red-700
+              {% else %}bg-amber-50 text-amber-700{% endif %}">{{ s.status|capitalize }}</span>
+            {% if s.status == 'rejected' and s.reject_reason %}<div class="text-xs text-metfraa-gray-400 mt-1">{{ s.reject_reason }}</div>{% endif %}
+          </td>
+          <td class="px-4 py-3">{% if s.pdf_web_url %}<a class="text-metfraa-blue font-semibold hover:underline" target="_blank" href="{{ s.pdf_web_url }}">Open</a>{% else %}—{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="px-4 py-10 text-center text-metfraa-gray-400">No submissions yet</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

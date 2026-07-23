@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}EHS Approvals — Metfraa Portal{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 sm:px-6 pt-8 pb-16">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="display text-2xl font-bold text-metfraa-ink">Pending Approvals</h1>
+      <p class="text-sm text-metfraa-gray-500">{{ subs|length }} waiting for review</p>
+    </div>
+    <a href="/ehs/" class="px-3 py-2 text-sm font-semibold rounded-lg ring-1 ring-metfraa-gray-200 bg-white hover:bg-metfraa-gray-50">← EHS Home</a>
+  </div>
+  <div class="space-y-3">
+    {% for s in subs %}
+    <a href="/ehs/approvals/{{ s.submission_id }}" class="card-hover block bg-white rounded-xl ring-1 ring-metfraa-gray-200 px-5 py-4">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <div class="font-semibold text-metfraa-ink">{{ s.form_title }}</div>
+          <div class="text-xs text-metfraa-gray-400 mt-0.5">{{ s.submission_id }} · by {{ s.submitted_by_name }} · {{ s.submitted_at_ist }}</div>
+        </div>
+        <span class="text-metfraa-blue font-semibold text-sm">Review →</span>
+      </div>
+    </a>
+    {% else %}
+    <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 px-5 py-12 text-center text-metfraa-gray-400">
+      🎉 Nothing pending — all clear
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

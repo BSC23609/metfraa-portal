@@ -106,3 +106,83 @@ def get_share_link(item_id: str, link_type: str = "view") -> str | None:
         if r.status_code >= 400:
             return None
         return r.json().get("link", {}).get("webUrl")
+
+
+# ============================================================
+# Path-based helpers added for the EHS module (Phase 1)
+# ============================================================
+
+def _item_by_path_url(path: str) -> str:
+    return f"{_user_drive_root()}/root:/{path}"
+
+
+def upload_to_path(content: bytes, full_path: str, content_type: str = "application/octet-stream") -> dict:
+    """Upload bytes to an exact OneDrive path (folders auto-created). ≤4 MB."""
+    folder, _, _name = full_path.rpartition("/")
+    if folder:
+        ensure_folder(folder)
+    url = f"{_item_by_path_url(full_path)}:/content"
+    with httpx.Client(timeout=60.0) as client:
+        r = client.put(url, headers={**_headers(), "Content-Type": content_type}, content=content)
+        r.raise_for_status()
+        return r.json()
+
+
+def download_from_path(full_path: str) -> bytes | None:
+    """Download a file's bytes by path. Returns None if it doesn't exist."""
+    url = f"{_item_by_path_url(full_path)}:/content"
+    with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+        r = client.get(url, headers=_headers())
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.content
+
+
+def get_item_by_path(full_path: str) -> dict | None:
+    """Item metadata (id, webUrl, ...) by path, or None if missing."""
+    with httpx.Client(timeout=30.0) as client:
+        r = client.get(_item_by_path_url(full_path), headers=_headers())
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json()
+
+
+def delete_by_path(full_path: str) -> bool:
+    """Delete a file or folder by path. True if deleted, False if it wasn't there."""
+    with httpx.Client(timeout=30.0) as client:
+        r = client.delete(_item_by_path_url(full_path), headers=_headers())
+        if r.status_code == 404:
+            return False
+        r.raise_for_status()
+        return True
+
+
+def move_item(src_path: str, dest_folder_path: str, new_name: str | None = None) -> dict | None:
+    """Move a file to another folder (same drive). Returns new item or None if src missing."""
+    src = get_item_by_path(src_path)
+    if not src:
+        return None
+    dest = ensure_folder(dest_folder_path)
+    if not dest:
+        raise RuntimeError(f"could not ensure folder {dest_folder_path}")
+    body: dict = {"parentReference": {"id": dest["id"]}}
+    if new_name:
+        body["name"] = new_name
+    with httpx.Client(timeout=30.0) as client:
+        r = client.patch(
+            f"{_user_drive_root()}/items/{src['id']}", headers=_headers(), json=body
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+def list_children_by_path(full_path: str) -> list[dict]:
+    """List items in a folder by path ([] if the folder doesn't exist)."""
+    with httpx.Client(timeout=30.0) as client:
+        r = client.get(f"{_item_by_path_url(full_path)}:/children", headers=_headers(), params={"$top": 200})
+        if r.status_code == 404:
+            return []
+        r.raise_for_status()
+        return r.json().get("value", [])

@@ -5,7 +5,7 @@ One app, one login, one home page for Metfraa Steel Buildings:
 | Module | Status | Routes |
 |---|---|---|
 | **KPI Tracker** | ✅ Live (full parity with kpis.metfraa.com) | `/dashboard`, `/task-reports/`, `/monthly-kpi/`, `/site-visits/`, `/admin`, `/reports/` |
-| **EHS** | 🚧 Phase 1 | `/ehs/` (coming-soon stub) |
+| **EHS** | ✅ Live (Phase 1) | `/ehs/` — 21 forms, approvals, PDFs, master logs |
 | **Expense** | 🚧 Phase 2 | `/expense/` (coming-soon stub) |
 
 FastAPI served as a single Vercel serverless function (`index.py`), data in the
@@ -82,14 +82,28 @@ python -m uvicorn app.main:app --reload
 Locally the app behaves like a normal server (APScheduler runs unless
 `DISABLE_SCHEDULER=true`; SQLite works via `DATABASE_URL=sqlite:///./data/dev.db`).
 
-## Roadmap
+## EHS module (Phase 1) — what shipped
 
-- **Phase 1** — EHS module: port 21+ form types from Node `forms-config.js` to
-  `app/ehs/forms.py`; tables `ehs_submissions`, `ehs_photos`, `ehs_approvals`;
-  reuse OneDrive service for photos; back-fill OneDrive JSON history.
+- All 21 forms ported 1:1 (6 general + 15 equipment checklists) → `app/ehs/forms.py`
+  is the single source of truth, same as `forms-config.js` was.
+- DB (`ehs_submissions`, `ehs_projects`) is the source of truth for workflow state.
+- OneDrive keeps the exact old layout under `Metfraa-EHS/`: pending photos in
+  `_Pending/…`, approved photos move to `<form>/Reports/YYYY/MM/Photos/<id>/`,
+  approval PDF next to them, and each form's `_MasterLog.xlsx` keeps growing
+  with identical columns — people using the folders directly see no change.
+- Approvers = `is_admin` employees + emails in `EHS_APPROVER_EMAILS` env var
+  (defaults to varadharaj@ / nirmal@ from the old config). First approver wins;
+  approver edits are audit-trailed in the PDF + log.
+- Projects dropdown lives in `ehs_projects` (admin-managed via `/ehs/api/projects`),
+  seeded with the four current defaults on first use.
+
+**⚠️ Deploy note for this release:** two new tables must be created once.
+Set `INIT_DB=true` on Vercel → redeploy → open `/health` → remove the var →
+redeploy. `create_all` only adds missing tables; existing KPI tables are untouched.
+
+## Roadmap
 - **Phase 2** — Expense module: Metfraa-only forms (Local, Cab, Accommodation,
   Outstation, DTR, Advance, Payments); tables `expense_submissions`,
   `expense_attachments`, `expense_projects`, `expense_monthly_payments`.
-- **Phase 3** — Data migration: live SQLite (bsg-portal) → Neon; EHS OneDrive JSONs → Neon.
+- **Phase 3** — Data migration: live SQLite (bsg-portal) → Neon; EHS OneDrive JSON history → `ehs_submissions` (shape matches 1:1).
 - **Phase 4** — Cross-module dashboard, redirects, kill old services.
-"# metfraa-portal" 

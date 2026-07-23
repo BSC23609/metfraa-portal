@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}{{ form.title }} — EHS{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 sm:px-6 pt-8 pb-20">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/ehs/" class="text-metfraa-gray-400 hover:text-metfraa-ink">←</a>
+    <div>
+      <h1 class="display text-xl font-bold text-metfraa-ink">{{ form.icon }} {{ form.title }}</h1>
+      <p class="text-xs text-metfraa-gray-400">{{ form.code }} · submitted for approval on save</p>
+    </div>
+  </div>
+
+  <form id="ehs-form" class="space-y-4" onsubmit="return false;">
+    {% for f in form.fields %}
+    <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4">
+      <label class="block text-sm font-semibold text-metfraa-ink mb-2">
+        {{ f.label }}{% if f.required %}<span class="text-red-500"> *</span>{% endif %}
+      </label>
+      {% if f.type == 'project' %}
+        <select name="f:{{ f.key }}" class="w-full rounded-lg border-metfraa-gray-300 text-sm" {% if f.required %}required{% endif %}>
+          <option value="">Select project…</option>
+          {% for p in projects %}<option>{{ p }}</option>{% endfor %}
+        </select>
+      {% elif f.type == 'inspector' %}
+        <input list="inspectors-list" name="f:{{ f.key }}" class="w-full rounded-lg border-metfraa-gray-300 text-sm" placeholder="Select or type a name" {% if f.required %}required{% endif %}>
+      {% elif f.type == 'select' %}
+        <select name="f:{{ f.key }}" class="w-full rounded-lg border-metfraa-gray-300 text-sm" {% if f.required %}required{% endif %}>
+          <option value="">Select…</option>
+          {% for o in f.options %}<option>{{ o }}</option>{% endfor %}
+        </select>
+      {% elif f.type == 'radio' %}
+        <div class="flex flex-wrap gap-2">
+          {% for o in f.options %}
+          <label class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-200 text-sm cursor-pointer has-[:checked]:bg-metfraa-blue/10 has-[:checked]:ring-metfraa-blue">
+            <input type="radio" name="f:{{ f.key }}" value="{{ o }}" {% if f.required %}required{% endif %}> {{ o }}
+          </label>
+          {% endfor %}
+        </div>
+      {% elif f.type == 'textarea' %}
+        <textarea name="f:{{ f.key }}" rows="3" class="w-full rounded-lg border-metfraa-gray-300 text-sm" {% if f.required %}required{% endif %}></textarea>
+      {% elif f.type == 'photo' %}
+        <input type="file" name="photo:{{ f.key }}" accept="image/*" capture="environment" {% if f.multiple %}multiple{% endif %} {% if f.required %}required{% endif %}
+               class="block w-full text-sm text-metfraa-gray-500 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-metfraa-blue/10 file:text-metfraa-blue file:font-semibold">
+      {% elif f.type == 'date' %}
+        <input type="date" name="f:{{ f.key }}" value="{% if f.autofill == 'today' %}{{ today }}{% endif %}" class="w-full rounded-lg border-metfraa-gray-300 text-sm" {% if f.required %}required{% endif %}>
+      {% elif f.type == 'time' %}
+        <input type="time" name="f:{{ f.key }}" value="{% if f.autofill == 'now' %}{{ now_hm }}{% endif %}" class="w-full rounded-lg border-metfraa-gray-300 text-sm" {% if f.required %}required{% endif %}>
+      {% elif f.type == 'number' %}
+        <input type="number" name="f:{{ f.key }}" {% if f.min is defined and f.min is not none %}min="{{ f.min }}"{% endif %} class="w-full rounded-lg border-metfraa-gray-300 text-sm" {% if f.required %}required{% endif %}>
+      {% else %}
+        <input type="{{ 'tel' if f.type == 'tel' else 'text' }}" name="f:{{ f.key }}" {% if f.pattern %}pattern="{{ f.pattern }}"{% endif %} class="w-full rounded-lg border-metfraa-gray-300 text-sm" {% if f.required %}required{% endif %}>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if form.checklist %}
+    <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4">
+      <div class="text-sm font-semibold text-metfraa-ink mb-3">Inspection Checklist <span class="text-red-500">*</span></div>
+      <div class="space-y-3">
+        {% for item in form.checklist %}
+        <div class="border border-metfraa-gray-100 rounded-lg p-3">
+          <div class="text-sm text-metfraa-ink mb-2"><span class="font-bold text-metfraa-gray-400">{{ loop.index }}.</span> {{ item }}</div>
+          <div class="flex flex-wrap items-center gap-2">
+            {% for opt in ['OK', 'Not OK', 'N/A'] %}
+            <label class="flex items-center gap-1 px-2.5 py-1 rounded-md ring-1 ring-metfraa-gray-200 text-xs cursor-pointer has-[:checked]:ring-metfraa-blue has-[:checked]:bg-metfraa-blue/10">
+              <input type="radio" name="cl:{{ loop.index0 }}" value="{{ opt }}" required> {{ opt }}
+            </label>
+            {% endfor %}
+            <input type="text" name="clr:{{ loop.index0 }}" placeholder="Remarks" class="flex-1 min-w-[120px] rounded-md border-metfraa-gray-200 text-xs py-1">
+            <label class="text-xs text-metfraa-blue font-semibold cursor-pointer">📷<input type="file" name="photo:checklist:{{ loop.index0 }}" accept="image/*" capture="environment" class="hidden" onchange="this.parentElement.classList.add('opacity-50'); this.parentElement.append(' ✓')"></label>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <datalist id="inspectors-list">{% for i in inspectors %}<option>{{ i }}</option>{% endfor %}</datalist>
+
+    <div id="submit-msg" class="hidden rounded-lg p-3 text-sm"></div>
+    <button id="submit-btn" onclick="submitEhsForm()" class="w-full py-3 rounded-xl bg-metfraa-blue text-white font-bold hover:opacity-90 disabled:opacity-50">
+      Submit for Approval
+    </button>
+  </form>
+</div>
+
+<script>
+async function submitEhsForm() {
+  const formEl = document.getElementById('ehs-form');
+  if (!formEl.reportValidity()) return;
+  const btn = document.getElementById('submit-btn');
+  const msg = document.getElementById('submit-msg');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+
+  const fields = {}, checklist = [];
+  const fd = new FormData();
+  const els = formEl.querySelectorAll('[name]');
+  const clMap = {};
+  for (const el of els) {
+    const n = el.name;
+    if (n.startsWith('f:')) {
+      const key = n.slice(2);
+      if (el.type === 'radio') { if (el.checked) fields[key] = el.value; }
+      else fields[key] = el.value;
+    } else if (n.startsWith('cl:')) {
+      if (el.checked) (clMap[+n.slice(3)] = clMap[+n.slice(3)] || {}).result = el.value;
+    } else if (n.startsWith('clr:')) {
+      (clMap[+n.slice(4)] = clMap[+n.slice(4)] || {}).remarks = el.value;
+    } else if (n.startsWith('photo:') && el.files) {
+      for (const f of el.files) fd.append(n, f, f.name);
+    }
+  }
+  const clCount = {{ form.checklist|length if form.checklist else 0 }};
+  for (let i = 0; i < clCount; i++) checklist.push(clMap[i] || {});
+
+  fd.append('data', JSON.stringify({ fields, checklist }));
+  try {
+    const r = await fetch('/ehs/api/forms/{{ form.id }}', { method: 'POST', body: fd });
+    const j = await r.json();
+    msg.classList.remove('hidden');
+    if (r.ok && j.ok) {
+      msg.className = 'rounded-lg p-3 text-sm bg-emerald-50 text-emerald-800';
+      msg.textContent = `✅ ${j.message} (${j.submissionId})`;
+      btn.textContent = 'Submitted ✓';
+      setTimeout(() => window.location = '/ehs/', 1800);
+    } else {
+      msg.className = 'rounded-lg p-3 text-sm bg-red-50 text-red-800';
+      msg.textContent = j.detail || 'Submission failed';
+      btn.disabled = false; btn.textContent = 'Submit for Approval';
+    }
+  } catch (e) {
+    msg.classList.remove('hidden');
+    msg.className = 'rounded-lg p-3 text-sm bg-red-50 text-red-800';
+    msg.textContent = 'Network error — please retry';
+    btn.disabled = false; btn.textContent = 'Submit for Approval';
+  }
+}
+</script>
+{% endblock %}

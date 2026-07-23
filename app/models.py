@@ -299,3 +299,66 @@ class SiteVisitPhoto(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     visit = relationship("SiteVisit", back_populates="photos")
+
+
+# ============================================================
+# EHS module (Phase 1)
+# ------------------------------------------------------------
+# DB is the source of truth for submissions and workflow state.
+# Photos, approval PDFs and per-form _MasterLog.xlsx live in
+# OneDrive under Metfraa-EHS/ using the same folder layout the
+# old Node app used, so nothing moves for the people using the
+# OneDrive folders directly.
+# ============================================================
+
+from sqlalchemy import JSON  # noqa: E402
+
+
+class EHSProject(Base):
+    """Master project list for EHS form dropdowns (was _config/projects.json)."""
+
+    __tablename__ = "ehs_projects"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(200), nullable=False, unique=True)
+    active = Column(Boolean, default=True, nullable=False)
+    aliases = Column(JSON, default=list)  # legacy free-text names that map here
+    created_by = Column(String(200), default="system")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class EHSSubmission(Base):
+    """One submitted EHS form of any type. Fields/checklist stored as JSON
+    in the same shape the old app used, which makes the Phase 3 OneDrive
+    JSON back-fill a straight import."""
+
+    __tablename__ = "ehs_submissions"
+
+    id = Column(Integer, primary_key=True)
+    submission_id = Column(String(64), unique=True, nullable=False, index=True)  # e.g. TBT-20260723-101530-4821
+    form_id = Column(String(64), nullable=False, index=True)     # e.g. "toolbox"
+    form_code = Column(String(16), nullable=False)               # e.g. "TBT"
+    form_title = Column(String(200), nullable=False)
+
+    submitted_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    submitted_by_name = Column(String(200), nullable=False)
+    submitted_by_email = Column(String(200), nullable=True)
+    submitted_at_ist = Column(String(32), nullable=False)        # "YYYY-MM-DD HH:MM:SS" IST
+
+    fields = Column(JSON, default=dict)       # {field_key: value}
+    checklist = Column(JSON, default=list)    # [{result, remarks}, ...] aligned to form checklist
+    photos = Column(JSON, default=dict)       # {"fields": {key: [{filename, path, webUrl}]}, "checklist": {idx: [...]}}
+
+    status = Column(String(16), default="pending", nullable=False, index=True)  # pending/approved/rejected
+
+    # Approval workflow
+    reviewed_by_name = Column(String(200), nullable=True)
+    reviewed_by_email = Column(String(200), nullable=True)
+    reviewed_at_ist = Column(String(32), nullable=True)
+    edits_made = Column(Text, nullable=True)          # audit trail "field: 'old' → 'new'; ..."
+    reject_reason = Column(Text, nullable=True)
+    pdf_web_url = Column(Text, nullable=True)         # link to the approval PDF in OneDrive
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    submitted_by = relationship("Employee", foreign_keys=[submitted_by_id])
