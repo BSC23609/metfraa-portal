@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ module_name }} — Coming soon{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto px-4 pt-20 text-center">
+  <div class="w-16 h-16 mx-auto rounded-2xl bg-metfraa-gray-100 flex items-center justify-center mb-6">
+    <svg class="w-8 h-8 text-metfraa-gray-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085"/>
+    </svg>
+  </div>
+  <h1 class="display text-2xl font-bold text-metfraa-ink">{{ module_name }}</h1>
+  <p class="text-metfraa-gray-500 mt-3">{{ module_desc }}</p>
+  <div class="inline-block mt-5 px-3 py-1 text-xs font-bold uppercase tracking-wider bg-metfraa-blue/10 text-metfraa-blue rounded-full">
+    Launching in {{ phase }}
+  </div>
+  <div class="mt-10">
+    <a href="/" class="inline-flex items-center gap-2 text-sm font-semibold text-metfraa-blue hover:underline">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12l7.5-7.5M3 12h18"/></svg>
+      Back to home
+    </a>
+  </div>
+</div>
+{% endblock %}

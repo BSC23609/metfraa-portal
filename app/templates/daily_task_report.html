@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Daily Task Report — Metfraa KPI Tracker</title>
+  <link rel="icon" href="/static/img/favicon.png" type="image/png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'metfraa-black': '#000',
+            'metfraa-ink': '#111827',
+            'metfraa-blue': '#1E3A8A',
+            'metfraa-blue-dark': '#152A66',
+            'metfraa-gray-50': '#F9FAFB',
+            'metfraa-gray-100': '#F3F4F6',
+            'metfraa-gray-200': '#E5E7EB',
+            'metfraa-gray-300': '#D1D5DB',
+            'metfraa-gray-400': '#9CA3AF',
+            'metfraa-gray-500': '#6B7280',
+            'metfraa-gray-600': '#4B5563',
+            'metfraa-gray-700': '#374151',
+          },
+          fontFamily: {
+            'display': ['Inter', 'system-ui', 'sans-serif'],
+            'mono': ['ui-monospace', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="min-h-screen bg-metfraa-gray-50">
+
+<!-- Top bar -->
+<nav class="bg-metfraa-black text-white border-b-2 border-metfraa-blue">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+    <a href="/dashboard" class="flex items-center gap-3">
+      <img src="/static/img/metfraa_logo.png" alt="Metfraa" class="h-8" onerror="this.style.display='none'">
+      <span class="text-sm font-semibold">|</span>
+      <span class="text-sm font-semibold">KPI Tracker</span>
+    </a>
+    <div class="flex items-center gap-4">
+      <a href="/dashboard" class="text-xs sm:text-sm hover:text-metfraa-blue">Dashboard</a>
+      <a href="/monthly-kpi/" class="text-xs sm:text-sm hover:text-metfraa-blue">Monthly KPI</a>
+      <a href="/site-visits/" class="text-xs sm:text-sm hover:text-metfraa-blue">Site Visits</a>
+      <span class="text-xs sm:text-sm text-metfraa-gray-400">{{ user.employee_code }} — {{ user.name.split(' ')[0] }}</span>
+      <a href="/auth/logout" class="text-xs sm:text-sm text-metfraa-gray-400 hover:text-white">Sign out</a>
+    </div>
+  </div>
+</nav>
+
+<main x-data="taskReport()" x-init="init()" class="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+
+  <!-- Toast area -->
+  <div x-show="toast.show" x-cloak
+       :class="toast.type === 'error' ? 'bg-red-500' : 'bg-emerald-600'"
+       class="fixed top-4 right-4 z-50 px-4 py-2.5 rounded-lg shadow-lg text-white text-sm max-w-sm"
+       x-transition>
+    <span x-text="toast.msg"></span>
+  </div>
+
+  <!-- Header -->
+  <div class="flex items-start justify-between mb-6">
+    <div>
+      <div class="text-xs font-semibold uppercase tracking-widest text-metfraa-blue">Daily Task Report</div>
+      <h1 class="display text-3xl font-bold text-metfraa-black mt-1">What did you work on?</h1>
+      <p class="text-sm text-metfraa-gray-500 mt-1">List today's tasks, mark each Completed or Pending, and note tomorrow's plan.</p>
+    </div>
+  </div>
+
+  <!-- Date picker + status bar -->
+  <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4 mb-4 flex flex-wrap items-center gap-3">
+    <div>
+      <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Report date</label>
+      <input type="date"
+             x-model="reportDate"
+             :max="today"
+             @change="loadReport()"
+             class="text-sm font-mono rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue px-2 py-1.5" />
+    </div>
+    <button @click="reportDate = today; loadReport()"
+            class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark px-2 py-1.5">
+      Today
+    </button>
+
+    <div class="ml-auto flex items-center gap-2">
+      <template x-if="loading">
+        <span class="text-xs text-metfraa-gray-500">Loading...</span>
+      </template>
+      <template x-if="!loading && report.editable">
+        <span class="text-xs font-semibold px-2 py-1 rounded bg-emerald-100 text-emerald-800">EDITABLE</span>
+      </template>
+      <template x-if="!loading && !report.editable && report.pending_unlock">
+        <span class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">UNLOCK PENDING</span>
+      </template>
+      <template x-if="!loading && !report.editable && !report.pending_unlock">
+        <span class="text-xs font-semibold px-2 py-1 rounded bg-metfraa-gray-100 text-metfraa-gray-700">LOCKED</span>
+      </template>
+    </div>
+  </div>
+
+  <!-- Locked banner + Request unlock -->
+  <template x-if="!report.editable && !report.pending_unlock && !loading">
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+      <div class="flex items-start gap-3">
+        <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+        <div class="flex-1">
+          <div class="text-sm font-semibold text-amber-900">This report is locked</div>
+          <p class="text-xs text-amber-800 mt-1">Reports lock at 9:45 AM the following day. To make changes, request an unlock from admin.</p>
+        </div>
+        <button @click="openUnlockModal()"
+                class="text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded shadow">
+          Request unlock
+        </button>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="!report.editable && report.pending_unlock">
+    <div class="bg-metfraa-gray-100 border border-metfraa-gray-200 rounded-lg p-4 mb-4">
+      <div class="flex items-center gap-3">
+        <svg class="w-5 h-5 text-metfraa-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <div class="text-sm text-metfraa-gray-700">Your unlock request is pending admin approval. You'll be able to edit once approved.</div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Tasks table -->
+  <div class="bg-white rounded-xl border border-metfraa-gray-200 overflow-hidden mb-4">
+    <div class="p-4 border-b border-metfraa-gray-200 flex items-center justify-between">
+      <div>
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Tasks</div>
+        <div class="text-sm font-semibold text-metfraa-black mt-0.5" x-text="items.length + (items.length === 1 ? ' task' : ' tasks')"></div>
+      </div>
+      <button @click="addRow()"
+              x-show="report.editable"
+              class="text-sm font-semibold bg-metfraa-blue hover:bg-metfraa-blue-dark text-white px-3 py-1.5 rounded shadow flex items-center gap-1">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Add task
+      </button>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-metfraa-gray-50 text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500">
+          <tr>
+            <th class="px-3 py-2 text-left w-10">#</th>
+            <th class="px-3 py-2 text-left">Task Description</th>
+            <th class="px-3 py-2 text-left w-32">Status</th>
+            <th class="px-3 py-2 text-left w-40">Project / Client</th>
+            <th class="px-3 py-2 text-left w-56">Remarks</th>
+            <th class="px-3 py-2 w-10"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(item, idx) in items" :key="idx">
+            <tr class="border-t border-metfraa-gray-100 align-top">
+              <td class="px-3 py-2 text-metfraa-gray-500 mono" x-text="idx + 1"></td>
+              <td class="px-3 py-2">
+                <textarea x-model="item.task_description"
+                          :disabled="!report.editable"
+                          rows="1"
+                          placeholder="What did you do?"
+                          class="w-full text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50 disabled:text-metfraa-gray-600 resize-y min-h-[36px]"></textarea>
+              </td>
+              <td class="px-3 py-2">
+                <select x-model="item.status" :disabled="!report.editable"
+                        :class="item.status === 'completed' ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-semibold'"
+                        class="w-full text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+                  <option value="completed">Completed</option>
+                  <option value="pending">Pending</option>
+                </select>
+              </td>
+              <td class="px-3 py-2">
+                <input type="text" x-model="item.project"
+                       :disabled="!report.editable"
+                       placeholder="Optional"
+                       class="w-full text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50" />
+              </td>
+              <td class="px-3 py-2">
+                <input type="text" x-model="item.remarks"
+                       :disabled="!report.editable"
+                       placeholder="Optional"
+                       class="w-full text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50" />
+              </td>
+              <td class="px-3 py-2">
+                <button @click="removeRow(idx)"
+                        x-show="report.editable"
+                        title="Remove"
+                        class="text-metfraa-gray-400 hover:text-red-600 p-1">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>
+              </td>
+            </tr>
+          </template>
+          <template x-if="items.length === 0">
+            <tr><td colspan="6" class="px-3 py-8 text-center text-sm text-metfraa-gray-500">
+              No tasks yet. <span x-show="report.editable">Click "Add task" to start.</span>
+            </td></tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Tomorrow's plan + blockers -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+      <label class="text-xs font-bold uppercase tracking-widest text-metfraa-blue block mb-2">Tomorrow's plan</label>
+      <textarea x-model="tomorrowPlan"
+                :disabled="!report.editable"
+                rows="4"
+                placeholder="What are you planning for tomorrow? (optional)"
+                class="w-full text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50"></textarea>
+    </div>
+    <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+      <label class="text-xs font-bold uppercase tracking-widest text-red-600 block mb-2">Blockers / Help needed</label>
+      <textarea x-model="blockers"
+                :disabled="!report.editable"
+                rows="4"
+                placeholder="Anything blocking your progress? (optional)"
+                class="w-full text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50"></textarea>
+    </div>
+  </div>
+
+  <!-- Submit -->
+  <div class="flex justify-end gap-3 mb-8" x-show="report.editable">
+    <button @click="submitReport()" :disabled="saving"
+            class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white font-semibold text-sm px-6 py-2.5 rounded-lg shadow disabled:opacity-50">
+      <span x-show="!saving">Save & submit</span>
+      <span x-show="saving">Saving...</span>
+    </button>
+  </div>
+
+  <!-- History -->
+  <div class="bg-white rounded-xl border border-metfraa-gray-200 overflow-hidden">
+    <div class="p-4 border-b border-metfraa-gray-200 flex items-center justify-between">
+      <div>
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Recent reports</div>
+        <div class="text-sm font-semibold text-metfraa-black mt-0.5">Past submissions</div>
+      </div>
+      <button @click="loadHistory()" class="text-xs text-metfraa-blue hover:text-metfraa-blue-dark">Refresh</button>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-metfraa-gray-50 text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500">
+          <tr>
+            <th class="px-4 py-2 text-left">Date</th>
+            <th class="px-4 py-2 text-center">Tasks</th>
+            <th class="px-4 py-2 text-center">Completed</th>
+            <th class="px-4 py-2 text-left">Last edited</th>
+            <th class="px-4 py-2 text-center">Status</th>
+            <th class="px-4 py-2 w-24"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="h in history" :key="h.id">
+            <tr class="border-t border-metfraa-gray-100 hover:bg-metfraa-gray-50">
+              <td class="px-4 py-2 mono font-semibold" x-text="h.report_date"></td>
+              <td class="px-4 py-2 text-center mono" x-text="h.n_tasks"></td>
+              <td class="px-4 py-2 text-center">
+                <span :class="h.n_completed === h.n_tasks ? 'text-emerald-700' : 'text-amber-700'"
+                      class="mono font-semibold"
+                      x-text="h.n_completed + '/' + h.n_tasks"></span>
+              </td>
+              <td class="px-4 py-2 text-xs text-metfraa-gray-500 mono" x-text="formatDate(h.last_edited_at)"></td>
+              <td class="px-4 py-2 text-center">
+                <template x-if="h.editable">
+                  <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">EDITABLE</span>
+                </template>
+                <template x-if="!h.editable && h.pending_unlock">
+                  <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">UNLOCK PENDING</span>
+                </template>
+                <template x-if="!h.editable && !h.pending_unlock">
+                  <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-metfraa-gray-100 text-metfraa-gray-600">LOCKED</span>
+                </template>
+              </td>
+              <td class="px-4 py-2 text-right">
+                <button @click="reportDate = h.report_date; loadReport()"
+                        class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark">
+                  Open
+                </button>
+              </td>
+            </tr>
+          </template>
+          <template x-if="!historyLoading && history.length === 0">
+            <tr><td colspan="6" class="px-4 py-8 text-center text-sm text-metfraa-gray-500">No submissions yet.</td></tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Unlock modal -->
+  <div x-show="unlockModal" x-cloak
+       class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+       @click.self="unlockModal = false">
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full">
+      <div class="p-5 border-b border-metfraa-gray-200">
+        <div class="text-xs font-bold uppercase tracking-widest text-amber-600">Request unlock</div>
+        <h3 class="display text-xl font-bold text-metfraa-black mt-1">
+          Report for <span class="mono" x-text="reportDate"></span>
+        </h3>
+      </div>
+      <div class="p-5 space-y-3">
+        <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">
+          Reason
+        </label>
+        <textarea x-model="unlockReason" rows="3" minlength="5"
+                  placeholder="Why do you need to edit this locked report?"
+                  class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue"></textarea>
+      </div>
+      <div class="p-5 border-t border-metfraa-gray-200 flex justify-end gap-2">
+        <button @click="unlockModal = false"
+                class="text-sm px-4 py-2 rounded-lg border border-metfraa-gray-300 hover:bg-metfraa-gray-50">Cancel</button>
+        <button @click="submitUnlockRequest()"
+                :disabled="unlockReason.trim().length < 5 || unlockSubmitting"
+                class="text-sm font-semibold px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50">
+          <span x-show="!unlockSubmitting">Send request</span>
+          <span x-show="unlockSubmitting">Sending...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+function taskReport() {
+  return {
+    today: '{{ today_ist }}',
+    reportDate: '{{ today_ist }}',
+    report: { editable: true, pending_unlock: false, items: [] },
+    items: [],
+    tomorrowPlan: '',
+    blockers: '',
+    history: [],
+    historyLoading: false,
+    loading: false,
+    saving: false,
+    unlockModal: false,
+    unlockReason: '',
+    unlockSubmitting: false,
+    toast: { show: false, msg: '', type: 'success' },
+
+    async init() {
+      await this.loadReport();
+      await this.loadHistory();
+    },
+
+    async loadReport() {
+      this.loading = true;
+      try {
+        const res = await fetch('/task-reports/api/date/' + this.reportDate);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to load report');
+        this.report = data;
+        this.items = data.items && data.items.length
+          ? data.items.map(it => ({
+              task_description: it.task_description || '',
+              status: it.status || 'pending',
+              project: it.project || '',
+              remarks: it.remarks || '',
+            }))
+          : [];
+        this.tomorrowPlan = data.tomorrow_plan || '';
+        this.blockers = data.blockers || '';
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    addRow() {
+      this.items.push({ task_description: '', status: 'pending', project: '', remarks: '' });
+    },
+
+    removeRow(idx) {
+      this.items.splice(idx, 1);
+    },
+
+    async submitReport() {
+      // Filter out empty rows client-side too
+      const validItems = this.items.filter(i => (i.task_description || '').trim());
+      if (validItems.length === 0 && !this.tomorrowPlan.trim() && !this.blockers.trim()) {
+        this.showToast('Add at least one task before submitting.', 'error');
+        return;
+      }
+      this.saving = true;
+      try {
+        const res = await fetch('/task-reports/api/save', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            report_date: this.reportDate,
+            items: validItems,
+            tomorrow_plan: this.tomorrowPlan,
+            blockers: this.blockers,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Save failed');
+        this.showToast('Report saved', 'success');
+        await this.loadReport();
+        await this.loadHistory();
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    async loadHistory() {
+      this.historyLoading = true;
+      try {
+        const res = await fetch('/task-reports/api/history?limit=30');
+        const data = await res.json();
+        if (res.ok) this.history = data;
+      } catch (_) {}
+      finally { this.historyLoading = false; }
+    },
+
+    openUnlockModal() {
+      this.unlockReason = '';
+      this.unlockModal = true;
+    },
+
+    async submitUnlockRequest() {
+      this.unlockSubmitting = true;
+      try {
+        const res = await fetch('/task-reports/api/request-unlock', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({report_date: this.reportDate, reason: this.unlockReason.trim()}),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Request failed');
+        this.showToast('Unlock request sent', 'success');
+        this.unlockModal = false;
+        await this.loadReport();
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.unlockSubmitting = false;
+      }
+    },
+
+    formatDate(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    },
+
+    showToast(msg, type='success') {
+      this.toast = { show: true, msg, type };
+      setTimeout(() => { this.toast.show = false; }, 3000);
+    },
+  };
+}
+</script>
+
+</body>
+</html>

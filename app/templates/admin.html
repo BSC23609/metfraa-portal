@@ -1,0 +1,2120 @@
+{% extends "base.html" %}
+{% block title %}Admin — Metfraa KPI{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="adminApp()" x-init="init()">
+
+  <!-- Page header -->
+  <div class="mb-8 flex items-end justify-between flex-wrap gap-4">
+    <div>
+      <div class="flex items-baseline gap-3">
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Admin Console</div>
+        <div class="text-xs text-metfraa-gray-400 mono" x-text="monthLabel"></div>
+      </div>
+      <h1 class="display text-3xl md:text-4xl font-bold text-metfraa-black mt-1">
+        Company Performance
+      </h1>
+      <p class="text-metfraa-gray-500 text-sm mt-1">Manage KPIs, monitor team scores, generate reports.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button @click="syncMasterExcel()"
+              :disabled="syncingExcel"
+              class="bg-metfraa-black hover:bg-metfraa-ink text-white text-sm font-semibold px-4 py-2.5 rounded-lg flex items-center gap-2 disabled:opacity-50">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+        <span x-text="syncingExcel ? 'Syncing...' : 'Sync Master Excel'"></span>
+      </button>
+      <a href="/reports/admin/download-master-excel"
+         class="bg-white border border-metfraa-gray-300 hover:border-metfraa-blue text-metfraa-ink text-sm font-semibold px-4 py-2.5 rounded-lg">
+        Download Excel
+      </a>
+    </div>
+  </div>
+
+  <!-- Tab nav -->
+  <div class="border-b border-metfraa-gray-200 mb-6">
+    <nav class="flex gap-1">
+      <button @click="tab='daily'; loadDailyActivity()"
+              :class="tab==='daily' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        Daily Activity
+      </button>
+      <button @click="tab='overview'; loadOverview()"
+              :class="tab==='overview' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        Overview
+      </button>
+      <button @click="tab='employees'; loadEmployees()"
+              :class="tab==='employees' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        Employees
+      </button>
+      <button @click="tab='kpis'; loadEmployees()"
+              :class="tab==='kpis' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        KPI Master
+      </button>
+      <button @click="tab='monthly'; loadMonthlyKpiDashboard()"
+              :class="tab==='monthly' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        Monthly KPI
+      </button>
+      <button @click="tab='pwresets'; loadPasswordResets()"
+              :class="tab === 'pwresets' ? 'text-metfraa-blue border-b-2 border-metfraa-blue -mb-px' : 'text-metfraa-gray-500 hover:text-metfraa-ink'"
+              class="px-4 py-3 text-sm font-semibold transition">
+        Password Resets
+        <span x-show="pwresets_pending_count > 0"
+              class="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-500 text-white"
+              x-text="pwresets_pending_count"></span>
+      </button>
+      <button @click="tab='unlocks'; loadUnlockRequests()"
+              :class="tab==='unlocks' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2 flex items-center gap-2">
+        Unlock Requests
+        <span x-show="unlocks.pendingCount > 0"
+              class="inline-flex items-center justify-center px-2 py-0.5 text-[10px] font-bold rounded-full bg-red-500 text-white"
+              x-text="unlocks.pendingCount"></span>
+      </button>
+      <button @click="tab='reports'; loadAllReports()"
+              :class="tab==='reports' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        Reports
+      </button>
+      <button @click="tab='sitevisits'; loadSiteVisits()"
+              :class="tab==='sitevisits' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        Site Visits
+      </button>
+    </nav>
+  </div>
+
+  <!-- =============== TAB: DAILY ACTIVITY =============== -->
+  <div x-show="tab==='daily'" x-cloak>
+
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mb-5 flex items-center justify-between flex-wrap gap-3">
+      <div>
+        <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Activity Date</label>
+        <div class="flex items-center gap-3 mt-1">
+          <input type="date" x-model="daily.date" :max="new Date().toISOString().slice(0,10)"
+                 @change="loadDailyActivity()"
+                 class="border-metfraa-gray-300 rounded-lg text-sm font-medium focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          <button @click="daily.date = new Date().toISOString().slice(0,10); loadDailyActivity()"
+                  class="text-xs text-metfraa-blue hover:underline font-semibold">Today</button>
+          <span class="text-sm text-metfraa-gray-500" x-show="daily.data.weekday" x-text="daily.data.weekday + (daily.data.is_today ? ' (today)' : '')"></span>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-2 text-xs text-metfraa-gray-600">
+          <input type="checkbox" x-model="daily.autoRefresh" @change="toggleAutoRefresh()" class="rounded">
+          Auto-refresh (60s)
+        </label>
+        <button @click="loadDailyActivity()" class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark px-3 py-1.5 rounded border border-metfraa-blue/30 hover:bg-metfraa-blue/5">
+          Refresh now
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
+      <button @click="daily.filter='all'"
+              :class="daily.filter==='all' ? 'ring-2 ring-metfraa-blue' : ''"
+              class="bg-white border border-metfraa-gray-200 rounded-xl p-4 text-left hover:border-metfraa-blue">
+        <div class="text-3xl font-bold text-metfraa-black" x-text="daily.data.stats?.total || 0"></div>
+        <div class="text-[10px] uppercase tracking-wider text-metfraa-gray-500 mt-1">Total</div>
+      </button>
+      <button @click="daily.filter='work'"
+              :class="daily.filter==='work' ? 'ring-2 ring-emerald-500' : ''"
+              class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-left hover:border-emerald-500">
+        <div class="text-3xl font-bold text-emerald-700" x-text="daily.data.stats?.submitted || 0"></div>
+        <div class="text-[10px] uppercase tracking-wider text-emerald-700 mt-1">Submitted</div>
+      </button>
+      <button @click="daily.filter='pending'"
+              :class="daily.filter==='pending' ? 'ring-2 ring-amber-500' : ''"
+              class="bg-amber-50 border border-amber-200 rounded-xl p-4 text-left hover:border-amber-500">
+        <div class="text-3xl font-bold text-amber-700" x-text="daily.data.stats?.pending || 0"></div>
+        <div class="text-[10px] uppercase tracking-wider text-amber-700 mt-1">Pending</div>
+      </button>
+      <button @click="daily.filter='casual_leave'"
+              :class="daily.filter==='casual_leave' ? 'ring-2 ring-yellow-500' : ''"
+              class="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-left hover:border-yellow-500">
+        <div class="text-3xl font-bold text-yellow-700" x-text="daily.data.stats?.leave || 0"></div>
+        <div class="text-[10px] uppercase tracking-wider text-yellow-700 mt-1">On Leave</div>
+      </button>
+      <button @click="daily.filter='site_remote'"
+              :class="daily.filter==='site_remote' ? 'ring-2 ring-blue-500' : ''"
+              class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left hover:border-blue-500">
+        <div class="text-3xl font-bold text-blue-700" x-text="daily.data.stats?.site_remote || 0"></div>
+        <div class="text-[10px] uppercase tracking-wider text-blue-700 mt-1">Site/Remote</div>
+      </button>
+      <button @click="daily.filter='off'"
+              :class="daily.filter==='off' ? 'ring-2 ring-gray-500' : ''"
+              class="bg-gray-50 border border-gray-200 rounded-xl p-4 text-left hover:border-gray-500">
+        <div class="text-3xl font-bold text-gray-700" x-text="(daily.data.stats?.sunday || 0) + (daily.data.stats?.holiday || 0)"></div>
+        <div class="text-[10px] uppercase tracking-wider text-gray-700 mt-1">Off Day</div>
+      </button>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-3 mb-5 flex items-center gap-3">
+      <svg class="w-5 h-5 text-metfraa-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+      <input type="text" x-model="daily.search" placeholder="Search by name or designation..."
+             class="flex-1 border-0 focus:ring-0 text-sm" />
+      <span class="text-xs text-metfraa-gray-400" x-text="filteredDailyRows.length + ' shown'"></span>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+      <div x-show="filteredDailyRows.length === 0" class="text-center py-12 text-metfraa-gray-500 text-sm">
+        No employees match the current filter.
+      </div>
+      <div class="divide-y divide-metfraa-gray-100">
+        <template x-for="row in filteredDailyRows" :key="row.id">
+          <button @click="openDailyDetail(row)"
+                  class="w-full flex items-center gap-4 px-5 py-3 hover:bg-metfraa-gray-50 text-left">
+            <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0"
+                 :class="dailyAvatarColor(row.status)"
+                 x-text="row.name[0].toUpperCase()"></div>
+            <div class="flex-1 min-w-0">
+              <div class="font-semibold text-sm text-metfraa-ink truncate" x-text="row.name"></div>
+              <div class="text-xs text-metfraa-gray-500 truncate" x-text="row.designation"></div>
+            </div>
+            <div class="text-xs text-metfraa-gray-500 hidden sm:block" x-show="row.status === 'work'">
+              <span class="mono font-semibold" x-text="row.kpi_filled"></span>/<span class="mono" x-text="row.kpi_total"></span> KPIs
+            </div>
+            <div class="text-xs font-semibold px-2.5 py-1 rounded" :class="dailyBadgeClass(row.status)">
+              <span x-text="dailyStatusLabel(row.status)"></span>
+            </div>
+            <div class="text-xs text-metfraa-gray-400 mono w-20 text-right hidden md:block"
+                 x-text="row.submitted_at ? formatTime(row.submitted_at) : '—'"></div>
+          </button>
+        </template>
+      </div>
+    </div>
+
+  </div>
+
+  <div x-show="daily.detailModal" x-cloak
+       class="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4"
+       @click.self="daily.detailModal = false">
+    <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div class="p-6 border-b border-metfraa-gray-200">
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="font-semibold text-lg text-metfraa-ink" x-text="daily.detail.employee?.name"></div>
+            <div class="text-sm text-metfraa-gray-500" x-text="daily.detail.employee?.designation"></div>
+            <div class="text-xs text-metfraa-gray-400 mt-1 mono" x-text="daily.detail.employee?.email"></div>
+          </div>
+          <button @click="daily.detailModal = false" class="text-metfraa-gray-400 hover:text-metfraa-ink">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="p-6">
+        <div class="text-xs uppercase font-semibold tracking-wider text-metfraa-gray-500 mb-2">
+          Date: <span x-text="daily.detail.date"></span>
+        </div>
+        <template x-if="!daily.detail.exists">
+          <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 text-amber-800 text-sm">
+            This employee has not submitted an entry for this date yet.
+          </div>
+        </template>
+        <template x-if="daily.detail.exists">
+          <div>
+            <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-4">
+              <div class="font-semibold text-emerald-800 capitalize" x-text="(daily.detail.type || '').replace('_', ' ')"></div>
+              <div class="text-xs text-emerald-700 mt-1" x-text="'Submitted at ' + formatDateTime(daily.detail.submitted_at)"></div>
+            </div>
+            <div x-show="daily.detail.type === 'work' && daily.detail.kpi_values?.length > 0">
+              <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 mb-3">Today's KPI Values</div>
+              <div class="space-y-2">
+                <template x-for="kv in daily.detail.kpi_values" :key="kv.name">
+                  <div class="flex items-center justify-between py-2 px-3 bg-metfraa-gray-50 rounded-lg">
+                    <div class="text-sm text-metfraa-ink flex-1" x-text="kv.name"></div>
+                    <div class="text-sm font-mono font-bold text-metfraa-blue ml-3">
+                      <span x-text="kv.value"></span> <span class="text-xs text-metfraa-gray-500" x-text="kv.unit"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div x-show="daily.detail.comments" class="mt-4">
+              <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 mb-1">Comments</div>
+              <div class="text-sm text-metfraa-ink bg-metfraa-gray-50 p-3 rounded-lg italic" x-text="daily.detail.comments"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- =============== TAB: UNLOCK REQUESTS =============== -->
+  <div x-show="tab==='unlocks'" x-cloak>
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mb-5 flex items-center justify-between flex-wrap gap-3">
+      <div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Entry Unlock Requests</div>
+        <h3 class="display font-bold text-metfraa-black text-xl mt-1">Approve or deny requests</h3>
+      </div>
+      <div class="flex items-center gap-2">
+        <button @click="unlocks.filter='pending'; loadUnlockRequests()"
+                :class="unlocks.filter==='pending' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : 'border-metfraa-gray-300 text-metfraa-gray-700'"
+                class="text-xs font-semibold px-3 py-1.5 rounded-lg border">Pending</button>
+        <button @click="unlocks.filter='approved'; loadUnlockRequests()"
+                :class="unlocks.filter==='approved' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'border-metfraa-gray-300 text-metfraa-gray-700'"
+                class="text-xs font-semibold px-3 py-1.5 rounded-lg border">Approved</button>
+        <button @click="unlocks.filter='denied'; loadUnlockRequests()"
+                :class="unlocks.filter==='denied' ? 'bg-red-100 text-red-800 border-red-300' : 'border-metfraa-gray-300 text-metfraa-gray-700'"
+                class="text-xs font-semibold px-3 py-1.5 rounded-lg border">Denied</button>
+        <button @click="unlocks.filter=''; loadUnlockRequests()"
+                :class="unlocks.filter==='' ? 'bg-metfraa-gray-200 text-metfraa-ink border-metfraa-gray-400' : 'border-metfraa-gray-300 text-metfraa-gray-700'"
+                class="text-xs font-semibold px-3 py-1.5 rounded-lg border">All</button>
+        <button @click="loadUnlockRequests()" class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark px-3 py-1.5 rounded border border-metfraa-blue/30 hover:bg-metfraa-blue/5">Refresh</button>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+      <div x-show="unlocks.list.length === 0" class="text-center py-12 text-metfraa-gray-500 text-sm">
+        No unlock requests <span x-text="unlocks.filter ? ('with status: ' + unlocks.filter) : 'yet'"></span>.
+      </div>
+      <div class="divide-y divide-metfraa-gray-100">
+        <template x-for="r in unlocks.list" :key="r.id">
+          <div class="p-5">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="font-semibold text-sm text-metfraa-ink" x-text="r.employee.name"></span>
+                  <span class="text-xs text-metfraa-gray-500" x-text="r.employee.designation"></span>
+                  <span class="text-xs font-semibold px-2 py-0.5 rounded"
+                        :class="({pending:'bg-yellow-100 text-yellow-800', approved:'bg-emerald-100 text-emerald-800', denied:'bg-red-100 text-red-800', completed:'bg-blue-100 text-blue-800'})[r.status]"
+                        x-text="r.status"></span>
+                  <span class="text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded"
+                        :class="r.kind === 'task_report' ? 'bg-indigo-100 text-indigo-800' : (r.kind === 'monthly_kpi' ? 'bg-purple-100 text-purple-800' : 'bg-metfraa-gray-100 text-metfraa-gray-700')"
+                        x-text="r.kind === 'task_report' ? 'TASK REPORT' : (r.kind === 'monthly_kpi' ? 'MONTHLY KPI' : 'LEGACY')"></span>
+                  <span x-show="r.employee.code" class="text-[10px] font-mono text-metfraa-gray-400" x-text="r.employee.code"></span>
+                </div>
+                <div class="text-xs text-metfraa-gray-500 mb-2 mono">Entry date: <span x-text="r.entry_date"></span> · Requested: <span x-text="formatDateTime(r.requested_at)"></span></div>
+                <div class="bg-metfraa-gray-50 rounded-lg p-3 mb-2">
+                  <div class="text-[10px] font-semibold uppercase tracking-wider text-metfraa-gray-500 mb-1">Employee reason</div>
+                  <div class="text-sm text-metfraa-ink" x-text="r.reason"></div>
+                </div>
+                <div x-show="r.admin_response" class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-2">
+                  <div class="text-[10px] font-semibold uppercase tracking-wider text-blue-700 mb-1">
+                    Admin response · <span x-text="r.decided_by_email"></span> · <span x-text="formatDateTime(r.decided_at)"></span>
+                  </div>
+                  <div class="text-sm text-blue-900" x-text="r.admin_response"></div>
+                </div>
+              </div>
+              <div class="flex flex-col gap-2" x-show="r.status === 'pending'">
+                <button @click="approveUnlock(r)"
+                        class="text-xs font-semibold px-4 py-2 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600">Approve</button>
+                <button @click="openDenyModal(r)"
+                        class="text-xs font-semibold px-4 py-2 rounded-lg border border-red-300 text-red-700 hover:bg-red-50">Deny</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deny reason modal -->
+  <div x-show="unlocks.denyModal" x-cloak
+       class="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4"
+       @click.self="unlocks.denyModal = false">
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full">
+      <div class="p-5 border-b border-metfraa-gray-200">
+        <h3 class="display font-bold text-metfraa-black text-xl">Deny unlock request</h3>
+        <p class="text-xs text-metfraa-gray-500 mt-1">Please tell the employee why their request is denied.</p>
+      </div>
+      <div class="p-5">
+        <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-2">Reason</label>
+        <textarea x-model="unlocks.denyReason" rows="3" maxlength="500"
+                  placeholder="e.g. Submission window closed; please discuss in person"
+                  class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue"></textarea>
+      </div>
+      <div class="p-5 border-t flex justify-end gap-2">
+        <button @click="unlocks.denyModal = false" class="text-sm px-4 py-2 rounded-lg border border-metfraa-gray-300 hover:bg-metfraa-gray-50">Cancel</button>
+        <button @click="confirmDenyUnlock()" :disabled="unlocks.acting"
+                class="text-sm font-semibold px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 disabled:opacity-50">Deny request</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =============== TAB: OVERVIEW =============== -->
+  <div x-show="tab==='overview'" x-cloak>
+    <!-- Stats cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+      <div class="bg-gradient-to-br from-metfraa-black to-metfraa-ink rounded-xl shadow-lg p-6 text-white relative overflow-hidden">
+        <div class="absolute top-0 right-0 w-32 h-32 bg-metfraa-blue/20 rounded-full blur-3xl"></div>
+        <div class="relative">
+          <div class="text-xs font-semibold uppercase tracking-widest text-metfraa-gray-400 mb-1">Company Avg Score</div>
+          <div class="display text-6xl font-bold leading-none mt-2" x-text="(overview.company_avg || 0).toFixed(1)"></div>
+          <div class="text-metfraa-gray-400 text-sm mt-1">/ 100 · <span x-text="monthLabel"></span></div>
+        </div>
+      </div>
+      <div class="bg-white border border-metfraa-gray-200 rounded-xl p-6">
+        <div class="text-xs font-semibold uppercase tracking-widest text-metfraa-gray-500 mb-1">Active Employees</div>
+        <div class="display text-5xl font-bold text-metfraa-black mt-2" x-text="overview.employee_count || 0"></div>
+        <div class="text-metfraa-gray-500 text-sm mt-1">tracking KPIs</div>
+      </div>
+      <div class="bg-white border border-metfraa-gray-200 rounded-xl p-6">
+        <div class="text-xs font-semibold uppercase tracking-widest text-metfraa-gray-500 mb-1">Top Performer</div>
+        <div class="display text-2xl font-bold text-metfraa-black mt-2" x-text="topPerformer ? topPerformer.name : '—'"></div>
+        <div class="text-metfraa-gray-500 text-sm mt-1">
+          <span class="mono font-semibold text-emerald-600" x-text="topPerformer ? topPerformer.score.toFixed(1) : '—'"></span>
+          <span x-show="topPerformer">/ 100</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Leaderboard -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Leaderboard</div>
+          <h3 class="display font-bold text-metfraa-black">Employees this month</h3>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left border-b border-metfraa-gray-200">
+              <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500 w-10">#</th>
+              <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Employee</th>
+              <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Score</th>
+              <th class="pb-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Work Days</th>
+              <th class="pb-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Missed</th>
+              <th class="pb-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(row, idx) in (overview.leaderboard || [])" :key="row.employee_id">
+              <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
+                <td class="py-3 mono text-metfraa-gray-400" x-text="String(idx + 1).padStart(2, '0')"></td>
+                <td class="py-3">
+                  <div class="font-semibold text-metfraa-ink" x-text="row.name"></div>
+                  <div class="text-[11px] text-metfraa-gray-500" x-text="row.designation"></div>
+                </td>
+                <td class="py-3">
+                  <div class="flex items-center gap-2">
+                    <div class="w-32 h-2 bg-metfraa-gray-200 rounded-full overflow-hidden">
+                      <div :style="`width: ${Math.min(row.score, 100)}%`"
+                           :class="row.score >= 80 ? 'bg-emerald-500' : row.score >= 60 ? 'bg-amber-500' : 'bg-red-500'"
+                           class="h-full"></div>
+                    </div>
+                    <span class="font-bold mono text-sm" x-text="row.score.toFixed(1)"></span>
+                  </div>
+                </td>
+                <td class="py-3 text-right mono" x-text="row.work_days"></td>
+                <td class="py-3 text-right mono" :class="row.missed_days > 0 ? 'text-red-600 font-semibold' : 'text-metfraa-gray-400'" x-text="row.missed_days"></td>
+                <td class="py-3 text-right">
+                  <button @click="viewEmployee(row.employee_id)"
+                          class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark">
+                    Details →
+                  </button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- =============== TAB: EMPLOYEES =============== -->
+  <div x-show="tab==='employees'" x-cloak>
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Roster</div>
+        <h3 class="display font-bold text-metfraa-black text-xl">All Employees</h3>
+      </div>
+      <button @click="newEmpModal = true"
+              class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Add Employee
+      </button>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-metfraa-gray-50">
+          <tr class="text-left">
+            <th class="px-5 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Name</th>
+            <th class="px-5 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Email</th>
+            <th class="px-5 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Designation</th>
+            <th class="px-5 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500 text-center">KPIs</th>
+            <th class="px-5 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500 text-right">Score</th>
+            <th class="px-5 py-3"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-metfraa-gray-100">
+          <template x-for="emp in employees" :key="emp.id">
+            <tr class="hover:bg-metfraa-gray-50">
+              <td class="px-5 py-3">
+                <div class="font-semibold text-metfraa-ink flex items-center gap-2" >
+                  <span x-text="emp.name"></span>
+                  <span x-show="emp.is_admin" class="text-[10px] font-bold tracking-wide uppercase bg-metfraa-blue/10 text-metfraa-blue rounded px-1.5 py-0.5">Admin</span>
+                </div>
+                <div class="text-[11px] text-metfraa-gray-500" x-text="emp.department"></div>
+              </td>
+              <td class="px-5 py-3 mono text-xs text-metfraa-gray-600" x-text="emp.email"></td>
+              <td class="px-5 py-3 text-metfraa-gray-700" x-text="emp.designation"></td>
+              <td class="px-5 py-3 text-center">
+                <template x-if="emp.kpi_count > 0">
+                  <span class="mono font-semibold" x-text="emp.kpi_count"></span>
+                </template>
+                <template x-if="emp.kpi_count === 0">
+                  <span class="text-[10px] font-bold tracking-wide uppercase bg-amber-100 text-amber-800 rounded px-2 py-0.5">⚠ Needs KPIs</span>
+                </template>
+              </td>
+              <td class="px-5 py-3 text-right">
+                <span class="mono font-bold"
+                      :class="emp.current_month_score >= 80 ? 'text-emerald-600' : emp.current_month_score >= 60 ? 'text-amber-600' : 'text-red-600'"
+                      x-text="emp.current_month_score.toFixed(1)"></span>
+              </td>
+              <td class="px-5 py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button @click="viewEmployee(emp.id)"
+                          title="View"
+                          class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark px-2 py-1">
+                    View
+                  </button>
+                  <button @click="openEditEmployee(emp)"
+                          title="Edit employee"
+                          class="text-metfraa-gray-500 hover:text-metfraa-blue p-1.5 rounded hover:bg-metfraa-gray-100">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  </button>
+                  <button @click="confirmDeleteEmployee(emp)"
+                          title="Delete employee"
+                          class="text-metfraa-gray-500 hover:text-red-600 p-1.5 rounded hover:bg-red-50">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- =============== TAB: KPI MASTER =============== -->
+  <div x-show="tab==='kpis'" x-cloak>
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-5">
+      <!-- Employee picker -->
+      <div class="lg:col-span-1">
+        <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-3">
+          <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 px-2 py-2">Pick employee</div>
+          <ul class="space-y-1">
+            <template x-for="emp in employees" :key="emp.id">
+              <li>
+                <button @click="selectKPIEmp(emp)"
+                        :class="selectedEmp && selectedEmp.id === emp.id ? 'bg-metfraa-blue/10 text-metfraa-blue' : 'hover:bg-metfraa-gray-50 text-metfraa-ink'"
+                        class="w-full text-left px-3 py-2 rounded-lg text-sm">
+                  <div class="font-semibold flex items-center gap-1.5">
+                    <span x-text="emp.name"></span>
+                    <span x-show="emp.kpi_count === 0" class="text-[9px] font-bold tracking-wide uppercase bg-amber-100 text-amber-800 rounded px-1.5 py-0.5">Needs KPIs</span>
+                  </div>
+                  <div class="text-[11px] text-metfraa-gray-500 mono" x-text="emp.kpi_count + ' KPIs'"></div>
+                </button>
+              </li>
+            </template>
+          </ul>
+        </div>
+      </div>
+
+      <!-- KPI editor -->
+      <div class="lg:col-span-3">
+        <div x-show="!selectedEmp" class="bg-white rounded-xl border border-metfraa-gray-200 p-12 text-center">
+          <p class="text-metfraa-gray-500 text-sm">Select an employee to edit their KPIs.</p>
+        </div>
+
+        <div x-show="selectedEmp" class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">KPI Master</div>
+              <h3 class="display font-bold text-metfraa-black text-xl" x-text="selectedEmp?.name"></h3>
+              <div class="text-xs text-metfraa-gray-500 mt-1">
+                Total weight: <span class="mono font-bold" :class="totalWeight === 100 ? 'text-emerald-600' : 'text-red-600'" x-text="totalWeight + '%'"></span>
+                <span x-show="totalWeight !== 100" class="text-red-600">⚠ Should sum to 100%</span>
+              </div>
+            </div>
+            <button @click="newKpi = { name: '', unit: 'Count', weight: 10, target: 0 }; newKpiModal = true"
+                    class="bg-metfraa-black text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+              Add KPI
+            </button>
+          </div>
+
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left border-b border-metfraa-gray-200">
+                <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500 w-8">#</th>
+                <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">KPI Name</th>
+                <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500 w-20">Unit</th>
+                <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500 w-24">Weight %</th>
+                <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500 w-24">Target</th>
+                <th class="pb-2 w-16"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="(k, idx) in kpiList" :key="k.id">
+                <tr class="border-b border-metfraa-gray-100">
+                  <td class="py-2 mono text-metfraa-gray-400" x-text="String(idx + 1).padStart(2, '0')"></td>
+                  <td class="py-2">
+                    <input type="text" x-model="k.name"
+                           @blur="saveKPI(k)"
+                           class="w-full text-sm border-metfraa-gray-200 rounded focus:border-metfraa-blue focus:ring-metfraa-blue" />
+                  </td>
+                  <td class="py-2">
+                    <select x-model="k.unit" @change="saveKPI(k)"
+                            class="text-sm border-metfraa-gray-200 rounded focus:border-metfraa-blue focus:ring-metfraa-blue">
+                      <option value="Count">Count</option>
+                      <option value="MT">MT</option>
+                      <option value="Hours">Hours</option>
+                      <option value="%">%</option>
+                      <option value="₹">₹</option>
+                    </select>
+                  </td>
+                  <td class="py-2">
+                    <input type="number" min="0" max="100" step="0.5"
+                           x-model.number="k.weight" @blur="saveKPI(k)"
+                           class="w-full text-sm border-metfraa-gray-200 rounded focus:border-metfraa-blue focus:ring-metfraa-blue mono" />
+                  </td>
+                  <td class="py-2">
+                    <input type="number" min="0" step="0.5"
+                           x-model.number="k.target" @blur="saveKPI(k)"
+                           class="w-full text-sm border-metfraa-gray-200 rounded focus:border-metfraa-blue focus:ring-metfraa-blue mono" />
+                  </td>
+                  <td class="py-2 text-right">
+                    <button @click="deleteKPI(k)"
+                            class="text-red-500 hover:text-red-700 text-xs font-semibold">
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =============== TAB: REPORTS =============== -->
+  <div x-show="tab==='reports'" x-cloak>
+
+    <!-- Daily Task Report Excel (2B) -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Daily Task Report Excel</div>
+          <h3 class="display font-bold text-metfraa-black text-lg">Consolidated task report</h3>
+          <p class="text-xs text-metfraa-gray-500 mt-1">Sent automatically to VP every day at 10:00 AM IST. Use these controls to download or re-send for any past date.</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-end gap-3 pt-2 border-t border-metfraa-gray-100">
+        <div>
+          <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Report date</label>
+          <input type="date" x-model="dailyExcelDate" :max="todayIso()"
+                 class="text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue px-2 py-1.5" />
+        </div>
+        <a :href="`/admin/api/daily-task-excel/${dailyExcelDate}`"
+           :class="!dailyExcelDate ? 'opacity-50 pointer-events-none' : ''"
+           class="text-sm font-semibold px-4 py-2 rounded-lg border border-metfraa-blue text-metfraa-blue hover:bg-metfraa-blue/5">
+          ↓ Download Excel
+        </a>
+        <button @click="sendDailyExcel()" :disabled="!dailyExcelDate || dailyExcelSending"
+                class="text-sm font-semibold px-4 py-2 rounded-lg bg-metfraa-blue text-white hover:bg-metfraa-blue-dark disabled:opacity-50">
+          <span x-show="!dailyExcelSending">✉ Send email now</span>
+          <span x-show="dailyExcelSending">Sending...</span>
+        </button>
+      </div>
+      <p class="text-[11px] text-metfraa-gray-500 mt-3">
+        Downloads the Excel without emailing. "Send email now" runs the same job the 10 AM cron runs — Excel goes to VP with CC to admin@metfraa.com and arasu@metfraa.com, and uploads a copy to OneDrive.
+      </p>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5">
+      <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Generated Reports</div>
+          <h3 class="display font-bold text-metfraa-black text-xl">All employees</h3>
+        </div>
+        <button @click="adminGenModal = true"
+                class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg">
+          Manually generate report
+        </button>
+      </div>
+      <div x-show="allReports.length === 0" class="text-center py-12 text-metfraa-gray-500 text-sm">
+        No reports generated yet.
+      </div>
+      <ul class="divide-y divide-metfraa-gray-100" x-show="allReports.length > 0">
+        <template x-for="r in allReports" :key="r.id">
+          <li class="py-3 flex items-center justify-between gap-4 flex-wrap">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-12 bg-red-50 border border-red-200 rounded flex items-center justify-center text-red-600 font-bold text-[10px] mono">PDF</div>
+              <div>
+                <div class="font-semibold text-sm text-metfraa-ink" x-text="r.employee_name"></div>
+                <div class="text-[11px] text-metfraa-gray-500">
+                  <span x-text="monthName(r.month) + ' ' + r.year"></span> ·
+                  Score: <span class="mono font-semibold" x-text="r.final_score.toFixed(1)"></span> ·
+                  By <span class="mono" x-text="r.generated_by"></span>
+                </div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <a :href="`/reports/download/${r.employee_id}/${r.year}/${r.month}`"
+                 class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark px-3 py-1.5 rounded border border-metfraa-blue/30 hover:bg-metfraa-blue/5">
+                Download
+              </a>
+              <a x-show="r.pdf_url" :href="r.pdf_url" target="_blank"
+                 class="text-xs font-semibold text-metfraa-gray-700 hover:text-metfraa-ink px-3 py-1.5 rounded border border-metfraa-gray-300 hover:bg-metfraa-gray-50">
+                OneDrive ↗
+              </a>
+              <button @click="regenerateReport(r.employee_id, r.year, r.month)"
+                      class="text-xs font-semibold text-metfraa-gray-700 hover:text-metfraa-ink px-3 py-1.5 rounded border border-metfraa-gray-300 hover:bg-metfraa-gray-50">
+                Regenerate
+              </button>
+            </div>
+          </li>
+        </template>
+      </ul>
+    </div>
+  </div>
+
+  <!-- =============== MODALS =============== -->
+
+  <!-- Add Employee modal -->
+  <div x-show="newEmpModal" x-cloak
+       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+       x-transition.opacity>
+    <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6" @click.outside="newEmpModal = false">
+      <div class="flex justify-between items-start mb-4">
+        <div>
+          <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Add Employee</div>
+          <h3 class="display text-xl font-bold text-metfraa-black mt-1">New employee</h3>
+        </div>
+        <button @click="newEmpModal = false" class="text-metfraa-gray-400 hover:text-metfraa-ink">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Email *</label>
+          <input type="email" x-model="newEmp.email" placeholder="firstname@metfraa.com"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Full name *</label>
+          <input type="text" x-model="newEmp.name"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Designation *</label>
+          <input type="text" x-model="newEmp.designation"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Department</label>
+            <input type="text" x-model="newEmp.department"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Reports to</label>
+            <input type="text" x-model="newEmp.reports_to"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          </div>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">JRR / Job Role Responsibilities (optional)</label>
+          <textarea x-model="newEmp.jrr_text" rows="4"
+                    placeholder="Paste the full JRR document text here..."
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue"></textarea>
+          <p class="text-[11px] text-metfraa-gray-500 mt-1">After creating the employee, go to KPI Master to add their KPIs.</p>
+        </div>
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" x-model="newEmp.is_admin" class="rounded text-metfraa-blue focus:ring-metfraa-blue" />
+          Grant admin privileges
+        </label>
+      </div>
+      <div class="mt-5 flex justify-end gap-2">
+        <button @click="newEmpModal = false"
+                class="px-4 py-2 text-sm font-semibold text-metfraa-gray-600 hover:bg-metfraa-gray-100 rounded-lg">
+          Cancel
+        </button>
+        <button @click="createEmployee()"
+                class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg">
+          Create employee
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add KPI modal -->
+  <div x-show="newKpiModal" x-cloak
+       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+       x-transition.opacity>
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" @click.outside="newKpiModal = false">
+      <div class="flex justify-between items-start mb-4">
+        <div>
+          <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Add KPI</div>
+          <h3 class="display text-xl font-bold text-metfraa-black mt-1" x-text="`For ${selectedEmp?.name}`"></h3>
+        </div>
+        <button @click="newKpiModal = false" class="text-metfraa-gray-400 hover:text-metfraa-ink">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">KPI Name *</label>
+          <input type="text" x-model="newKpi.name" placeholder="e.g., Drawings approved"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Unit</label>
+            <select x-model="newKpi.unit" class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue">
+              <option value="Count">Count</option>
+              <option value="MT">MT</option>
+              <option value="Hours">Hours</option>
+              <option value="%">%</option>
+              <option value="₹">₹</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Weight %</label>
+            <input type="number" min="0" max="100" step="0.5" x-model.number="newKpi.weight"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue mono" />
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Monthly Target</label>
+            <input type="number" min="0" step="0.5" x-model.number="newKpi.target"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue mono" />
+          </div>
+        </div>
+      </div>
+      <div class="mt-5 flex justify-end gap-2">
+        <button @click="newKpiModal = false"
+                class="px-4 py-2 text-sm font-semibold text-metfraa-gray-600 hover:bg-metfraa-gray-100 rounded-lg">
+          Cancel
+        </button>
+        <button @click="createKPI()"
+                class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg">
+          Add KPI
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manual report generation -->
+  <div x-show="adminGenModal" x-cloak
+       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+       x-transition.opacity>
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" @click.outside="adminGenModal = false">
+      <div class="flex justify-between items-start mb-4">
+        <div>
+          <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Manual Generation</div>
+          <h3 class="display text-xl font-bold text-metfraa-black mt-1">Generate report</h3>
+        </div>
+        <button @click="adminGenModal = false" class="text-metfraa-gray-400 hover:text-metfraa-ink">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Employee *</label>
+          <select x-model.number="genForm.emp_id"
+                  class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue">
+            <option value="">— Pick employee —</option>
+            <template x-for="e in employees" :key="e.id">
+              <option :value="e.id" x-text="e.name + ' (' + e.designation + ')'"></option>
+            </template>
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Year</label>
+            <input type="number" x-model.number="genForm.year"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue mono" />
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Month</label>
+            <select x-model.number="genForm.month"
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue">
+              <template x-for="m in 12" :key="m">
+                <option :value="m" x-text="monthName(m)"></option>
+              </template>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="mt-5 flex justify-end gap-2">
+        <button @click="adminGenModal = false"
+                class="px-4 py-2 text-sm font-semibold text-metfraa-gray-600 hover:bg-metfraa-gray-100 rounded-lg">
+          Cancel
+        </button>
+        <button @click="adminGenerateReport()" :disabled="generatingReport"
+                class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
+          <span x-show="!generatingReport">Generate</span>
+          <span x-show="generatingReport">Generating...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Employee detail modal -->
+  <!-- Edit Employee modal -->
+  <div x-show="editEmpModal" x-cloak
+       class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+       @click.self="editEmpModal = false">
+    <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full">
+      <div class="p-5 border-b border-metfraa-gray-200">
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Edit Employee</div>
+        <h3 class="display text-xl font-bold text-metfraa-black mt-1" x-text="editEmp.name"></h3>
+        <p class="text-xs text-metfraa-gray-500 mono mt-0.5" x-text="editEmp.email"></p>
+      </div>
+      <div class="p-5 space-y-3">
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Email</label>
+          <input type="email" x-model="editEmp.email"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          <p class="text-[10px] text-metfraa-gray-400 mt-0.5">Used for Microsoft 365 sign-in.</p>
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Full name</label>
+          <input type="text" x-model="editEmp.name"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Designation</label>
+          <input type="text" x-model="editEmp.designation"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Department</label>
+            <input type="text" x-model="editEmp.department"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          </div>
+          <div>
+            <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Reports to</label>
+            <input type="text" x-model="editEmp.reports_to"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          </div>
+        </div>
+        <label class="flex items-center gap-2 pt-1">
+          <input type="checkbox" x-model="editEmp.is_admin" class="rounded">
+          <span class="text-sm text-metfraa-ink">Grant admin privileges</span>
+        </label>
+      </div>
+      <div class="p-5 border-t border-metfraa-gray-200 flex justify-end gap-2">
+        <button @click="editEmpModal = false"
+                class="text-sm px-4 py-2 rounded-lg border border-metfraa-gray-300 hover:bg-metfraa-gray-50">Cancel</button>
+        <button @click="saveEditEmployee()" :disabled="editEmpSaving"
+                class="text-sm font-semibold px-4 py-2 rounded-lg bg-metfraa-blue text-white hover:bg-metfraa-blue-dark disabled:opacity-50">
+          <span x-show="!editEmpSaving">Save changes</span>
+          <span x-show="editEmpSaving">Saving...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Employee confirmation -->
+  <div x-show="deleteEmpModal" x-cloak
+       class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+       @click.self="deleteEmpModal = false">
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full">
+      <div class="p-5 border-b border-metfraa-gray-200">
+        <div class="text-xs font-bold uppercase tracking-widest text-red-600">⚠ Delete Employee</div>
+        <h3 class="display text-xl font-bold text-metfraa-black mt-1">Permanently remove this person?</h3>
+      </div>
+      <div class="p-5 space-y-3">
+        <div class="bg-red-50 border border-red-200 rounded-lg p-3">
+          <div class="font-semibold text-sm text-red-900" x-text="deleteEmp.name"></div>
+          <div class="text-xs text-red-700 mono" x-text="deleteEmp.email"></div>
+          <div class="text-xs text-red-700" x-text="deleteEmp.designation"></div>
+        </div>
+        <p class="text-sm text-metfraa-ink">This will permanently delete:</p>
+        <ul class="text-xs text-metfraa-gray-700 list-disc pl-5 space-y-1">
+          <li>The employee record</li>
+          <li>All their KPI definitions</li>
+          <li>All their daily entries (work logs, leave records)</li>
+          <li>All their unlock requests</li>
+        </ul>
+        <p class="text-xs text-red-700 font-semibold">This cannot be undone.</p>
+        <div class="pt-2">
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">
+            Type <span class="mono text-red-700" x-text="deleteEmp.name"></span> to confirm
+          </label>
+          <input type="text" x-model="deleteEmpConfirmText"
+                 placeholder="Type the name exactly"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-red-500 focus:ring-red-500" />
+        </div>
+      </div>
+      <div class="p-5 border-t border-metfraa-gray-200 flex justify-end gap-2">
+        <button @click="deleteEmpModal = false"
+                class="text-sm px-4 py-2 rounded-lg border border-metfraa-gray-300 hover:bg-metfraa-gray-50">Cancel</button>
+        <button @click="performDeleteEmployee()"
+                :disabled="deleteEmpConfirmText !== deleteEmp.name || deleteEmpDeleting"
+                class="text-sm font-semibold px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed">
+          <span x-show="!deleteEmpDeleting">Permanently delete</span>
+          <span x-show="deleteEmpDeleting">Deleting...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div x-show="empDetailModal" x-cloak
+       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+       x-transition.opacity>
+    <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" @click.outside="empDetailModal = false">
+      <div class="sticky top-0 bg-white border-b border-metfraa-gray-200 px-6 py-4 flex justify-between items-start">
+        <div>
+          <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Employee Detail</div>
+          <div class="flex items-center gap-2 mt-1">
+            <h3 class="display text-2xl font-bold text-metfraa-black" x-text="empDetail.employee?.name"></h3>
+            <span x-show="empDetail.employee?.is_admin"
+                  class="px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase bg-metfraa-blue/10 text-metfraa-blue rounded">Admin</span>
+          </div>
+          <p class="text-sm text-metfraa-gray-500" x-text="empDetail.employee?.designation"></p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="toggleAdmin()"
+                  :class="empDetail.employee?.is_admin
+                    ? 'bg-red-50 border-red-200 text-red-700 hover:bg-red-100'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'"
+                  class="text-xs font-semibold px-3 py-1.5 rounded border">
+            <span x-text="empDetail.employee?.is_admin ? 'Revoke admin' : 'Make admin'"></span>
+          </button>
+          <button @click="empDetailModal = false" class="text-metfraa-gray-400 hover:text-metfraa-ink">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="p-6">
+        <!-- Score block -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
+          <div class="bg-gradient-to-br from-metfraa-black to-metfraa-ink p-5 rounded-xl text-white">
+            <div class="text-xs uppercase tracking-widest text-metfraa-gray-400 mb-1">Final Score</div>
+            <div class="display text-4xl font-bold" x-text="(empDetail.final_score || 0).toFixed(1)"></div>
+            <div class="text-xs text-metfraa-gray-500">/ 100</div>
+          </div>
+          <div class="bg-emerald-50 border border-emerald-200 p-5 rounded-xl">
+            <div class="text-xs uppercase tracking-widest text-emerald-700 mb-1">Work Days</div>
+            <div class="display text-4xl font-bold text-emerald-700" x-text="empDetail.attendance?.work_days"></div>
+          </div>
+          <div class="bg-amber-50 border border-amber-200 p-5 rounded-xl">
+            <div class="text-xs uppercase tracking-widest text-amber-700 mb-1">Leave</div>
+            <div class="display text-4xl font-bold text-amber-700" x-text="empDetail.attendance?.leave_days"></div>
+          </div>
+          <div class="bg-red-50 border border-red-200 p-5 rounded-xl">
+            <div class="text-xs uppercase tracking-widest text-red-700 mb-1">Missed</div>
+            <div class="display text-4xl font-bold text-red-700" x-text="empDetail.attendance?.missed_days"></div>
+          </div>
+        </div>
+
+        <!-- KPI table -->
+        <h4 class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 mb-2">KPI breakdown</h4>
+        <table class="w-full text-sm mb-5">
+          <thead class="border-b border-metfraa-gray-200">
+            <tr class="text-left">
+              <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">KPI</th>
+              <th class="pb-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Target</th>
+              <th class="pb-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Actual</th>
+              <th class="pb-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">%</th>
+              <th class="pb-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="r in (empDetail.kpi_results || [])" :key="r.id">
+              <tr class="border-b border-metfraa-gray-100">
+                <td class="py-2">
+                  <div class="font-semibold text-metfraa-ink" x-text="r.name"></div>
+                  <div class="text-[11px] text-metfraa-gray-500">Wt <span x-text="r.weight + '%'"></span></div>
+                </td>
+                <td class="py-2 text-right mono" x-text="r.target.toFixed(0)"></td>
+                <td class="py-2 text-right mono font-semibold" x-text="r.actual.toFixed(0)"></td>
+                <td class="py-2 text-right mono" :class="r.achievement_pct >= 80 ? 'text-emerald-600' : r.achievement_pct >= 60 ? 'text-amber-600' : 'text-red-600'" x-text="r.achievement_pct.toFixed(0) + '%'"></td>
+                <td class="py-2 text-right font-bold mono" x-text="r.weighted_score.toFixed(2)"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+
+        <div class="flex justify-end gap-2">
+          <a :href="`/reports/download/${empDetail.employee?.id}/${empDetail.year}/${empDetail.month}`"
+             class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg">
+            Download PDF
+          </a>
+          <button @click="regenerateReport(empDetail.employee?.id, empDetail.year, empDetail.month); empDetailModal = false"
+                  class="bg-metfraa-black hover:bg-metfraa-ink text-white text-sm font-semibold px-4 py-2 rounded-lg">
+            Regenerate & upload
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- =============== TAB: MONTHLY KPI =============== -->
+  <div x-show="tab==='monthly'" x-cloak>
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center justify-between mb-3 flex-wrap gap-3">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Monthly KPI Performance</div>
+          <h3 class="display font-bold text-metfraa-black text-xl">Team scoring dashboard</h3>
+          <p class="text-xs text-metfraa-gray-500 mt-1">Employee-submitted KPI actuals for the selected month.</p>
+        </div>
+        <div class="flex items-end gap-2">
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Month</label>
+            <select x-model.number="monthly.selMonth" @change="loadMonthlyKpiDashboard()"
+                    class="text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue px-2 py-1.5">
+              <template x-for="i in 12" :key="i">
+                <option :value="i" x-text="monthNameShort(i)"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Year</label>
+            <select x-model.number="monthly.selYear" @change="loadMonthlyKpiDashboard()"
+                    class="text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue px-2 py-1.5">
+              <template x-for="y in monthly.yearOptions" :key="y">
+                <option :value="y" x-text="y"></option>
+              </template>
+            </select>
+          </div>
+          <button @click="loadMonthlyKpiDashboard()"
+                  class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark px-3 py-2 rounded border border-metfraa-blue/30 hover:bg-metfraa-blue/5">
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div x-show="monthly.rows.length === 0" class="text-center py-12 text-metfraa-gray-500 text-sm">
+        No KPI-tracked employees or no data for this period.
+      </div>
+
+      <table class="w-full text-sm" x-show="monthly.rows.length > 0">
+        <thead class="bg-metfraa-gray-50 text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500">
+          <tr>
+            <th class="px-3 py-2 text-left">Employee</th>
+            <th class="px-3 py-2 text-left w-28">Code</th>
+            <th class="px-3 py-2 text-center w-24">Submitted</th>
+            <th class="px-3 py-2 text-right w-28">Score</th>
+            <th class="px-3 py-2 text-center w-24">Status</th>
+            <th class="px-3 py-2 w-20"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="r in monthly.rows" :key="r.employee.id">
+            <tr class="border-t border-metfraa-gray-100 hover:bg-metfraa-gray-50">
+              <td class="px-3 py-2">
+                <div class="font-semibold text-metfraa-ink" x-text="r.employee.name"></div>
+                <div class="text-[11px] text-metfraa-gray-500" x-text="r.employee.designation"></div>
+              </td>
+              <td class="px-3 py-2 mono text-xs" x-text="r.employee.code"></td>
+              <td class="px-3 py-2 text-center mono">
+                <span x-text="r.n_submitted + ' / ' + r.n_kpis"></span>
+              </td>
+              <td class="px-3 py-2 text-right">
+                <span class="mono font-bold text-lg"
+                      :class="r.final_score >= 80 ? 'text-emerald-700' : r.final_score >= 50 ? 'text-amber-700' : 'text-red-700'"
+                      x-text="r.final_score.toFixed(1)"></span>
+              </td>
+              <td class="px-3 py-2 text-center">
+                <template x-if="r.n_submitted === 0">
+                  <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-800">NOT SUBMITTED</span>
+                </template>
+                <template x-if="r.n_submitted > 0 && !r.fully_submitted">
+                  <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">PARTIAL</span>
+                </template>
+                <template x-if="r.fully_submitted">
+                  <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">COMPLETE</span>
+                </template>
+              </td>
+              <td class="px-3 py-2 text-right">
+                <div class="flex justify-end items-center gap-3">
+                  <button @click="monthlyDetailEmp = r; monthlyDetailModal = true"
+                          class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark"
+                          x-show="r.n_submitted > 0">Detail</button>
+                  <button @click="generateMonthlyPdf(r)"
+                          class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark">PDF</button>
+                </div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Monthly KPI detail modal -->
+  <div x-show="monthlyDetailModal" x-cloak
+       class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+       @click.self="monthlyDetailModal = false">
+    <div class="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+      <div class="p-5 border-b border-metfraa-gray-200 flex-shrink-0">
+        <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500" x-text="monthlyDetailEmp?.employee?.code"></div>
+        <h3 class="text-xl font-bold text-metfraa-black" x-text="monthlyDetailEmp?.employee?.name"></h3>
+        <div class="text-xs text-metfraa-gray-500 mt-1">
+          <span x-text="monthNameShort(monthly.selMonth) + ' ' + monthly.selYear"></span> ·
+          Score: <span class="font-mono font-bold" x-text="(monthlyDetailEmp?.final_score || 0).toFixed(1)"></span> / 100
+        </div>
+      </div>
+      <div class="p-5 overflow-y-auto flex-1">
+        <table class="w-full text-sm">
+          <thead class="bg-metfraa-gray-50 text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500">
+            <tr>
+              <th class="px-3 py-2 text-left">KPI</th>
+              <th class="px-3 py-2 text-right w-20">Target</th>
+              <th class="px-3 py-2 text-right w-20">Actual</th>
+              <th class="px-3 py-2 text-right w-16">Weight</th>
+              <th class="px-3 py-2 text-right w-24">Achievement</th>
+              <th class="px-3 py-2 text-right w-24">Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="row in (monthlyDetailEmp?.actuals || [])" :key="row.kpi_id">
+              <tr class="border-t border-metfraa-gray-100">
+                <td class="px-3 py-2 text-metfraa-ink" x-text="row.name"></td>
+                <td class="px-3 py-2 text-right mono" x-text="row.target"></td>
+                <td class="px-3 py-2 text-right mono font-semibold" x-text="row.actual"></td>
+                <td class="px-3 py-2 text-right mono" x-text="row.weight + '%'"></td>
+                <td class="px-3 py-2 text-right mono font-semibold"
+                    :class="row.achievement_pct >= 80 ? 'text-emerald-700' : row.achievement_pct >= 50 ? 'text-amber-700' : 'text-red-700'"
+                    x-text="row.achievement_pct.toFixed(0) + '%'"></td>
+                <td class="px-3 py-2 text-right mono font-bold" x-text="row.weighted_score.toFixed(2)"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div class="p-5 border-t border-metfraa-gray-200 text-right flex-shrink-0">
+        <button @click="monthlyDetailModal = false"
+                class="text-sm px-4 py-2 rounded-lg border border-metfraa-gray-300 hover:bg-metfraa-gray-50">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Password Resets tab -->
+  <div x-show="tab === 'pwresets'" x-cloak class="space-y-4">
+
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">HR Approvals</div>
+        <h2 class="display text-2xl font-bold text-metfraa-black">Password Reset Requests</h2>
+        <p class="text-sm text-metfraa-gray-500 mt-1">Employees who forgot their password submit here. Approve to reset them to <span class="font-mono font-semibold">Metfraa@123</span>.</p>
+      </div>
+      <button @click="loadPasswordResets()" class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark px-3 py-1.5 rounded border border-metfraa-blue/30 hover:bg-metfraa-blue/5">Refresh</button>
+    </div>
+
+    <!-- Filter -->
+    <div class="flex items-center gap-2">
+      <button @click="pwresets_filter='pending'; loadPasswordResets()"
+              :class="pwresets_filter === 'pending' ? 'bg-metfraa-blue text-white' : 'bg-white text-metfraa-gray-700 border border-metfraa-gray-300 hover:bg-metfraa-gray-50'"
+              class="text-xs font-semibold px-3 py-1.5 rounded">Pending</button>
+      <button @click="pwresets_filter='all'; loadPasswordResets()"
+              :class="pwresets_filter === 'all' ? 'bg-metfraa-blue text-white' : 'bg-white text-metfraa-gray-700 border border-metfraa-gray-300 hover:bg-metfraa-gray-50'"
+              class="text-xs font-semibold px-3 py-1.5 rounded">All</button>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+      <div x-show="pwresets_list.length === 0" class="text-center py-12 text-metfraa-gray-500 text-sm">
+        No password reset requests <span x-text="pwresets_filter === 'pending' ? 'pending' : 'yet'"></span>.
+      </div>
+      <div class="divide-y divide-metfraa-gray-100">
+        <template x-for="r in pwresets_list" :key="r.id">
+          <div class="p-5">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="font-semibold text-sm text-metfraa-ink" x-text="r.employee_name"></span>
+                  <span class="text-[10px] font-mono text-metfraa-gray-400" x-text="r.employee_code"></span>
+                  <span class="text-xs font-semibold px-2 py-0.5 rounded"
+                        :class="({pending:'bg-yellow-100 text-yellow-800', fulfilled:'bg-emerald-100 text-emerald-800', denied:'bg-red-100 text-red-800', expired:'bg-metfraa-gray-100 text-metfraa-gray-700'})[r.status]"
+                        x-text="r.status"></span>
+                </div>
+                <div class="text-xs text-metfraa-gray-500 mb-2 mono">Requested: <span x-text="formatDateTime(r.requested_at)"></span></div>
+                <div class="bg-metfraa-gray-50 rounded-lg p-3 mb-2">
+                  <div class="text-[10px] font-semibold uppercase tracking-wider text-metfraa-gray-500 mb-1">Employee reason</div>
+                  <div class="text-sm text-metfraa-ink" x-text="r.reason"></div>
+                </div>
+                <div x-show="r.fulfilled_by_code" class="text-[11px] text-metfraa-gray-500">
+                  Decided by <span class="font-mono" x-text="r.fulfilled_by_code"></span> at <span x-text="formatDateTime(r.fulfilled_at)"></span>
+                </div>
+              </div>
+              <div class="flex flex-col gap-2" x-show="r.status === 'pending'">
+                <button @click="approvePasswordReset(r)"
+                        class="text-xs font-semibold px-4 py-2 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600">Approve reset</button>
+                <button @click="denyPasswordReset(r)"
+                        class="text-xs font-semibold px-4 py-2 rounded-lg border border-red-300 text-red-700 hover:bg-red-50">Deny</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- =============== TAB: SITE VISITS =============== -->
+  <div x-show="tab==='sitevisits'" x-cloak>
+
+    <!-- Filter bar -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-end gap-4 flex-wrap">
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">From</label>
+          <input type="date" x-model="sitevisits.from" @change="loadSiteVisits()"
+                 class="mt-1 border border-metfraa-gray-300 rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">To</label>
+          <input type="date" x-model="sitevisits.to" @change="loadSiteVisits()"
+                 class="mt-1 border border-metfraa-gray-300 rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Category</label>
+          <select x-model="sitevisits.category" @change="loadSiteVisits()"
+                  class="mt-1 border border-metfraa-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">All</option>
+            <option value="newshed">New Shed</option>
+            <option value="reroof">Re-roofing</option>
+            <option value="extension">Extension</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Priority</label>
+          <select x-model="sitevisits.priority" @change="loadSiteVisits()"
+                  class="mt-1 border border-metfraa-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">All</option>
+            <option value="Low">Low</option>
+            <option value="Medium">Medium</option>
+            <option value="High">High</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Status</label>
+          <select x-model="sitevisits.status" @change="loadSiteVisits()"
+                  class="mt-1 border border-metfraa-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">All</option>
+            <option value="draft">Draft</option>
+            <option value="submitted">Submitted</option>
+          </select>
+        </div>
+        <div class="flex-1"></div>
+        <div class="text-xs text-metfraa-gray-500 mono">
+          <span x-text="sitevisits.list.length"></span> visits
+        </div>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-metfraa-gray-50 border-b border-metfraa-gray-200">
+          <tr>
+            <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Date</th>
+            <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Customer</th>
+            <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Visited by</th>
+            <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Category</th>
+            <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Priority</th>
+            <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Photos</th>
+            <th class="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Status</th>
+            <th class="text-right px-4 py-3 text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-metfraa-gray-100">
+          <template x-if="sitevisits.list.length === 0">
+            <tr><td colspan="8" class="text-center py-12 text-metfraa-gray-400">No site visits match these filters.</td></tr>
+          </template>
+          <template x-for="v in sitevisits.list" :key="v.id">
+            <tr class="hover:bg-metfraa-gray-50">
+              <td class="px-4 py-3">
+                <div x-text="v.visit_date ? new Date(v.visit_date).toLocaleDateString('en-IN', {day:'2-digit',month:'short',year:'numeric'}) : '—'"></div>
+                <div class="mono text-xs text-metfraa-gray-400" x-text="v.report_id"></div>
+              </td>
+              <td class="px-4 py-3">
+                <div class="font-semibold" x-text="v.company_name || '(unnamed)'"></div>
+                <div class="text-xs text-metfraa-gray-500" x-text="v.contact_person"></div>
+              </td>
+              <td class="px-4 py-3">
+                <div class="text-sm" x-text="v.employee_name"></div>
+                <div class="mono text-xs text-metfraa-gray-400" x-text="v.employee_code"></div>
+              </td>
+              <td class="px-4 py-3">
+                <span x-show="v.category" class="text-xs font-semibold px-2 py-1 rounded"
+                      :class="{
+                        'bg-blue-100 text-blue-800': v.category==='newshed',
+                        'bg-red-100 text-red-800': v.category==='reroof',
+                        'bg-purple-100 text-purple-800': v.category==='extension',
+                        'bg-gray-200 text-gray-800': v.category==='other',
+                      }"
+                      x-text="categoryLabel(v.category)"></span>
+                <span x-show="!v.category" class="text-xs text-metfraa-gray-400">—</span>
+              </td>
+              <td class="px-4 py-3">
+                <span x-show="v.priority" class="text-xs font-semibold px-2 py-1 rounded"
+                      :class="{
+                        'bg-green-100 text-green-800': v.priority==='Low',
+                        'bg-yellow-100 text-yellow-800': v.priority==='Medium',
+                        'bg-red-100 text-red-800': v.priority==='High',
+                      }"
+                      x-text="v.priority"></span>
+                <span x-show="!v.priority" class="text-xs text-metfraa-gray-400">—</span>
+              </td>
+              <td class="px-4 py-3 mono text-xs" x-text="v.n_photos"></td>
+              <td class="px-4 py-3">
+                <span class="text-xs font-semibold px-2 py-1 rounded"
+                      :class="v.status === 'submitted' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'"
+                      x-text="v.status"></span>
+              </td>
+              <td class="px-4 py-3 text-right">
+                <button @click="openVisitDetail(v)"
+                        class="text-xs font-semibold px-3 py-1.5 rounded border border-metfraa-gray-300 hover:border-metfraa-blue text-metfraa-ink">
+                  View
+                </button>
+                <a x-show="v.status === 'submitted'" :href="`/site-visits/api/${v.id}/pdf`" target="_blank"
+                   class="text-xs font-semibold px-3 py-1.5 rounded border border-metfraa-gray-300 hover:border-metfraa-blue text-metfraa-ink ml-1">
+                  PDF
+                </a>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Site visit detail modal -->
+  <div x-show="sitevisits.detailModal" x-cloak
+       class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
+       @click.self="sitevisits.detailModal = false">
+    <div class="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
+      <div class="px-6 py-4 border-b border-metfraa-gray-200 flex items-center justify-between">
+        <div>
+          <div class="text-xs mono text-metfraa-gray-400" x-text="sitevisits.detail?.report_id"></div>
+          <h3 class="text-lg font-bold text-metfraa-black" x-text="sitevisits.detail?.company_name || '(unnamed)'"></h3>
+        </div>
+        <button @click="sitevisits.detailModal = false" class="text-metfraa-gray-400 hover:text-metfraa-ink text-2xl leading-none">&times;</button>
+      </div>
+      <div class="p-6 overflow-y-auto flex-1" x-show="sitevisits.detail">
+        <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
+          <div><div class="text-xs uppercase text-metfraa-gray-500 font-semibold">Visit date</div><div x-text="sitevisits.detail?.visit_date ? new Date(sitevisits.detail.visit_date).toLocaleDateString('en-IN', {day:'2-digit',month:'short',year:'numeric'}) : '—'"></div></div>
+          <div><div class="text-xs uppercase text-metfraa-gray-500 font-semibold">Visited by</div><div x-text="sitevisits.detail?.visited_by || '—'"></div></div>
+          <div><div class="text-xs uppercase text-metfraa-gray-500 font-semibold">Contact</div><div x-text="sitevisits.detail?.contact_person || '—'"></div></div>
+          <div><div class="text-xs uppercase text-metfraa-gray-500 font-semibold">Phone</div><div x-text="sitevisits.detail?.contact_phone || '—'"></div></div>
+          <div><div class="text-xs uppercase text-metfraa-gray-500 font-semibold">Email</div><div x-text="sitevisits.detail?.contact_email || '—'"></div></div>
+          <div><div class="text-xs uppercase text-metfraa-gray-500 font-semibold">Priority</div><div x-text="sitevisits.detail?.priority || '—'"></div></div>
+          <div class="col-span-2"><div class="text-xs uppercase text-metfraa-gray-500 font-semibold">Site address</div><div x-text="sitevisits.detail?.site_address || '—'"></div></div>
+        </div>
+
+        <div class="border-t border-metfraa-gray-200 pt-4 mb-4">
+          <div class="text-xs uppercase text-metfraa-gray-500 font-semibold mb-2">Category — <span x-text="categoryLabel(sitevisits.detail?.category)"></span></div>
+          <pre class="bg-metfraa-gray-50 border border-metfraa-gray-200 rounded p-3 text-xs overflow-x-auto whitespace-pre-wrap" x-text="formatDetails(sitevisits.detail?.details_json)"></pre>
+        </div>
+
+        <template x-if="sitevisits.detail?.discussion_notes">
+          <div class="mb-4">
+            <div class="text-xs uppercase text-metfraa-gray-500 font-semibold mb-1">Discussion notes</div>
+            <div class="bg-metfraa-gray-50 rounded p-3 text-sm whitespace-pre-wrap" x-text="sitevisits.detail?.discussion_notes"></div>
+          </div>
+        </template>
+
+        <template x-if="sitevisits.detail?.next_steps">
+          <div class="mb-4">
+            <div class="text-xs uppercase text-metfraa-gray-500 font-semibold mb-1">Next steps</div>
+            <div class="bg-metfraa-gray-50 rounded p-3 text-sm whitespace-pre-wrap" x-text="sitevisits.detail?.next_steps"></div>
+          </div>
+        </template>
+
+        <template x-if="sitevisits.detail?.photos && sitevisits.detail.photos.length > 0">
+          <div class="mb-4">
+            <div class="text-xs uppercase text-metfraa-gray-500 font-semibold mb-2" x-text="`Photos (${sitevisits.detail.photos.length})`"></div>
+            <div class="grid grid-cols-3 gap-3">
+              <template x-for="p in sitevisits.detail.photos" :key="p.id">
+                <div class="border border-metfraa-gray-200 rounded overflow-hidden">
+                  <img :src="'data:image/jpeg;base64,' + p.thumbnail_b64" class="w-full h-32 object-cover">
+                  <div class="text-xs p-2 text-metfraa-gray-600" x-text="p.caption || '—'"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+      <div class="px-6 py-3 border-t border-metfraa-gray-200 flex justify-end gap-2">
+        <a x-show="sitevisits.detail?.status === 'submitted'" :href="`/site-visits/api/${sitevisits.detail?.id}/pdf`" target="_blank"
+           class="text-sm font-semibold px-4 py-2 rounded border border-metfraa-gray-300 hover:border-metfraa-blue text-metfraa-ink">Download PDF</a>
+        <a :href="`/site-visits/${sitevisits.detail?.id}`"
+           class="text-sm font-semibold px-4 py-2 rounded bg-metfraa-blue hover:bg-blue-600 text-white">Open full record</a>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function adminApp() {
+  return {
+    tab: 'daily',  // default to daily activity for admins
+    // Edit/Delete employee state
+    editEmpModal: false,
+    editEmp: { id: null, name: '', email: '', designation: '', department: '', reports_to: '', is_admin: false },
+    editEmpSaving: false,
+    deleteEmpModal: false,
+    deleteEmp: { id: null, name: '', email: '', designation: '' },
+    deleteEmpConfirmText: '',
+    deleteEmpDeleting: false,
+
+    // Monthly KPI admin dashboard state (3)
+    monthly: {
+      selMonth: new Date().getMonth() === 0 ? 12 : new Date().getMonth(),
+      selYear: new Date().getMonth() === 0 ? new Date().getFullYear() - 1 : new Date().getFullYear(),
+      yearOptions: [new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1],
+      rows: [],
+    },
+    monthlyDetailModal: false,
+    monthlyDetailEmp: null,
+
+    // Daily task Excel state (2B)
+    dailyExcelDate: '',
+    dailyExcelSending: false,
+
+    // Site visits state (Phase 4)
+    sitevisits: {
+      list: [],
+      from: '',
+      to: '',
+      category: '',
+      priority: '',
+      status: '',
+      detailModal: false,
+      detail: null,
+    },
+
+    // Password reset requests state (hoisted to root for Alpine reactivity)
+    pwresets_filter: 'pending',
+    pwresets_all: [],       // full response from API
+    pwresets_pending_count: 0,
+    // Computed list (getter equivalent — recomputed on filter change)
+    get pwresets_list() {
+      if (!Array.isArray(this.pwresets_all)) return [];
+      if (this.pwresets_filter === 'pending') {
+        return this.pwresets_all.filter(r => r.status === 'pending');
+      }
+      return this.pwresets_all;
+    },
+
+    unlocks: {
+      list: [],
+      filter: 'pending',
+      pendingCount: 0,
+      denyModal: false,
+      denyTarget: null,
+      denyReason: '',
+      acting: false,
+    },
+    daily: {
+      date: new Date().toISOString().slice(0, 10),
+      data: { stats: {}, rows: [] },
+      filter: 'all',
+      search: '',
+      detailModal: false,
+      detail: {},
+      autoRefresh: false,
+      autoRefreshTimer: null,
+    },
+    monthLabel: new Date().toLocaleString('en-IN', { month: 'long', year: 'numeric' }),
+    overview: {},
+    employees: [],
+    selectedEmp: null,
+    kpiList: [],
+    allReports: [],
+
+    syncingExcel: false,
+    generatingReport: false,
+
+    newEmpModal: false,
+    newEmp: { email: '', name: '', designation: '', department: '', reports_to: '', is_admin: false, jrr_text: '' },
+
+    newKpiModal: false,
+    newKpi: { name: '', unit: 'Count', weight: 10, target: 0 },
+
+    adminGenModal: false,
+    genForm: { emp_id: '', year: new Date().getFullYear(), month: new Date().getMonth() + 1 },
+
+    empDetailModal: false,
+    empDetail: {},
+
+    get totalWeight() {
+      return Math.round(this.kpiList.reduce((s, k) => s + (Number(k.weight) || 0), 0) * 10) / 10;
+    },
+    get topPerformer() {
+      return (this.overview.leaderboard || [])[0];
+    },
+
+    init() {
+      this.loadDailyActivity();
+    },
+
+    async loadDailyActivity() {
+      try {
+        const r = await fetch('/admin/api/daily-activity?target_date=' + this.daily.date);
+        if (!r.ok) throw new Error('Failed to load activity');
+        this.daily.data = await r.json();
+        // Also refresh the pending unlock-requests badge count
+        try {
+          const ur = await fetch('/admin/api/unlock-requests?status=pending');
+          const ud = await ur.json();
+          this.unlocks.pendingCount = ud.pending_count || 0;
+        } catch {}
+      } catch (e) {
+        console.error(e);
+        toast('Failed to load daily activity', 'error');
+      }
+    },
+
+    // ---- Site Visits (Phase 4) ----
+    async loadSiteVisits() {
+      try {
+        const r = await fetch('/site-visits/api/list?all_employees=true');
+        if (!r.ok) throw new Error('Failed to load site visits');
+        let list = await r.json();
+        if (!Array.isArray(list)) list = [];
+        // Client-side filters
+        const f = this.sitevisits;
+        if (f.from) list = list.filter(v => v.visit_date && v.visit_date >= f.from);
+        if (f.to) list = list.filter(v => v.visit_date && v.visit_date <= f.to);
+        if (f.category) list = list.filter(v => v.category === f.category);
+        if (f.priority) list = list.filter(v => v.priority === f.priority);
+        if (f.status) list = list.filter(v => v.status === f.status);
+        this.sitevisits.list = list;
+      } catch (e) {
+        console.error(e);
+        toast('Failed to load site visits', 'error');
+      }
+    },
+
+    async openVisitDetail(v) {
+      this.sitevisits.detail = null;
+      this.sitevisits.detailModal = true;
+      try {
+        const r = await fetch('/site-visits/api/' + v.id);
+        if (!r.ok) throw new Error('Failed to load visit');
+        this.sitevisits.detail = await r.json();
+      } catch (e) {
+        toast(e.message, 'error');
+        this.sitevisits.detailModal = false;
+      }
+    },
+
+    categoryLabel(cat) {
+      return ({
+        newshed: 'New Shed', reroof: 'Re-roofing', extension: 'Extension', other: 'Other',
+      })[cat] || cat || '—';
+    },
+
+    formatDetails(d) {
+      if (!d || Object.keys(d).length === 0) return '(no details entered)';
+      const lines = [];
+      for (const [k, v] of Object.entries(d)) {
+        if (v === null || v === '' || v === undefined) continue;
+        const val = Array.isArray(v) ? v.join(', ') : v;
+        lines.push(`${k.padEnd(20)} ${val}`);
+      }
+      return lines.length > 0 ? lines.join('\n') : '(no details entered)';
+    },
+
+    toggleAutoRefresh() {
+      if (this.daily.autoRefreshTimer) {
+        clearInterval(this.daily.autoRefreshTimer);
+        this.daily.autoRefreshTimer = null;
+      }
+      if (this.daily.autoRefresh) {
+        this.daily.autoRefreshTimer = setInterval(() => this.loadDailyActivity(), 60000);
+      }
+    },
+
+    get filteredDailyRows() {
+      let rows = this.daily.data.rows || [];
+      if (this.daily.filter === 'pending') {
+        rows = rows.filter(r => r.status === 'pending');
+      } else if (this.daily.filter === 'work') {
+        rows = rows.filter(r => r.status === 'work');
+      } else if (this.daily.filter === 'casual_leave') {
+        rows = rows.filter(r => r.status === 'casual_leave');
+      } else if (this.daily.filter === 'site_remote') {
+        rows = rows.filter(r => r.status === 'site_remote');
+      } else if (this.daily.filter === 'off') {
+        rows = rows.filter(r => r.status === 'sunday' || r.status === 'holiday');
+      }
+      const q = (this.daily.search || '').toLowerCase().trim();
+      if (q) {
+        rows = rows.filter(r =>
+          r.name.toLowerCase().includes(q) ||
+          (r.designation || '').toLowerCase().includes(q)
+        );
+      }
+      return rows;
+    },
+
+    dailyBadgeClass(status) {
+      return ({
+        work: 'bg-emerald-100 text-emerald-800',
+        pending: 'bg-amber-100 text-amber-800',
+        casual_leave: 'bg-yellow-100 text-yellow-800',
+        site_remote: 'bg-blue-100 text-blue-800',
+        sunday: 'bg-gray-100 text-gray-700',
+        holiday: 'bg-purple-100 text-purple-800',
+      })[status] || 'bg-gray-100 text-gray-700';
+    },
+
+    dailyStatusLabel(status) {
+      return ({
+        work: 'Submitted',
+        pending: 'Pending',
+        casual_leave: 'Casual Leave',
+        site_remote: 'Site/Remote',
+        sunday: 'Sunday',
+        holiday: 'Holiday',
+      })[status] || status;
+    },
+
+    dailyAvatarColor(status) {
+      return ({
+        work: 'bg-emerald-500',
+        pending: 'bg-amber-400',
+        casual_leave: 'bg-yellow-500',
+        site_remote: 'bg-blue-500',
+        sunday: 'bg-gray-400',
+        holiday: 'bg-purple-500',
+      })[status] || 'bg-metfraa-gray-400';
+    },
+
+    formatTime(iso) {
+      if (!iso) return '';
+      return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    },
+
+    formatDateTime(iso) {
+      if (!iso) return '';
+      return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    },
+
+    openEditEmployee(emp) {
+      this.editEmp = {
+        id: emp.id,
+        name: emp.name || '',
+        email: emp.email || '',
+        designation: emp.designation || '',
+        department: emp.department || '',
+        reports_to: emp.reports_to || '',
+        is_admin: !!emp.is_admin,
+      };
+      this.editEmpModal = true;
+    },
+
+    async saveEditEmployee() {
+      if (!this.editEmp.name.trim() || !this.editEmp.email.trim() || !this.editEmp.designation.trim()) {
+        toast('Name, email and designation are required', 'error');
+        return;
+      }
+      this.editEmpSaving = true;
+      try {
+        const res = await fetch('/admin/api/employees/' + this.editEmp.id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: this.editEmp.name.trim(),
+            email: this.editEmp.email.trim(),
+            designation: this.editEmp.designation.trim(),
+            department: this.editEmp.department.trim() || null,
+            reports_to: this.editEmp.reports_to.trim() || null,
+            is_admin: !!this.editEmp.is_admin,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Update failed');
+        toast('Employee updated', 'success');
+        this.editEmpModal = false;
+        await this.loadEmployees();
+      // Load password resets in background for the pending badge
+      this.loadPasswordResets();
+      // Initialize daily excel date picker to yesterday
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      this.dailyExcelDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.editEmpSaving = false;
+      }
+    },
+
+    confirmDeleteEmployee(emp) {
+      this.deleteEmp = {
+        id: emp.id,
+        name: emp.name,
+        email: emp.email,
+        designation: emp.designation,
+      };
+      this.deleteEmpConfirmText = '';
+      this.deleteEmpModal = true;
+    },
+
+    async performDeleteEmployee() {
+      if (this.deleteEmpConfirmText !== this.deleteEmp.name) return;
+      this.deleteEmpDeleting = true;
+      try {
+        const res = await fetch('/admin/api/employees/' + this.deleteEmp.id + '/purge', {
+          method: 'DELETE',
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Delete failed');
+        toast(`Deleted ${this.deleteEmp.name}`, 'success');
+        this.deleteEmpModal = false;
+        this.deleteEmp = { id: null, name: '', email: '', designation: '' };
+        this.deleteEmpConfirmText = '';
+        await this.loadEmployees();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.deleteEmpDeleting = false;
+      }
+    },
+
+    todayIso() {
+      const d = new Date();
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    },
+
+    monthNameShort(m) {
+      return new Date(2000, m - 1, 1).toLocaleString('en-IN', { month: 'short' });
+    },
+
+    async generateMonthlyPdf(r) {
+      const url = `/reports/download/${r.employee.id}/${this.monthly.selYear}/${this.monthly.selMonth}`;
+      window.open(url, '_blank');
+    },
+
+    async loadMonthlyKpiDashboard() {
+      try {
+        const res = await fetch(`/admin/api/monthly-kpi/${this.monthly.selYear}/${this.monthly.selMonth}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to load');
+        this.monthly.rows = Array.isArray(data) ? data : [];
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    async sendDailyExcel() {
+      if (!this.dailyExcelDate) {
+        toast('Pick a date first', 'error');
+        return;
+      }
+      if (!confirm(`Send the consolidated task report for ${this.dailyExcelDate} to vp@metfraa.com now?`)) return;
+      this.dailyExcelSending = true;
+      try {
+        const res = await fetch(`/admin/api/daily-task-excel/${this.dailyExcelDate}/send`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Send failed');
+        const s = data.result?.stats || {};
+        toast(`Sent. ${s.submitters || 0}/${s.total_employees || 0} submitted, ${s.total_tasks || 0} tasks, ${s.missed || 0} missed.`, 'success');
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.dailyExcelSending = false;
+      }
+    },
+
+    async loadPasswordResets() {
+      try {
+        const res = await fetch('/admin/api/password-reset-requests');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to load');
+        const rows = Array.isArray(data) ? data : [];
+        this.pwresets_all = rows;
+        this.pwresets_pending_count = rows.filter(r => r.status === 'pending').length;
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    async approvePasswordReset(r) {
+      if (!confirm(`Reset password for ${r.employee_name} (${r.employee_code}) to Metfraa@123?`)) return;
+      try {
+        const res = await fetch(`/admin/api/password-reset-requests/${r.id}/approve`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Approval failed');
+        toast(`Password reset for ${r.employee_name}. Tell them the default password.`, 'success');
+        await this.loadPasswordResets();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    async denyPasswordReset(r) {
+      if (!confirm(`Deny password reset request from ${r.employee_name}?`)) return;
+      try {
+        const res = await fetch(`/admin/api/password-reset-requests/${r.id}/deny`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Deny failed');
+        toast('Request denied.', 'success');
+        await this.loadPasswordResets();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    async loadUnlockRequests() {
+      let url = '/admin/api/unlock-requests';
+      if (this.unlocks.filter) {
+        url += '?status=' + this.unlocks.filter;
+      }
+      try {
+        const r = await fetch(url);
+        const data = await r.json();
+        this.unlocks.list = data.requests || [];
+        this.unlocks.pendingCount = data.pending_count || 0;
+      } catch (e) {
+        toast('Failed to load unlock requests', 'error');
+      }
+    },
+
+    async approveUnlock(r) {
+      const msg = prompt('Optional message to employee (leave blank for none):', '');
+      if (msg === null) return; // cancelled
+      try {
+        const res = await fetch('/admin/api/unlock-requests/' + r.id + '/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ admin_response: msg || '' }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Approve failed');
+        toast('Request approved — employee can now edit', 'success');
+        await this.loadUnlockRequests();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    openDenyModal(r) {
+      this.unlocks.denyTarget = r;
+      this.unlocks.denyReason = '';
+      this.unlocks.denyModal = true;
+    },
+
+    async confirmDenyUnlock() {
+      const r = this.unlocks.denyTarget;
+      if (!r) return;
+      if (!this.unlocks.denyReason || this.unlocks.denyReason.trim().length < 3) {
+        toast('Please provide a reason (3+ chars)', 'error');
+        return;
+      }
+      this.unlocks.acting = true;
+      try {
+        const res = await fetch('/admin/api/unlock-requests/' + r.id + '/deny', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ admin_response: this.unlocks.denyReason.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Deny failed');
+        toast('Request denied', 'success');
+        this.unlocks.denyModal = false;
+        this.unlocks.denyTarget = null;
+        this.unlocks.denyReason = '';
+        await this.loadUnlockRequests();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.unlocks.acting = false;
+      }
+    },
+
+    async openDailyDetail(row) {
+      try {
+        const r = await fetch(`/admin/api/employee-entry/${row.id}/${this.daily.date}`);
+        this.daily.detail = await r.json();
+        this.daily.detailModal = true;
+      } catch (e) {
+        toast('Failed to load entry details', 'error');
+      }
+    },
+
+    async loadOverview() {
+      const r = await fetch('/admin/api/overview');
+      this.overview = await r.json();
+    },
+
+    async loadEmployees() {
+      const r = await fetch('/admin/api/employees');
+      this.employees = await r.json();
+    },
+
+    async loadAllReports() {
+      const r = await fetch('/reports/list');
+      this.allReports = await r.json();
+    },
+
+    async selectKPIEmp(emp) {
+      this.selectedEmp = emp;
+      const r = await fetch(`/admin/api/employees/${emp.id}/kpis`);
+      this.kpiList = await r.json();
+    },
+
+    async saveKPI(k) {
+      try {
+        const res = await fetch(`/admin/api/kpis/${k.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: k.name, unit: k.unit, weight: k.weight, target: k.target }),
+        });
+        if (!res.ok) throw new Error('Save failed');
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    async deleteKPI(k) {
+      if (!confirm(`Delete KPI "${k.name}"? This will also remove all daily values for this KPI.`)) return;
+      try {
+        const res = await fetch(`/admin/api/kpis/${k.id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Delete failed');
+        toast('KPI deleted', 'success');
+        this.selectKPIEmp(this.selectedEmp);
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    async createKPI() {
+      if (!this.newKpi.name) { toast('Name is required', 'error'); return; }
+      try {
+        const res = await fetch(`/admin/api/employees/${this.selectedEmp.id}/kpis`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.newKpi),
+        });
+        if (!res.ok) throw new Error('Create failed');
+        toast('KPI added', 'success');
+        this.newKpiModal = false;
+        this.selectKPIEmp(this.selectedEmp);
+        this.loadEmployees();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    async createEmployee() {
+      if (!this.newEmp.email || !this.newEmp.name || !this.newEmp.designation) {
+        toast('Email, name and designation are required', 'error');
+        return;
+      }
+      try {
+        const res = await fetch('/admin/api/employees', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.newEmp),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Create failed');
+        toast('Employee added — now define their KPIs in the KPI Master tab', 'success');
+        this.newEmpModal = false;
+        this.newEmp = { email: '', name: '', designation: '', department: '', reports_to: '', is_admin: false, jrr_text: '' };
+        this.loadEmployees();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    async syncMasterExcel() {
+      this.syncingExcel = true;
+      try {
+        const res = await fetch('/reports/admin/sync-master-excel', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Sync failed');
+        if (data.onedrive_status === 'uploaded') {
+          toast('Master Excel uploaded to OneDrive', 'success');
+        } else if (data.onedrive_status === 'skipped') {
+          toast('OneDrive not configured — use Download Excel to get the file', 'warning');
+        } else {
+          toast('OneDrive upload failed: ' + data.onedrive_status, 'error');
+        }
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.syncingExcel = false;
+      }
+    },
+
+    async toggleAdmin() {
+      if (!this.empDetail.employee?.id) return;
+      const newVal = !this.empDetail.employee.is_admin;
+      const actionLabel = newVal ? 'grant admin access to' : 'revoke admin access from';
+      if (!confirm(`Are you sure you want to ${actionLabel} ${this.empDetail.employee.name}?`)) return;
+      try {
+        const res = await fetch(`/admin/api/employees/${this.empDetail.employee.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ is_admin: newVal }),
+        });
+        if (!res.ok) throw new Error('Update failed');
+        this.empDetail.employee.is_admin = newVal;
+        toast(newVal ? 'Admin access granted' : 'Admin access revoked', 'success');
+        // Refresh the employee list in background
+        this.loadEmployees();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    async viewEmployee(emp_id) {
+      const today = new Date();
+      const r = await fetch(`/admin/api/employees/${emp_id}/performance?year=${today.getFullYear()}&month=${today.getMonth() + 1}`);
+      this.empDetail = await r.json();
+      this.empDetailModal = true;
+    },
+
+    async adminGenerateReport() {
+      if (!this.genForm.emp_id) { toast('Pick an employee', 'error'); return; }
+      this.generatingReport = true;
+      try {
+        const res = await fetch(`/reports/admin-generate/${this.genForm.emp_id}/${this.genForm.year}/${this.genForm.month}`,
+                                { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Generate failed');
+        toast(data.onedrive_status === 'uploaded' ? 'Generated and uploaded to OneDrive' : 'Generated locally (' + data.onedrive_status + ')', 'success');
+        this.adminGenModal = false;
+        this.loadAllReports();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.generatingReport = false;
+      }
+    },
+
+    async regenerateReport(emp_id, year, month) {
+      try {
+        const res = await fetch(`/reports/admin-generate/${emp_id}/${year}/${month}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Regenerate failed');
+        toast('Regenerated', 'success');
+        this.loadAllReports();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    monthName(m) {
+      return new Date(2000, m - 1, 1).toLocaleString('en-IN', { month: 'long' });
+    },
+  };
+}
+</script>
+{% endblock %}

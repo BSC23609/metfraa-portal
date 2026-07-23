@@ -1,0 +1,656 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Metfraa KPI{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="dashboardApp()">
+
+  <!-- Page header -->
+  <div class="mb-8">
+    <div class="flex items-baseline gap-3">
+      <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">My Dashboard</div>
+      <div class="text-xs text-metfraa-gray-400 mono" x-text="todayLabel"></div>
+    </div>
+    <h1 class="display text-3xl md:text-4xl font-bold text-metfraa-black mt-1">
+      Hi, <span x-text="me.name?.split(' ')[0] || ''"></span>
+    </h1>
+    <p class="text-metfraa-gray-500 text-sm mt-1" x-text="me.designation"></p>
+  </div>
+
+  <!-- Tab nav -->
+  <div class="border-b border-metfraa-gray-200 mb-6">
+    <nav class="flex gap-1">
+      <button @click="tab='entry'"
+              :class="tab==='entry' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        Daily Entry
+      </button>
+      <button @click="tab='performance'; loadSummary()"
+              :class="tab==='performance' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        My Performance
+      </button>
+      <button @click="tab='history'; loadHistory(); loadMyUnlockRequests()"
+              :class="tab==='history' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        History
+      </button>
+      <button @click="tab='reports'; loadReports()"
+              :class="tab==='reports' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+        Monthly Reports
+      </button>
+    </nav>
+  </div>
+
+  <!-- =============== TAB: DAILY ENTRY =============== -->
+  <div x-show="tab==='entry'" x-cloak>
+    <!-- Date picker + status -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mb-5 flex items-center justify-between flex-wrap gap-3">
+      <div>
+        <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Entry Date</label>
+        <div class="flex items-center gap-3 mt-1">
+          <input type="date"
+                 x-model="entryDate"
+                 :max="todayISO"
+                 @change="loadEntry()"
+                 class="border-metfraa-gray-300 rounded-lg text-sm font-medium focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          <button @click="entryDate = todayISO; loadEntry()"
+                  class="text-xs text-metfraa-blue hover:underline font-semibold">Today</button>
+        </div>
+      </div>
+
+      <div class="text-sm flex items-center gap-2 flex-wrap">
+        <template x-if="existingEntry && existingEntry.exists && isLocked">
+          <div class="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
+            <span class="text-amber-800 font-semibold">🔒 Locked</span>
+            <span class="text-amber-700">Already submitted</span>
+          </div>
+        </template>
+        <template x-if="existingEntry && existingEntry.exists && !isLocked">
+          <div class="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg">
+            <span class="text-blue-800 font-semibold">✏ Unlocked</span>
+            <span class="text-blue-700">Please correct and resubmit</span>
+          </div>
+        </template>
+        <template x-if="!existingEntry || !existingEntry.exists">
+          <div class="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg">
+            <span class="text-emerald-800 font-semibold">✓ Ready</span>
+            <span class="text-emerald-700">Pending submission</span>
+          </div>
+        </template>
+
+        <!-- Unlock request status -->
+        <template x-if="unlockReq && unlockReq.status === 'pending'">
+          <div class="flex items-center gap-2 px-3 py-1.5 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <span class="text-yellow-800 font-semibold">⏳ Unlock requested</span>
+            <span class="text-yellow-700">Waiting for admin</span>
+          </div>
+        </template>
+        <template x-if="unlockReq && unlockReq.status === 'denied'">
+          <div class="flex items-center gap-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg">
+            <span class="text-red-800 font-semibold">✗ Unlock denied</span>
+            <span class="text-red-700 text-xs" x-text="unlockReq.admin_response || ''"></span>
+          </div>
+        </template>
+
+        <!-- Request unlock button -->
+        <template x-if="canRequestUnlock">
+          <button @click="unlockModal = true; unlockReason = ''"
+                  class="text-xs font-semibold px-3 py-1.5 rounded border border-metfraa-blue/40 text-metfraa-blue hover:bg-metfraa-blue/5">
+            Request unlock
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <!-- Entry-type selector -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mb-5">
+      <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-3">
+        Day Type
+      </label>
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <template x-for="opt in dayTypes" :key="opt.value">
+          <button @click="if (!isLocked) entryType = opt.value"
+                  :disabled="isLocked"
+                  :class="entryType === opt.value
+                    ? 'bg-metfraa-black text-white border-metfraa-black'
+                    : 'bg-white text-metfraa-gray-700 border-metfraa-gray-200 hover:border-metfraa-blue'"
+                  class="border-2 rounded-lg px-3 py-3 text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+            <div x-text="opt.icon" class="text-xl mb-1"></div>
+            <div x-text="opt.label" class="text-xs"></div>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <!-- KPI form (shown only when entryType === 'work') -->
+    <div x-show="entryType === 'work'" class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Today's KPIs</div>
+          <h3 class="display text-lg font-bold text-metfraa-black">Daily Counters</h3>
+        </div>
+        <div class="text-xs text-metfraa-gray-500" x-text="`${me.kpis?.length || 0} KPIs`"></div>
+      </div>
+
+      <div class="space-y-3">
+        <template x-for="(kpi, idx) in (me.kpis || [])" :key="kpi.id">
+          <div class="flex items-center gap-3 p-3 hover:bg-metfraa-gray-50 rounded-lg border border-transparent hover:border-metfraa-gray-200">
+            <div class="text-xs mono text-metfraa-gray-400 w-7" x-text="String(idx + 1).padStart(2, '0')"></div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold text-metfraa-ink" x-text="kpi.name"></div>
+              <div class="text-[11px] text-metfraa-gray-500 mt-0.5">
+                Weight: <span class="mono font-semibold" x-text="kpi.weight + '%'"></span>
+                · Target: <span class="mono font-semibold" x-text="kpi.target + ' ' + kpi.unit"></span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <input type="number" min="0" step="any"
+                     :disabled="isLocked"
+                     x-model.number="kpiValues[kpi.id]"
+                     class="w-24 text-right text-sm font-semibold rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-100"
+                     placeholder="0" />
+              <div class="text-[11px] text-metfraa-gray-500 w-10" x-text="kpi.unit"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Comments -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mb-5">
+      <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-2">
+        Comments / Remarks <span class="text-metfraa-gray-400 normal-case font-normal">(optional)</span>
+      </label>
+      <textarea x-model="comments"
+                :disabled="isLocked"
+                rows="3"
+                placeholder="Anything noteworthy from today — blockers, achievements, or context..."
+                class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-100"></textarea>
+    </div>
+
+    <!-- Submit button -->
+    <div class="flex justify-end items-center gap-3">
+      <div class="text-xs text-metfraa-gray-500" x-show="!isLocked">
+        ⚠ Once submitted, this entry cannot be edited.
+      </div>
+      <button @click="submitEntry()"
+              :disabled="isLocked || submitting"
+              class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white font-semibold px-6 py-3 rounded-lg shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+        <span x-show="!submitting" x-text="isLocked ? 'Already submitted' : 'Submit & Lock entry'"></span>
+        <span x-show="submitting">Submitting...</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- =============== TAB: MY PERFORMANCE =============== -->
+  <div x-show="tab==='performance'" x-cloak>
+    <!-- Month selector + score -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
+      <!-- Score card -->
+      <div class="lg:col-span-1 bg-gradient-to-br from-metfraa-black to-metfraa-ink rounded-xl shadow-lg p-6 text-white relative overflow-hidden">
+        <div class="absolute top-0 right-0 w-32 h-32 bg-metfraa-blue/20 rounded-full blur-3xl"></div>
+        <div class="relative">
+          <div class="text-xs font-semibold uppercase tracking-widest text-metfraa-gray-400 mb-1">Final Score</div>
+          <div class="text-xs text-metfraa-gray-500 mono" x-text="monthLabel"></div>
+          <div class="display mt-3 text-7xl font-bold leading-none">
+            <span x-text="(summary.final_score || 0).toFixed(1)"></span>
+          </div>
+          <div class="text-metfraa-gray-400 text-sm mt-1">/ 100</div>
+
+          <div class="mt-5 pt-4 border-t border-white/10 grid grid-cols-3 gap-2 text-center">
+            <div>
+              <div class="text-2xl font-bold text-white" x-text="summary.attendance?.work_days || 0"></div>
+              <div class="text-[10px] text-metfraa-gray-400 uppercase tracking-wider">Work</div>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-white" x-text="summary.attendance?.leave_days || 0"></div>
+              <div class="text-[10px] text-metfraa-gray-400 uppercase tracking-wider">Leave</div>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-amber-400" x-text="summary.attendance?.missed_days || 0"></div>
+              <div class="text-[10px] text-metfraa-gray-400 uppercase tracking-wider">Missed</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Daily trend chart -->
+      <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5">
+        <div class="flex items-center justify-between mb-2">
+          <div>
+            <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Daily Activity</div>
+            <h3 class="display font-bold text-metfraa-black">Trend</h3>
+          </div>
+        </div>
+        <canvas id="trendChart" height="150"></canvas>
+      </div>
+    </div>
+
+    <!-- KPI breakdown -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">KPI Breakdown</div>
+          <h3 class="display font-bold text-metfraa-black">Achievement vs Target</h3>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left border-b border-metfraa-gray-200">
+              <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">KPI</th>
+              <th class="pb-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Target</th>
+              <th class="pb-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Actual</th>
+              <th class="pb-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500 w-44">Achievement</th>
+              <th class="pb-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="r in (summary.kpi_results || [])" :key="r.name">
+              <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
+                <td class="py-3">
+                  <div class="font-semibold text-metfraa-ink" x-text="r.name"></div>
+                  <div class="text-[11px] text-metfraa-gray-500">Weight <span x-text="r.weight + '%'"></span> · <span x-text="r.unit"></span></div>
+                </td>
+                <td class="py-3 text-right mono" x-text="r.target.toFixed(0)"></td>
+                <td class="py-3 text-right mono font-semibold" x-text="r.actual.toFixed(0)"></td>
+                <td class="py-3">
+                  <div class="flex items-center gap-2">
+                    <div class="flex-1 h-2 bg-metfraa-gray-200 rounded-full overflow-hidden">
+                      <div :style="`width: ${Math.min(r.achievement_pct, 100)}%`"
+                           :class="r.achievement_pct >= 80 ? 'bg-emerald-500' : r.achievement_pct >= 60 ? 'bg-amber-500' : 'bg-red-500'"
+                           class="h-full rounded-full"></div>
+                    </div>
+                    <span class="text-xs font-semibold mono w-12 text-right" x-text="r.achievement_pct.toFixed(0) + '%'"></span>
+                  </div>
+                </td>
+                <td class="py-3 text-right">
+                  <span class="font-bold mono" x-text="r.weighted_score.toFixed(2)"></span>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- =============== TAB: HISTORY =============== -->
+  <div x-show="tab==='history'" x-cloak>
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">Submission History</div>
+          <h3 class="display font-bold text-metfraa-black">Last 120 entries</h3>
+        </div>
+      </div>
+      <div class="grid grid-cols-7 gap-1.5" x-show="history.length > 0">
+        <template x-for="h in history" :key="h.date">
+          <div :class="entryTypeColor(h.type)"
+               :title="h.date + ' · ' + h.type"
+               class="aspect-square rounded text-[10px] flex flex-col items-center justify-center p-1 cursor-help">
+            <div class="text-[9px] mono" x-text="h.date.split('-')[2]"></div>
+          </div>
+        </template>
+      </div>
+      <div x-show="history.length === 0" class="text-center py-12 text-metfraa-gray-500 text-sm">
+        No submissions yet — start with today's entry above.
+      </div>
+
+      <div class="mt-6 flex flex-wrap gap-3 text-xs">
+        <div class="flex items-center gap-1.5"><span class="w-3 h-3 bg-emerald-500 rounded"></span> Work</div>
+        <div class="flex items-center gap-1.5"><span class="w-3 h-3 bg-amber-400 rounded"></span> Leave</div>
+        <div class="flex items-center gap-1.5"><span class="w-3 h-3 bg-blue-500 rounded"></span> Site/Remote</div>
+        <div class="flex items-center gap-1.5"><span class="w-3 h-3 bg-metfraa-gray-400 rounded"></span> Sunday</div>
+        <div class="flex items-center gap-1.5"><span class="w-3 h-3 bg-purple-500 rounded"></span> Holiday</div>
+      </div>
+    </div>
+
+    <!-- My Unlock Requests -->
+    <div x-show="myUnlockRequests.length > 0" class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5 mt-5">
+      <div class="mb-4">
+        <div class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500">My Unlock Requests</div>
+        <h3 class="display font-bold text-metfraa-black">Recent requests</h3>
+      </div>
+      <ul class="divide-y divide-metfraa-gray-100">
+        <template x-for="r in myUnlockRequests" :key="r.id">
+          <li class="py-3 flex items-start gap-3">
+            <div class="text-xs font-semibold px-2 py-1 rounded mt-0.5"
+                 :class="({pending:'bg-yellow-100 text-yellow-800', approved:'bg-emerald-100 text-emerald-800', denied:'bg-red-100 text-red-800', completed:'bg-blue-100 text-blue-800'})[r.status] || 'bg-gray-100'">
+              <span x-text="r.status === 'pending' ? '⏳ Pending' : (r.status === 'approved' ? '✓ Approved' : (r.status === 'denied' ? '✗ Denied' : '✏ Used'))"></span>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-semibold text-metfraa-ink">Entry: <span x-text="r.entry_date"></span></div>
+              <div class="text-xs text-metfraa-gray-600 mt-0.5">Reason: <span x-text="r.reason"></span></div>
+              <div x-show="r.admin_response" class="text-xs text-metfraa-gray-500 italic mt-1">
+                Admin: <span x-text="r.admin_response"></span>
+              </div>
+            </div>
+            <div class="text-[10px] text-metfraa-gray-400 mono text-right">
+              <span x-text="formatDate(r.requested_at)"></span>
+            </div>
+          </li>
+        </template>
+      </ul>
+    </div>
+  </div>
+
+  <!-- =============== TAB: MONTHLY REPORTS =============== -->
+  <div x-show="tab==='reports'" x-cloak>
+    <!-- Generate this month -->
+    <div class="bg-gradient-to-br from-metfraa-blue to-metfraa-blue-dark rounded-xl shadow-lg p-6 text-white mb-5">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-widest text-blue-200 mb-1">Generate Report</div>
+          <h3 class="display text-2xl font-bold" x-text="`${monthLabel} report`"></h3>
+          <p class="text-blue-100 text-sm mt-1">
+            Locks the month's KPI data and uploads a branded PDF to OneDrive.
+          </p>
+        </div>
+        <button @click="generateReport()"
+                :disabled="generating"
+                class="bg-white text-metfraa-blue font-semibold px-5 py-3 rounded-lg shadow hover:shadow-xl disabled:opacity-50">
+          <span x-show="!generating">Generate this month's PDF</span>
+          <span x-show="generating">Generating...</span>
+        </button>
+      </div>
+      <div class="text-[11px] text-blue-100 mt-3">
+        ⓘ You must submit the entry for the last day of the month before generating.
+      </div>
+    </div>
+
+    <!-- Past reports list -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5">
+      <h3 class="display font-bold text-metfraa-black mb-3">Previously Generated</h3>
+      <div x-show="reports.length === 0" class="text-center py-10 text-metfraa-gray-500 text-sm">
+        No reports yet.
+      </div>
+      <ul class="divide-y divide-metfraa-gray-100">
+        <template x-for="r in reports" :key="r.id">
+          <li class="py-3 flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-12 bg-red-50 border border-red-200 rounded flex items-center justify-center text-red-600 font-bold text-[10px] mono">PDF</div>
+              <div>
+                <div class="font-semibold text-sm text-metfraa-ink" x-text="monthName(r.month) + ' ' + r.year"></div>
+                <div class="text-[11px] text-metfraa-gray-500">
+                  Score: <span class="mono font-semibold" x-text="r.final_score.toFixed(1)"></span> ·
+                  Generated <span x-text="formatDate(r.generated_at)"></span>
+                </div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <a :href="`/reports/download/${r.employee_id}/${r.year}/${r.month}`"
+                 class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark px-3 py-1.5 rounded border border-metfraa-blue/30 hover:bg-metfraa-blue/5">
+                Download PDF
+              </a>
+              <a x-show="r.pdf_url" :href="r.pdf_url" target="_blank"
+                 class="text-xs font-semibold text-metfraa-gray-700 hover:text-metfraa-ink px-3 py-1.5 rounded border border-metfraa-gray-300 hover:bg-metfraa-gray-50">
+                Open in OneDrive ↗
+              </a>
+            </div>
+          </li>
+        </template>
+      </ul>
+    </div>
+  </div>
+
+
+  <!-- Request Unlock modal -->
+  <div x-show="unlockModal" x-cloak
+       class="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4"
+       @click.self="unlockModal = false">
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full">
+      <div class="p-5 border-b border-metfraa-gray-200">
+        <h3 class="display font-bold text-metfraa-black text-xl">Request entry unlock</h3>
+        <p class="text-xs text-metfraa-gray-500 mt-1">An admin will review and approve or deny your request.</p>
+      </div>
+      <div class="p-5">
+        <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-2">
+          Why do you need to unlock this entry?
+        </label>
+        <textarea x-model="unlockReason" rows="4" maxlength="1000"
+                  placeholder="e.g. Wrong tonnage entered for KPI #3"
+                  class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue"></textarea>
+        <p class="text-[10px] text-metfraa-gray-400 mt-1">Entry date: <span x-text="entryDate"></span></p>
+      </div>
+      <div class="p-5 border-t border-metfraa-gray-200 flex justify-end gap-2">
+        <button @click="unlockModal = false" class="text-sm px-4 py-2 rounded-lg border border-metfraa-gray-300 hover:bg-metfraa-gray-50">Cancel</button>
+        <button @click="submitUnlockRequest()" :disabled="unlockSubmitting"
+                class="text-sm font-semibold px-4 py-2 rounded-lg bg-metfraa-blue text-white hover:bg-metfraa-blue-dark disabled:opacity-50">
+          <span x-show="!unlockSubmitting">Send request</span>
+          <span x-show="unlockSubmitting">Sending...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function dashboardApp() {
+  return {
+    me: { name: '', kpis: [] },
+    tab: 'entry',
+    todayISO: new Date().toISOString().slice(0, 10),
+    todayLabel: new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+    entryDate: new Date().toISOString().slice(0, 10),
+    entryType: 'work',
+    kpiValues: {},
+    comments: '',
+    existingEntry: null,
+    submitting: false,
+    unlockModal: false,
+    unlockReason: '',
+    unlockSubmitting: false,
+    myUnlockRequests: [],
+
+    summary: {},
+    history: [],
+    reports: [],
+    generating: false,
+    trendChart: null,
+
+    dayTypes: [
+      { value: 'work', label: 'Working Day', icon: '🏗️' },
+      { value: 'casual_leave', label: 'Casual Leave', icon: '🏖️' },
+      { value: 'site_remote', label: 'Site / Remote', icon: '🚛' },
+      { value: 'sunday', label: 'Sunday Off', icon: '☀️' },
+      { value: 'holiday', label: 'Holiday', icon: '🎉' },
+    ],
+
+    get isLocked() {
+      if (!this.existingEntry || !this.existingEntry.exists) return false;
+      return this.existingEntry.locked !== false;
+    },
+
+    get unlockReq() {
+      return this.existingEntry && this.existingEntry.unlock_request;
+    },
+
+    get canRequestUnlock() {
+      if (!this.existingEntry || !this.existingEntry.exists) return false;
+      if (this.existingEntry.locked === false) return false;
+      if (this.unlockReq && this.unlockReq.status === 'pending') return false;
+      const entryDate = new Date(this.existingEntry.date);
+      const today = new Date();
+      const diffDays = Math.floor((today - entryDate) / (1000 * 60 * 60 * 24));
+      return diffDays >= 0 && diffDays <= 7;
+    },
+
+    get monthLabel() {
+      const d = new Date();
+      return d.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+    },
+
+    init() {
+      fetch('/api/me').then(r => r.json()).then(data => {
+        this.me = data;
+        this.loadEntry();
+        this.loadMyUnlockRequests();
+      });
+    },
+
+    async loadEntry() {
+      const r = await fetch(`/api/entry/${this.entryDate}`);
+      const data = await r.json();
+      this.existingEntry = data;
+      if (data.exists) {
+        this.entryType = data.type;
+        this.comments = data.comments || '';
+        this.kpiValues = data.kpi_values || {};
+      } else {
+        this.entryType = 'work';
+        this.comments = '';
+        this.kpiValues = {};
+        // Initialize defaults
+        (this.me.kpis || []).forEach(k => { this.kpiValues[k.id] = 0; });
+      }
+    },
+
+    async submitUnlockRequest() {
+      if (!this.unlockReason || this.unlockReason.trim().length < 3) {
+        toast('Please enter a reason (3+ chars)', 'error');
+        return;
+      }
+      this.unlockSubmitting = true;
+      try {
+        const res = await fetch('/api/unlock-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entry_date: this.entryDate,
+            reason: this.unlockReason.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Request failed');
+        toast('Unlock request sent to admin', 'success');
+        this.unlockModal = false;
+        this.unlockReason = '';
+        await this.loadEntry();
+        await this.loadMyUnlockRequests();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.unlockSubmitting = false;
+      }
+    },
+
+    async loadMyUnlockRequests() {
+      const r = await fetch('/api/my-unlock-requests');
+      this.myUnlockRequests = await r.json();
+    },
+
+    async submitEntry() {
+      if (this.isLocked) return;
+      this.submitting = true;
+      try {
+        const res = await fetch('/api/entry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date: this.entryDate,
+            type: this.entryType,
+            comments: this.comments,
+            kpi_values: this.kpiValues,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Submit failed');
+        toast('Entry submitted and locked', 'success');
+        await this.loadEntry();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.submitting = false;
+      }
+    },
+
+    async loadSummary() {
+      const r = await fetch('/api/my-summary');
+      this.summary = await r.json();
+      this.$nextTick(() => this.drawTrendChart());
+    },
+
+    drawTrendChart() {
+      if (this.trendChart) this.trendChart.destroy();
+      const ctx = document.getElementById('trendChart');
+      if (!ctx) return;
+      const labels = (this.summary.trend?.days || []).map(d => d.split('-')[2]);
+      this.trendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: this.summary.trend?.daily_totals || [],
+            borderColor: '#3B82F6',
+            backgroundColor: 'rgba(59,130,246,0.1)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 3,
+            pointBackgroundColor: '#3B82F6',
+            borderWidth: 2,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+            y: { beginAtZero: true, grid: { color: '#F3F4F6' }, ticks: { font: { size: 10 } } }
+          }
+        }
+      });
+    },
+
+    async loadHistory() {
+      const r = await fetch('/api/my-history');
+      this.history = await r.json();
+    },
+
+    entryTypeColor(t) {
+      return ({
+        work: 'bg-emerald-500 text-white',
+        casual_leave: 'bg-amber-400 text-white',
+        site_remote: 'bg-blue-500 text-white',
+        sunday: 'bg-metfraa-gray-400 text-white',
+        holiday: 'bg-purple-500 text-white',
+      })[t] || 'bg-metfraa-gray-200';
+    },
+
+    async loadReports() {
+      const r = await fetch('/reports/list');
+      this.reports = await r.json();
+    },
+
+    monthName(m) {
+      return new Date(2000, m - 1, 1).toLocaleString('en-IN', { month: 'long' });
+    },
+    formatDate(iso) {
+      if (!iso) return '';
+      return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    },
+
+    async generateReport() {
+      const today = new Date();
+      const y = today.getFullYear(), m = today.getMonth() + 1;
+      this.generating = true;
+      try {
+        const res = await fetch(`/reports/generate-mine/${y}/${m}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Generate failed');
+        toast('Report generated and uploaded to OneDrive', 'success');
+        this.loadReports();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.generating = false;
+      }
+    },
+  };
+}
+</script>
+
+{% endblock %}

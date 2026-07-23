@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In — Metfraa Portal</title>
+  <link rel="icon" href="/static/img/favicon.png" type="image/png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'metfraa-black': '#000',
+            'metfraa-ink': '#111827',
+            'metfraa-blue': '#1E3A8A',
+            'metfraa-blue-dark': '#152A66',
+            'metfraa-gray-50': '#F9FAFB',
+            'metfraa-gray-100': '#F3F4F6',
+            'metfraa-gray-200': '#E5E7EB',
+            'metfraa-gray-300': '#D1D5DB',
+            'metfraa-gray-400': '#9CA3AF',
+            'metfraa-gray-500': '#6B7280',
+            'metfraa-gray-600': '#4B5563',
+            'metfraa-gray-700': '#374151',
+          },
+          fontFamily: {
+            'display': ['Inter', 'system-ui', 'sans-serif'],
+            'mono': ['ui-monospace', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-metfraa-gray-50 to-metfraa-gray-100 flex items-center justify-center p-4">
+
+  <div class="w-full max-w-md">
+    <!-- Logo header -->
+    <div class="text-center mb-8">
+      <img src="/static/img/metfraa_logo.png" alt="Metfraa" class="h-16 mx-auto mb-3" onerror="this.style.display='none'">
+      <h1 class="text-2xl font-bold text-metfraa-ink">Metfraa Portal</h1>
+      <p class="text-sm text-metfraa-gray-500 mt-1">KPIs · Expenses · EHS — sign in with your employee code</p>
+    </div>
+
+    <!-- Card -->
+    <div class="bg-white rounded-xl shadow-lg border border-metfraa-gray-200 p-6">
+
+      {% if err %}
+      <div class="mb-4 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg p-3 flex items-start gap-2">
+        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <span>{{ err }}</span>
+      </div>
+      {% endif %}
+
+      <form method="POST" action="/auth/login" class="space-y-4">
+        <input type="hidden" name="next" value="{{ next }}">
+
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1.5">
+            Employee code
+          </label>
+          <input type="text" name="employee_code"
+                 required autofocus autocomplete="username"
+                 placeholder="e.g. MET66"
+                 class="w-full text-sm font-mono uppercase rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue px-3 py-2.5" />
+        </div>
+
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1.5">
+            Password
+          </label>
+          <input type="password" name="password"
+                 required autocomplete="current-password"
+                 placeholder="Your password"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue px-3 py-2.5" />
+        </div>
+
+        <button type="submit"
+                class="w-full bg-metfraa-blue hover:bg-metfraa-blue-dark text-white font-semibold py-2.5 rounded-lg shadow-md hover:shadow-lg transition">
+          Sign in
+        </button>
+      </form>
+
+      <div class="mt-4 text-center">
+        <a href="/auth/forgot-password" class="text-xs text-metfraa-blue hover:text-metfraa-blue-dark font-semibold">
+          Forgot your password?
+        </a>
+      </div>
+
+    </div>
+
+    <div class="mt-6 text-center text-xs text-metfraa-gray-500">
+      First time logging in? Use the default password provided by HR.
+    </div>
+  </div>
+
+</body>
+</html>

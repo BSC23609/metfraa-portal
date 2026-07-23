@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Home — Metfraa Portal{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-10">
+
+  <!-- Greeting -->
+  <div class="mb-8">
+    <h1 class="display text-3xl font-bold text-metfraa-ink">
+      Welcome, {{ user.name.split(' ')[0] }}
+    </h1>
+    <p class="text-sm text-metfraa-gray-500 mt-1">
+      {% if user.is_admin %}Admin view — live task counts on each module.{% else %}Choose a module to get started.{% endif %}
+    </p>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+
+    <!-- ============ KPI TILE (LIVE) ============ -->
+    <a href="{% if user.is_admin %}/admin{% elif user.can_submit_task_report %}/task-reports/{% else %}/dashboard{% endif %}"
+       class="card-hover group relative bg-white rounded-2xl ring-1 ring-metfraa-gray-200 p-6 flex flex-col min-h-[220px]">
+      <div class="w-11 h-11 rounded-xl bg-metfraa-blue/10 flex items-center justify-center mb-4">
+        <svg class="w-6 h-6 text-metfraa-blue" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.5V21h4.5v-7.5H3zM9.75 8.25V21h4.5V8.25h-4.5zM16.5 3v18H21V3h-4.5z"/>
+        </svg>
+      </div>
+      <div class="font-display font-bold text-lg text-metfraa-ink">KPI Tracker</div>
+      <p class="text-sm text-metfraa-gray-500 mt-1 flex-1">
+        Daily tasks, monthly KPIs, site visits & dashboards.
+      </p>
+
+      {% if user.is_admin and admin_stats %}
+      <div class="mt-4 pt-4 border-t border-metfraa-gray-100 space-y-1.5 text-xs">
+        {% if admin_stats.pending_unlocks > 0 %}
+        <div class="flex items-center gap-2 text-amber-700">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+          <span class="font-semibold">{{ admin_stats.pending_unlocks }}</span> unlock request{{ 's' if admin_stats.pending_unlocks != 1 }} pending
+        </div>
+        {% endif %}
+        {% if admin_stats.pending_resets > 0 %}
+        <div class="flex items-center gap-2 text-amber-700">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+          <span class="font-semibold">{{ admin_stats.pending_resets }}</span> password reset{{ 's' if admin_stats.pending_resets != 1 }} pending
+        </div>
+        {% endif %}
+        <div class="flex items-center gap-2 text-metfraa-gray-600">
+          <span class="w-1.5 h-1.5 rounded-full bg-metfraa-blue"></span>
+          <span class="font-semibold">{{ admin_stats.kpi_submitted }}/{{ admin_stats.kpi_total }}</span> monthly KPIs submitted
+        </div>
+        {% if admin_stats.draft_visits > 0 %}
+        <div class="flex items-center gap-2 text-metfraa-gray-600">
+          <span class="w-1.5 h-1.5 rounded-full bg-metfraa-gray-400"></span>
+          <span class="font-semibold">{{ admin_stats.draft_visits }}</span> site visit{{ 's' if admin_stats.draft_visits != 1 }} in draft
+        </div>
+        {% endif %}
+        {% if admin_stats.pending_unlocks == 0 and admin_stats.pending_resets == 0 %}
+        <div class="flex items-center gap-2 text-emerald-700">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+          No approvals pending
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <div class="mt-4 flex items-center gap-1.5 text-sm font-semibold text-metfraa-blue">
+        Open <svg class="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12l-7.5 7.5M21 12H3"/></svg>
+      </div>
+    </a>
+
+    <!-- ============ EXPENSE TILE (COMING SOON) ============ -->
+    <a href="/expense/"
+       class="card-hover group relative bg-white rounded-2xl ring-1 ring-metfraa-gray-200 p-6 flex flex-col min-h-[220px] opacity-75 hover:opacity-100">
+      <span class="absolute top-4 right-4 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-metfraa-gray-100 text-metfraa-gray-500 rounded-full">Coming soon</span>
+      <div class="w-11 h-11 rounded-xl bg-emerald-500/10 flex items-center justify-center mb-4">
+        <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z"/>
+        </svg>
+      </div>
+      <div class="font-display font-bold text-lg text-metfraa-ink">Expense</div>
+      <p class="text-sm text-metfraa-gray-500 mt-1 flex-1">
+        Travel, cab, accommodation & advance claims with bill uploads.
+      </p>
+      <div class="mt-4 text-sm font-semibold text-metfraa-gray-400">Phase 2</div>
+    </a>
+
+    <!-- ============ EHS TILE (COMING SOON) ============ -->
+    <a href="/ehs/"
+       class="card-hover group relative bg-white rounded-2xl ring-1 ring-metfraa-gray-200 p-6 flex flex-col min-h-[220px] opacity-75 hover:opacity-100">
+      <span class="absolute top-4 right-4 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-metfraa-gray-100 text-metfraa-gray-500 rounded-full">Coming soon</span>
+      <div class="w-11 h-11 rounded-xl bg-amber-500/10 flex items-center justify-center mb-4">
+        <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>
+        </svg>
+      </div>
+      <div class="font-display font-bold text-lg text-metfraa-ink">EHS</div>
+      <p class="text-sm text-metfraa-gray-500 mt-1 flex-1">
+        Safety inspections, incident reports & toolbox talks.
+      </p>
+      <div class="mt-4 text-sm font-semibold text-metfraa-gray-400">Phase 1</div>
+    </a>
+
+  </div>
+</div>
+{% endblock %}

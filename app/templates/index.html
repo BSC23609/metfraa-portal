@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Sign in — Metfraa KPI Tracker{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-metfraa-black bg-grid relative flex items-center justify-center py-12 px-4">
+  <!-- Decorative blue bar -->
+  <div class="absolute top-0 left-0 right-0 h-1 bg-metfraa-blue"></div>
+  <div class="absolute bottom-0 left-0 right-0 h-1 bg-metfraa-blue"></div>
+
+  <div class="max-w-md w-full">
+    <!-- Logo -->
+    <div class="text-center mb-10">
+      <img src="/static/img/metfraa_logo.png"
+           alt="Metfraa Steel Buildings"
+           class="h-16 mx-auto mb-3"
+           onerror="this.outerHTML='<div class=&quot;font-display font-bold text-white text-4xl tracking-tight&quot;>METFRAA</div><div class=&quot;text-metfraa-blue text-xs uppercase tracking-[0.3em] mt-2&quot;>Steel Buildings</div>'" />
+      <p class="text-metfraa-gray-500 text-xs uppercase tracking-[0.25em] mt-3"></p>
+    </div>
+
+    <!-- Card -->
+    <div class="bg-white rounded-2xl shadow-2xl ring-1 ring-white/5 overflow-hidden">
+      <div class="p-8">
+        <div class="mb-1 text-xs font-bold uppercase tracking-widest text-metfraa-blue">KPI Tracker</div>
+        <h1 class="display text-3xl font-bold text-metfraa-black mb-2">Sign in to continue</h1>
+        <p class="text-metfraa-gray-500 text-sm leading-relaxed mb-6">
+          Use your <span class="font-semibold text-metfraa-ink">@metfraa.com</span> Microsoft 365 account to access your daily KPI dashboard.
+        </p>
+
+        <!-- Errors -->
+        {% if request.query_params.get('error') == 'unauthorized' %}
+        <div class="mb-5 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <div class="text-sm font-semibold text-red-800">Account not authorised</div>
+          <div class="text-xs text-red-700 mt-0.5">
+            <span class="mono">{{ request.query_params.get('email') }}</span> isn't on the employee roster. Contact admin if this is wrong.
+          </div>
+        </div>
+        {% endif %}
+        {% if request.query_params.get('error') == 'inactive' %}
+        <div class="mb-5 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+          <div class="text-sm font-semibold text-amber-800">Account inactive</div>
+          <div class="text-xs text-amber-700 mt-0.5">Your account has been deactivated. Contact admin.</div>
+        </div>
+        {% endif %}
+        {% if request.query_params.get('msal_not_configured') %}
+        <div class="mb-5 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <div class="text-sm font-semibold text-blue-800">Setup needed</div>
+          <div class="text-xs text-blue-700 mt-0.5">Microsoft SSO is not configured yet. Use dev login below.</div>
+        </div>
+        {% endif %}
+
+        <a href="/auth/login"
+           class="w-full inline-flex items-center justify-center gap-3 bg-metfraa-black text-white px-5 py-3.5 rounded-lg font-semibold hover:bg-metfraa-ink shadow-md hover:shadow-xl">
+          <svg class="w-5 h-5" viewBox="0 0 23 23" fill="none">
+            <rect width="10" height="10" fill="#F25022"/>
+            <rect x="12" width="10" height="10" fill="#7FBA00"/>
+            <rect y="12" width="10" height="10" fill="#00A4EF"/>
+            <rect x="12" y="12" width="10" height="10" fill="#FFB900"/>
+          </svg>
+          Sign in with Microsoft 365
+        </a>
+
+        <div class="mt-4 text-center">
+          <a href="/auth/dev-login" class="text-[11px] text-metfraa-gray-400 hover:text-metfraa-gray-600 underline">
+            Dev login (no SSO)
+          </a>
+        </div>
+      </div>
+
+      <div class="bg-metfraa-gray-50 px-8 py-4 border-t border-metfraa-gray-100">
+        <p class="text-[11px] text-metfraa-gray-500 leading-relaxed">
+          By signing in you agree to log accurate daily activity data.
+          Submissions are locked once submitted and reviewed by management.
+        </p>
+      </div>
+    </div>
+
+    <p class="text-center text-metfraa-gray-600 text-xs mt-8">
+      © Metfraa Steel Buildings Pvt. Ltd.
+    </p>
+  </div>
+</div>
+{% endblock %}

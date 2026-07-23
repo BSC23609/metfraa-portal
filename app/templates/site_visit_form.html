@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Site Visit — Metfraa KPI Tracker</title>
+  <link rel="icon" href="/static/img/favicon.png" type="image/png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'metfraa-black': '#000',
+            'metfraa-ink': '#111827',
+            'metfraa-blue': '#1E3A8A',
+            'metfraa-blue-dark': '#152A66',
+            'metfraa-gray-50': '#F9FAFB',
+            'metfraa-gray-100': '#F3F4F6',
+            'metfraa-gray-200': '#E5E7EB',
+            'metfraa-gray-300': '#D1D5DB',
+            'metfraa-gray-400': '#9CA3AF',
+            'metfraa-gray-500': '#6B7280',
+            'metfraa-gray-600': '#4B5563',
+            'metfraa-gray-700': '#374151',
+          },
+          fontFamily: {
+            'display': ['Inter', 'system-ui', 'sans-serif'],
+            'mono': ['ui-monospace', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="min-h-screen bg-metfraa-gray-50 pb-24">
+
+<!-- Top bar -->
+<nav class="bg-metfraa-black text-white border-b-2 border-metfraa-blue">
+  <div class="max-w-5xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+    <a href="/" class="flex items-center gap-3">
+      <img src="/static/img/metfraa_logo.png" alt="Metfraa" class="h-8" onerror="this.style.display='none'">
+      <span class="text-sm font-semibold">|</span>
+      <span class="text-sm font-semibold">KPI Tracker</span>
+    </a>
+    <div class="flex items-center gap-4">
+      <a href="/task-reports/" class="text-xs sm:text-sm hover:text-metfraa-blue">Daily tasks</a>
+      <a href="/monthly-kpi/" class="text-xs sm:text-sm hover:text-metfraa-blue">Monthly KPI</a>
+      <a href="/site-visits/" class="text-xs sm:text-sm text-metfraa-blue font-semibold">Site Visits</a>
+      <a href="/dashboard" class="text-xs sm:text-sm hover:text-metfraa-blue">Dashboard</a>
+      <a href="/auth/logout" class="text-xs sm:text-sm text-metfraa-gray-400 hover:text-white">Sign out</a>
+    </div>
+  </div>
+</nav>
+
+<main x-data="siteVisitForm()" x-init="init()" class="max-w-5xl mx-auto px-4 sm:px-6 py-6" x-cloak>
+
+  <!-- Toast -->
+  <div x-show="toast.show" x-cloak
+       :class="toast.type === 'error' ? 'bg-red-500' : 'bg-emerald-600'"
+       class="fixed top-4 right-4 z-50 px-4 py-2.5 rounded-lg shadow-lg text-white text-sm max-w-sm"
+       x-transition>
+    <span x-text="toast.msg"></span>
+  </div>
+
+  <!-- Header + status card -->
+  <div class="mb-6">
+    <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Business Development · Field Capture</div>
+    <div class="flex items-start justify-between flex-wrap gap-3 mt-1">
+      <div>
+        <h1 class="display text-3xl font-bold text-metfraa-black">Site Visit Report</h1>
+        <p class="text-sm text-metfraa-gray-500 mt-1">Record customer requirements, discussion notes &amp; site photos.</p>
+      </div>
+      <a href="/site-visits/" class="text-xs font-semibold text-metfraa-gray-600 hover:text-metfraa-blue flex items-center gap-1 mt-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+        All visits
+      </a>
+    </div>
+  </div>
+
+  <!-- Ticket / status stripe -->
+  <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-2">
+    <div>
+      <div class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500">Report ID</div>
+      <div class="mono text-sm font-semibold text-metfraa-blue" x-text="visit.report_id || '—'"></div>
+    </div>
+    <div>
+      <div class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500">Created</div>
+      <div class="text-sm text-metfraa-ink" x-text="visit.created_at ? new Date(visit.created_at).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'"></div>
+    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <span x-show="!isReadOnly" class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">DRAFT</span>
+      <span x-show="isReadOnly" class="text-xs font-semibold px-2 py-1 rounded bg-emerald-100 text-emerald-800">SUBMITTED</span>
+      <span x-show="statusMsg" class="text-[11px] mono text-metfraa-gray-500" x-text="statusMsg"></span>
+    </div>
+  </div>
+
+  <!-- Locked banner (Q2: no edit after submit) -->
+  <template x-if="isReadOnly">
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-5 flex items-start gap-3">
+      <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      <div class="flex-1">
+        <div class="text-sm font-semibold text-amber-900">This visit has been submitted</div>
+        <p class="text-xs text-amber-800 mt-1">The record is now read-only. Contact admin if you need to make corrections.</p>
+      </div>
+    </div>
+  </template>
+
+  <!-- ============== SECTION 1: Visit & Contact ============== -->
+  <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 mb-5 overflow-hidden">
+    <div class="px-5 py-4 border-b border-metfraa-gray-200 flex items-center gap-3">
+      <div class="w-7 h-7 rounded-full bg-metfraa-blue text-white flex items-center justify-center text-sm font-bold">1</div>
+      <div>
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Section 1</div>
+        <div class="text-sm font-semibold text-metfraa-black">Visit &amp; Contact Details</div>
+      </div>
+    </div>
+    <div class="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Date of Visit</label>
+        <input type="date" x-model="visit.visit_date" @change="autoSave()" :disabled="isReadOnly"
+               class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+      </div>
+      <div>
+        <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Visited By</label>
+        <input type="text" x-model="visit.visited_by" @blur="autoSave()" :disabled="isReadOnly"
+               placeholder="e.g. Arjun Kumar"
+               class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+      </div>
+      <div>
+        <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">
+          Customer / Company Name <span class="text-red-500">*</span>
+        </label>
+        <input type="text" x-model="visit.company_name" @blur="autoSave()" :disabled="isReadOnly"
+               placeholder="e.g. Kaveri Textiles Pvt Ltd"
+               class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+      </div>
+      <div>
+        <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Contact Person</label>
+        <input type="text" x-model="visit.contact_person" @blur="autoSave()" :disabled="isReadOnly"
+               placeholder="Name & designation"
+               class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+      </div>
+      <div>
+        <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Phone Number</label>
+        <input type="tel" x-model="visit.contact_phone" @blur="autoSave()" :disabled="isReadOnly"
+               placeholder="+91"
+               class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+      </div>
+      <div>
+        <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Email</label>
+        <input type="email" x-model="visit.contact_email" @blur="autoSave()" :disabled="isReadOnly"
+               placeholder="name@company.com"
+               class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+      </div>
+      <div class="sm:col-span-2">
+        <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Site Address</label>
+        <input type="text" x-model="visit.site_address" @blur="autoSave()" :disabled="isReadOnly"
+               placeholder="Full address / landmark / pin code"
+               class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== SECTION 2: Category ============== -->
+  <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 mb-5 overflow-hidden">
+    <div class="px-5 py-4 border-b border-metfraa-gray-200 flex items-center gap-3">
+      <div class="w-7 h-7 rounded-full bg-metfraa-blue text-white flex items-center justify-center text-sm font-bold">2</div>
+      <div>
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Section 2</div>
+        <div class="text-sm font-semibold text-metfraa-black">Requirement Category</div>
+      </div>
+      <span class="ml-auto text-[11px] text-metfraa-gray-500">Select one to load the checklist</span>
+    </div>
+    <div class="p-5">
+
+      <!-- Category cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <template x-for="c in categories" :key="c.key">
+          <button type="button" @click="pickCategory(c.key)" :disabled="isReadOnly"
+                  :class="visit.category === c.key
+                    ? 'border-metfraa-blue bg-metfraa-blue/5 shadow-sm'
+                    : 'border-metfraa-gray-200 hover:border-metfraa-blue/50'"
+                  class="text-left border-2 rounded-lg p-3 transition disabled:opacity-50 disabled:cursor-not-allowed">
+            <div class="text-2xl mb-1" x-text="c.icon"></div>
+            <div class="text-sm font-bold text-metfraa-ink" x-text="c.title"></div>
+            <div class="text-[11px] text-metfraa-gray-500 mt-1 leading-tight" x-text="c.desc"></div>
+          </button>
+        </template>
+      </div>
+
+      <!-- NEW SHED PANEL -->
+      <div x-show="visit.category === 'newshed'" class="mt-6 pt-6 border-t border-metfraa-gray-200">
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue mb-3">New Shed Requirements</div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Purpose / Usage</label>
+            <select x-model="visit.details_json.purpose" @change="autoSave()" :disabled="isReadOnly"
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+              <option value="">Select...</option>
+              <option>Warehouse / Storage</option><option>Manufacturing Unit</option>
+              <option>Vehicle Shed / Workshop</option><option>Agricultural Shed</option>
+              <option>Sports / Community Hall</option><option>Cold Storage</option><option>Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Length (m)</label>
+            <input type="number" min="0" step="0.1" x-model.number="visit.details_json.length"
+                   @input="calcArea()" @blur="autoSave()" :disabled="isReadOnly"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Width (m)</label>
+            <input type="number" min="0" step="0.1" x-model.number="visit.details_json.width"
+                   @input="calcArea()" @blur="autoSave()" :disabled="isReadOnly"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Eave / Clear Height (m)</label>
+            <input type="number" min="0" step="0.1" x-model.number="visit.details_json.height" @blur="autoSave()" :disabled="isReadOnly"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Covered Area</label>
+            <input type="text" x-model="visit.details_json.area" readonly placeholder="auto-calculated"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 bg-metfraa-gray-50">
+            <div class="text-[10px] mono text-metfraa-blue mt-0.5" x-text="areaNote"></div>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Foundation</label>
+            <select x-model="visit.details_json.foundation" @change="autoSave()" :disabled="isReadOnly"
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+              <option value="">Select...</option>
+              <option>RCC footing – new</option>
+              <option>PEB baseplate on existing slab</option>
+              <option>Not sure / needs assessment</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Structure Type</label>
+            <select x-model="visit.details_json.structure_type" @change="autoSave()" :disabled="isReadOnly"
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+              <option value="">Select...</option>
+              <option>Pre-Engineered Building (PEB)</option>
+              <option>Conventional steel truss</option>
+              <option>Not decided – need recommendation</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Roof Sheeting</label>
+            <select x-model="visit.details_json.roof_sheet" @change="autoSave()" :disabled="isReadOnly"
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+              <option value="">Select...</option>
+              <option>Galvalume / GI profiled sheet</option>
+              <option>Insulated (PUF) sandwich panel</option>
+              <option>Polycarbonate (natural light)</option>
+              <option>Not decided</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Wall Cladding</label>
+            <select x-model="visit.details_json.cladding" @change="autoSave()" :disabled="isReadOnly"
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+              <option value="">Select...</option>
+              <option>Full cladding</option>
+              <option>Partial (dwarf wall + sheeting)</option>
+              <option>None / open sides</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Ventilation / Skylights</label>
+            <select x-model="visit.details_json.ventilation" @change="autoSave()" :disabled="isReadOnly"
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+              <option value="">Select...</option>
+              <option>Turbo ventilators</option>
+              <option>Ridge ventilation</option>
+              <option>Translucent skylight sheets</option>
+              <option>Not required</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Openings Needed</label>
+            <input type="text" x-model="visit.details_json.openings" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="e.g. 2 roller shutters 4x4m, 1 personnel door"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Utilities on Site</label>
+            <input type="text" x-model="visit.details_json.utilities" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="Electrical, water, drainage..."
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Expected Timeline</label>
+            <input type="text" x-model="visit.details_json.timeline" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="e.g. Start in 6 weeks"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Budget Range</label>
+            <input type="text" x-model="visit.details_json.budget" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="e.g. ₹15–20 lakh"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div class="sm:col-span-2">
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Site Condition Notes</label>
+            <textarea x-model="visit.details_json.site_conditions" @blur="autoSave()" :disabled="isReadOnly"
+                      placeholder="Ground condition, access for construction vehicles, nearby structures, soil/drainage observations"
+                      rows="3"
+                      class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- RE-ROOF PANEL -->
+      <div x-show="visit.category === 'reroof'" class="mt-6 pt-6 border-t border-metfraa-gray-200">
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue mb-3">Re-roofing &amp; Maintenance Details</div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Existing Structure Type</label>
+            <select x-model="visit.details_json.structure_type" @change="autoSave()" :disabled="isReadOnly"
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+              <option value="">Select...</option>
+              <option>PEB / Steel truss shed</option>
+              <option>RCC building with sheet roof</option>
+              <option>Conventional AC/GI sheet roof</option>
+              <option>Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Existing Roof Material</label>
+            <input type="text" x-model="visit.details_json.material" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="e.g. GI sheet, AC sheet, PUF panel"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Age (yrs)</label>
+            <input type="number" min="0" x-model.number="visit.details_json.age" @blur="autoSave()" :disabled="isReadOnly"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+        </div>
+
+        <div class="mt-4">
+          <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-2">Issues Observed</label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <template x-for="opt in reroofIssues" :key="opt">
+              <label class="flex items-center gap-2 text-sm text-metfraa-ink cursor-pointer">
+                <input type="checkbox" :value="opt"
+                       :checked="(visit.details_json.issues || []).includes(opt)"
+                       @change="toggleArray('issues', opt); autoSave()" :disabled="isReadOnly"
+                       class="rounded text-metfraa-blue focus:ring-metfraa-blue">
+                <span x-text="opt"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Area Affected</label>
+            <input type="text" x-model="visit.details_json.area_affected" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="sqm or % of roof"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Scope of Work</label>
+            <select x-model="visit.details_json.scope" @change="autoSave()" :disabled="isReadOnly"
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+              <option value="">Select...</option>
+              <option>Full roof replacement</option>
+              <option>Partial replacement</option>
+              <option>Repair only</option>
+              <option>Needs assessment</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="mt-4">
+          <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-2">Additional Maintenance Needed</label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <template x-for="opt in reroofMaint" :key="opt">
+              <label class="flex items-center gap-2 text-sm text-metfraa-ink cursor-pointer">
+                <input type="checkbox" :value="opt"
+                       :checked="(visit.details_json.maintenance || []).includes(opt)"
+                       @change="toggleArray('maintenance', opt); autoSave()" :disabled="isReadOnly"
+                       class="rounded text-metfraa-blue focus:ring-metfraa-blue">
+                <span x-text="opt"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+          <div class="sm:col-span-2">
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Access Constraints</label>
+            <input type="text" x-model="visit.details_json.access" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="Crane access, working at height, occupied building during work, etc."
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Expected Timeline</label>
+            <input type="text" x-model="visit.details_json.timeline" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="e.g. Before monsoon"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Budget Range</label>
+            <input type="text" x-model="visit.details_json.budget" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="e.g. ₹3–5 lakh"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+        </div>
+      </div>
+
+      <!-- EXTENSION PANEL -->
+      <div x-show="visit.category === 'extension'" class="mt-6 pt-6 border-t border-metfraa-gray-200">
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue mb-3">Extension / Modification Details</div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="sm:col-span-2">
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Existing Structure Details</label>
+            <input type="text" x-model="visit.details_json.existing" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="Current dimensions, use, structure type"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Extension Area (sqm)</label>
+            <input type="number" min="0" x-model.number="visit.details_json.area" @blur="autoSave()" :disabled="isReadOnly"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Purpose of Extension</label>
+            <input type="text" x-model="visit.details_json.purpose" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="e.g. Additional storage bay"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Connection Type</label>
+            <select x-model="visit.details_json.connection" @change="autoSave()" :disabled="isReadOnly"
+                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+              <option value="">Select...</option>
+              <option>Attached / integrated</option>
+              <option>Standalone adjacent structure</option>
+              <option>Mezzanine floor addition</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Structural Considerations</label>
+            <input type="text" x-model="visit.details_json.structural" @blur="autoSave()" :disabled="isReadOnly"
+                   placeholder="Load bearing checks, column spacing, etc."
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Expected Timeline</label>
+            <input type="text" x-model="visit.details_json.timeline" @blur="autoSave()" :disabled="isReadOnly"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Budget Range</label>
+            <input type="text" x-model="visit.details_json.budget" @blur="autoSave()" :disabled="isReadOnly"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+          </div>
+        </div>
+      </div>
+
+      <!-- OTHER PANEL -->
+      <div x-show="visit.category === 'other'" class="mt-6 pt-6 border-t border-metfraa-gray-200">
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue mb-3">Other Requirement</div>
+        <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Describe the Requirement</label>
+        <textarea x-model="visit.details_json.description" @blur="autoSave()" :disabled="isReadOnly"
+                  placeholder="Free-form description of what the customer needs"
+                  rows="4"
+                  class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== SECTION 3: Photos ============== -->
+  <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 mb-5 overflow-hidden">
+    <div class="px-5 py-4 border-b border-metfraa-gray-200 flex items-center gap-3">
+      <div class="w-7 h-7 rounded-full bg-metfraa-blue text-white flex items-center justify-center text-sm font-bold">3</div>
+      <div>
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Section 3</div>
+        <div class="text-sm font-semibold text-metfraa-black">Site Photos</div>
+      </div>
+      <span class="ml-auto text-[11px] mono text-metfraa-gray-500" x-text="`${visit.photos.length} / ${MAX_PHOTOS}`"></span>
+    </div>
+    <div class="p-5">
+      <div @click="!isReadOnly && visit.photos.length < MAX_PHOTOS && $refs.photoInput.click()"
+           :class="isReadOnly || visit.photos.length >= MAX_PHOTOS
+             ? 'border-metfraa-gray-200 bg-metfraa-gray-50 opacity-50 cursor-not-allowed'
+             : 'border-metfraa-blue/30 bg-metfraa-blue/5 hover:border-metfraa-blue hover:bg-metfraa-blue/10 cursor-pointer'"
+           class="border-2 border-dashed rounded-lg p-8 text-center transition">
+        <svg class="w-10 h-10 text-metfraa-blue mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+        </svg>
+        <div class="text-sm font-semibold text-metfraa-ink">Click to add photos</div>
+        <div class="text-xs text-metfraa-gray-500 mt-1">Site condition, existing structure, damage close-ups, sketches, etc.</div>
+        <div x-show="uploading" class="text-xs text-metfraa-blue mt-2 mono">Uploading...</div>
+      </div>
+      <input type="file" x-ref="photoInput" accept="image/*" multiple class="hidden"
+             @change="onPhotoSelected($event)">
+
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mt-4" x-show="visit.photos.length > 0">
+        <template x-for="p in visit.photos" :key="p.id">
+          <div class="border border-metfraa-gray-200 rounded-lg overflow-hidden bg-white">
+            <img :src="'data:image/jpeg;base64,' + p.thumbnail_b64" :alt="p.caption || 'site photo'"
+                 class="w-full h-28 object-cover">
+            <div class="p-2">
+              <input type="text" x-model="p.caption" @blur="updateCaption(p)" :disabled="isReadOnly"
+                     placeholder="Caption..."
+                     class="w-full text-xs rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+            </div>
+            <button x-show="!isReadOnly" @click="removePhoto(p)"
+                    class="w-full text-[10px] font-bold uppercase tracking-wider text-red-600 hover:bg-red-50 border-t border-metfraa-gray-100 py-1.5">
+              Remove
+            </button>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== SECTION 4: Discussion ============== -->
+  <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 mb-5 overflow-hidden">
+    <div class="px-5 py-4 border-b border-metfraa-gray-200 flex items-center gap-3">
+      <div class="w-7 h-7 rounded-full bg-metfraa-blue text-white flex items-center justify-center text-sm font-bold">4</div>
+      <div>
+        <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Section 4</div>
+        <div class="text-sm font-semibold text-metfraa-black">Discussion Summary &amp; Next Steps</div>
+      </div>
+    </div>
+    <div class="p-5 space-y-4">
+      <div>
+        <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Key Discussion Points</label>
+        <textarea x-model="visit.discussion_notes" @blur="autoSave()" :disabled="isReadOnly"
+                  placeholder="Summary of what was discussed on site, decision makers present, competitor mentions, concerns raised, etc."
+                  rows="4"
+                  class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50"></textarea>
+      </div>
+      <div>
+        <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Next Steps / Action Items</label>
+        <textarea x-model="visit.next_steps" @blur="autoSave()" :disabled="isReadOnly"
+                  placeholder="e.g. Send quotation by Friday, schedule technical survey, share reference sites"
+                  rows="3"
+                  class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50"></textarea>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Follow-up Date</label>
+          <input type="date" x-model="visit.followup_date" @change="autoSave()" :disabled="isReadOnly"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50">
+        </div>
+        <div>
+          <label class="text-[10px] font-bold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Priority</label>
+          <div class="flex gap-2">
+            <template x-for="p in priorities" :key="p">
+              <button type="button" @click="pickPriority(p)" :disabled="isReadOnly"
+                      :class="{
+                        'bg-emerald-100 text-emerald-800 border-emerald-300': visit.priority === p && p === 'Low',
+                        'bg-amber-100 text-amber-800 border-amber-300': visit.priority === p && p === 'Medium',
+                        'bg-red-100 text-red-800 border-red-300': visit.priority === p && p === 'High',
+                        'bg-white text-metfraa-gray-600 border-metfraa-gray-300 hover:border-metfraa-blue': visit.priority !== p,
+                      }"
+                      class="flex-1 border-2 rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
+                      x-text="p"></button>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sticky action bar -->
+  <div class="fixed bottom-0 left-0 right-0 bg-white border-t border-metfraa-gray-200 shadow-lg z-40">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
+      <div class="text-xs text-metfraa-gray-500 flex-1">
+        <span x-show="!isReadOnly">⚠ Once submitted, this visit CANNOT be edited.</span>
+        <span x-show="isReadOnly">This visit was submitted and is now locked.</span>
+      </div>
+      <button x-show="visit.status === 'submitted'" @click="downloadPdf()"
+              class="text-sm font-semibold text-metfraa-gray-700 hover:text-metfraa-ink border border-metfraa-gray-300 hover:border-metfraa-blue px-4 py-2 rounded-lg">
+        Download PDF
+      </button>
+      <button x-show="!isReadOnly" @click="submitVisit()"
+              :disabled="submitting || !visit.company_name"
+              class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white font-semibold px-6 py-2.5 rounded-lg shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+        <span x-show="!submitting">Submit &amp; Send</span>
+        <span x-show="submitting">Submitting...</span>
+      </button>
+    </div>
+  </div>
+
+</main>
+
+<script>
+function siteVisitForm() {
+  const MAX_PHOTOS = 10;
+  return {
+    MAX_PHOTOS,
+    visitId: {% if visit_id %}{{ visit_id }}{% else %}null{% endif %},
+    mode: '{{ mode }}',
+    visit: {
+      report_id: '', status: 'draft',
+      visit_date: null, visited_by: '', company_name: '', contact_person: '',
+      contact_phone: '', contact_email: '', site_address: '',
+      category: '', details_json: {},
+      discussion_notes: '', next_steps: '', followup_date: null, priority: '',
+      created_at: null, photos: [],
+    },
+    saving: false, submitting: false, uploading: false,
+    statusMsg: '', areaNote: '',
+    toast: { show: false, msg: '', type: 'success' },
+    categories: [
+      {key:'newshed', icon:'🏗️', title:'New Shed', desc:'Greenfield shed / warehouse / PEB'},
+      {key:'reroof', icon:'🔧', title:'Re-roofing', desc:'Existing shed repair, roof replacement'},
+      {key:'extension', icon:'📐', title:'Extension', desc:'Expansion, mezzanine or modification'},
+      {key:'other', icon:'📋', title:'Other', desc:'Anything outside the above'},
+    ],
+    priorities: ['Low', 'Medium', 'High'],
+    reroofIssues: [
+      'Leakage / water seepage', 'Rusting / corrosion', 'Sheet damage / puncture',
+      'Structural sagging', 'Insulation failure', 'Gutter / downpipe damage',
+    ],
+    reroofMaint: [
+      'Gutter replacement', 'Downpipe work', 'Ridge / flashing repair',
+      'Insulation upgrade', 'Skylight / translucent sheets',
+      'Structural strengthening', 'Anti-rust treatment / painting',
+    ],
+
+    get isReadOnly() { return this.visit.status === 'submitted'; },
+
+    async init() {
+      if (this.visitId) {
+        await this.loadVisit();
+      } else {
+        try {
+          const res = await fetch('/site-visits/api/create', { method: 'POST' });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Could not create draft');
+          this.visitId = data.visit_id;
+          this.visit.report_id = data.report_id;
+          this.visit.status = 'draft';
+          this.visit.visit_date = new Date().toISOString().slice(0, 10);
+          this.visit.created_at = new Date().toISOString();
+          history.replaceState(null, '', `/site-visits/${this.visitId}`);
+          this.showToast('Draft created — auto-saving from now on', 'success');
+        } catch (e) {
+          this.showToast('Could not create draft: ' + e.message, 'error');
+        }
+      }
+    },
+
+    async loadVisit() {
+      try {
+        const res = await fetch(`/site-visits/api/${this.visitId}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Load failed');
+        this.visit = data;
+        if (!this.visit.details_json) this.visit.details_json = {};
+        this.calcArea();
+      } catch (e) {
+        this.showToast('Load failed: ' + e.message, 'error');
+      }
+    },
+
+    async autoSave() {
+      if (this.isReadOnly || !this.visitId) return;
+      this.saving = true;
+      this.statusMsg = 'Saving...';
+      try {
+        const body = {
+          visit_date: this.visit.visit_date || null,
+          visited_by: this.visit.visited_by, company_name: this.visit.company_name,
+          contact_person: this.visit.contact_person, contact_phone: this.visit.contact_phone,
+          contact_email: this.visit.contact_email, site_address: this.visit.site_address,
+          category: this.visit.category || '',
+          details_json: this.visit.details_json,
+          discussion_notes: this.visit.discussion_notes, next_steps: this.visit.next_steps,
+          followup_date: this.visit.followup_date || null,
+          priority: this.visit.priority || '',
+        };
+        const res = await fetch(`/site-visits/api/${this.visitId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Save failed');
+        this.statusMsg = 'Saved ✓ ' + new Date().toLocaleTimeString('en-IN');
+      } catch (e) {
+        this.statusMsg = '';
+        this.showToast(e.message, 'error');
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    pickCategory(cat) {
+      if (this.isReadOnly) return;
+      if (this.visit.category !== cat) {
+        this.visit.category = cat;
+        this.visit.details_json = {};
+        this.areaNote = '';
+      }
+      this.autoSave();
+    },
+
+    pickPriority(p) {
+      if (this.isReadOnly) return;
+      this.visit.priority = p;
+      this.autoSave();
+    },
+
+    toggleArray(field, value) {
+      const arr = this.visit.details_json[field] || [];
+      const idx = arr.indexOf(value);
+      if (idx >= 0) arr.splice(idx, 1);
+      else arr.push(value);
+      this.visit.details_json[field] = arr;
+    },
+
+    calcArea() {
+      const l = parseFloat(this.visit.details_json.length);
+      const w = parseFloat(this.visit.details_json.width);
+      if (l > 0 && w > 0) {
+        this.visit.details_json.area = (l * w).toFixed(1) + ' sqm';
+        this.areaNote = l + 'm × ' + w + 'm';
+      } else {
+        this.visit.details_json.area = '';
+        this.areaNote = '';
+      }
+    },
+
+    async onPhotoSelected(ev) {
+      const files = Array.from(ev.target.files);
+      ev.target.value = '';
+      for (const f of files) {
+        if (this.visit.photos.length >= MAX_PHOTOS) {
+          this.showToast(`Max ${MAX_PHOTOS} photos`, 'error');
+          break;
+        }
+        await this.uploadOnePhoto(f);
+      }
+    },
+
+    async uploadOnePhoto(file) {
+      this.uploading = true;
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('caption', '');
+        const res = await fetch(`/site-visits/api/${this.visitId}/photos`, {
+          method: 'POST', body: fd,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Upload failed');
+        this.visit.photos.push(data.photo);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.uploading = false;
+      }
+    },
+
+    async updateCaption(p) {
+      if (this.isReadOnly) return;
+      try {
+        await fetch(`/site-visits/api/${this.visitId}/photos/${p.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ caption: p.caption }),
+        });
+      } catch (_) {}
+    },
+
+    async removePhoto(p) {
+      if (this.isReadOnly) return;
+      if (!confirm('Remove this photo?')) return;
+      try {
+        const res = await fetch(`/site-visits/api/${this.visitId}/photos/${p.id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Delete failed');
+        this.visit.photos = this.visit.photos.filter(x => x.id !== p.id);
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      }
+    },
+
+    async submitVisit() {
+      if (!this.visit.company_name) {
+        this.showToast('Please enter customer name first.', 'error');
+        return;
+      }
+      if (!confirm('Submit this visit? Once submitted it CANNOT be edited. VP, Info and Arasu will be emailed a copy.')) return;
+      await this.autoSave();
+      this.submitting = true;
+      try {
+        const res = await fetch(`/site-visits/api/${this.visitId}/submit`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Submit failed');
+        this.visit = data.visit;
+        if (!this.visit.details_json) this.visit.details_json = {};
+        this.showToast('Submitted — PDF emailed to VP', 'success');
+      } catch (e) {
+        this.showToast(e.message, 'error');
+      } finally {
+        this.submitting = false;
+      }
+    },
+
+    downloadPdf() {
+      window.open(`/site-visits/api/${this.visitId}/pdf`, '_blank');
+    },
+
+    showToast(msg, type='success') {
+      this.toast = { show: true, msg, type };
+      setTimeout(() => { this.toast.show = false; }, 3500);
+    },
+  };
+}
+</script>
+
+</body>
+</html>

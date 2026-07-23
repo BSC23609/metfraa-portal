@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Metfraa Portal{% endblock %}</title>
+  <link rel="icon" href="/static/img/favicon.png" />
+
+  <!-- Tailwind via Tailwind's official CDN -->
+  <script src="https://cdn.tailwindcss.com/3.4.16?plugins=forms"></script>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+  <!-- Chart.js with fallback (loads from cdnjs first; jsdelivr fallback) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+  <script>
+    if (typeof Chart === 'undefined') {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js';
+      document.head.appendChild(s);
+    }
+  </script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            metfraa: {
+              black: '#0A0A0A',
+              ink: '#1A1A1A',
+              blue: '#3B82F6',
+              'blue-dark': '#2563EB',
+              'blue-light': '#DBEAFE',
+              gray: {
+                50:  '#FAFAFA',
+                100: '#F3F4F6',
+                200: '#E5E7EB',
+                300: '#D1D5DB',
+                400: '#9CA3AF',
+                500: '#6B7280',
+                600: '#4B5563',
+                700: '#374151',
+                800: '#1F2937',
+                900: '#111827',
+              },
+            }
+          },
+          fontFamily: {
+            'sans': ['Manrope', 'system-ui', 'sans-serif'],
+            'display': ['"Space Grotesk"', 'Manrope', 'sans-serif'],
+            'mono': ['"JetBrains Mono"', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      font-family: 'Manrope', system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      letter-spacing: -0.005em;
+    }
+    .display { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.02em; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* Hide elements with x-cloak until Alpine processes them */
+    [x-cloak] { display: none !important; }
+
+    .bg-grid {
+      background-image:
+        linear-gradient(to right, rgba(0,0,0,0.04) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(0,0,0,0.04) 1px, transparent 1px);
+      background-size: 32px 32px;
+    }
+
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #f3f4f6; }
+    ::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+    button, a, input, select, textarea { transition: all 0.15s ease; }
+
+    .card-hover { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+    .card-hover:hover { transform: translateY(-1px); box-shadow: 0 8px 24px -8px rgba(0,0,0,0.15); }
+
+    @keyframes shimmer { 0% { background-position: -1000px 0; } 100% { background-position: 1000px 0; } }
+    .shimmer {
+      background: linear-gradient(90deg, #f3f4f6 0%, #e5e7eb 50%, #f3f4f6 100%);
+      background-size: 1000px 100%;
+      animation: shimmer 2s infinite;
+    }
+
+    .toast { animation: toast-in 0.3s ease-out; }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+
+  {% block head %}{% endblock %}
+</head>
+<body class="bg-metfraa-gray-50 text-metfraa-ink min-h-screen">
+
+  {% if user %}
+  <header class="bg-metfraa-black border-b-[3px] border-metfraa-blue">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        <div class="flex items-center gap-3">
+          <a href="/" title="Portal home"
+             class="flex items-center justify-center w-9 h-9 rounded-md text-metfraa-gray-300 hover:text-white hover:bg-white/10">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75"/>
+            </svg>
+          </a>
+          <a href="/" class="flex items-center gap-3 group">
+            <img src="/static/img/metfraa_logo.png"
+                 alt="Metfraa"
+                 class="h-9 w-auto"
+                 onerror="this.outerHTML='<div class=&quot;flex items-baseline gap-1.5&quot;><div class=&quot;font-display font-bold text-white text-xl tracking-tight&quot;>METFRAA</div><div class=&quot;text-metfraa-blue text-[10px] uppercase tracking-widest&quot;>Steel</div></div>'" />
+            <span class="text-metfraa-gray-400 text-xs hidden sm:block">|</span>
+            <span class="text-metfraa-gray-300 text-sm font-medium hidden sm:block">KPI Tracker</span>
+          </a>
+        </div>
+
+        <nav class="flex items-center gap-1">
+          <a href="/dashboard"
+             class="text-metfraa-gray-300 hover:text-white px-3 py-1.5 text-sm font-medium rounded-md hover:bg-white/5">
+            Dashboard
+          </a>
+          {% if user.is_admin %}
+          <a href="/admin"
+             class="text-metfraa-gray-300 hover:text-white px-3 py-1.5 text-sm font-medium rounded-md hover:bg-white/5">
+            Admin
+          </a>
+          {% endif %}
+          <div class="relative ml-3" id="user-menu">
+            <button onclick="document.getElementById('user-dropdown').classList.toggle('hidden')"
+                    class="flex items-center gap-2 text-sm bg-white/10 hover:bg-white/15 text-white px-3 py-1.5 rounded-md">
+              <div class="w-7 h-7 rounded-full bg-metfraa-blue flex items-center justify-center text-white text-xs font-bold">
+                {{ user.name[0] | upper }}
+              </div>
+              <span class="hidden md:block">{{ user.name }}</span>
+              <svg class="w-4 h-4 text-metfraa-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            <div id="user-dropdown" class="hidden absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-xl ring-1 ring-black/5 py-1 z-50">
+              <div class="px-4 py-3 border-b border-metfraa-gray-100">
+                <div class="font-semibold text-sm text-metfraa-ink">{{ user.name }}</div>
+                <div class="text-xs text-metfraa-gray-500 mono">{{ user.email }}</div>
+                <div class="text-xs text-metfraa-gray-500 mt-1">{{ user.designation }}</div>
+                {% if user.is_admin %}
+                <span class="inline-block mt-2 px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase bg-metfraa-blue/10 text-metfraa-blue rounded">Admin</span>
+                {% endif %}
+              </div>
+              <a href="/auth/logout" class="block px-4 py-2 text-sm text-metfraa-gray-700 hover:bg-metfraa-gray-50">
+                Sign out
+              </a>
+            </div>
+          </div>
+        </nav>
+      </div>
+    </div>
+  </header>
+  <script>
+    // close user dropdown on outside click
+    document.addEventListener('click', function(e) {
+      var menu = document.getElementById('user-menu');
+      var drop = document.getElementById('user-dropdown');
+      if (menu && drop && !menu.contains(e.target)) drop.classList.add('hidden');
+    });
+  </script>
+  {% endif %}
+
+  <main class="{% if user %}pb-12{% endif %}">
+    {% block content %}{% endblock %}
+  </main>
+
+  <div id="toast-container" class="fixed top-20 right-4 z-50 flex flex-col gap-2"></div>
+
+  <script>
+    window.toast = function(message, type) {
+      type = type || 'success';
+      var c = document.getElementById('toast-container');
+      var colors = {
+        success: 'bg-emerald-600',
+        error:   'bg-red-600',
+        warning: 'bg-amber-600',
+        info:    'bg-metfraa-black',
+      };
+      var el = document.createElement('div');
+      el.className = 'toast ' + (colors[type] || colors.info) + ' text-white px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium max-w-sm';
+      el.textContent = message;
+      c.appendChild(el);
+      setTimeout(function() {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(-10px)';
+        setTimeout(function() { el.remove(); }, 300);
+      }, 4000);
+    };
+  </script>
+
+  <!-- Alpine MUST come at the END of body so all elements are in DOM when it scans -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.3/cdn.min.js"></script>
+  <script>
+    if (typeof Alpine === 'undefined') {
+      var s2 = document.createElement('script');
+      s2.src = 'https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js';
+      document.head.appendChild(s2);
+    }
+  </script>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

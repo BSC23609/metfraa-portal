@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Who are you? — Metfraa KPI{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-metfraa-black bg-grid relative flex items-center justify-center py-12 px-4">
+  <div class="absolute top-0 left-0 right-0 h-1 bg-metfraa-blue"></div>
+  <div class="absolute bottom-0 left-0 right-0 h-1 bg-metfraa-blue"></div>
+
+  <div class="max-w-md w-full">
+    <div class="text-center mb-8">
+      <img src="/static/img/metfraa_logo.png" alt="Metfraa Steel Buildings"
+           class="h-12 mx-auto mb-3"
+           onerror="this.outerHTML='<div class=&quot;font-display font-bold text-white text-3xl tracking-tight&quot;>METFRAA</div>'" />
+      <p class="text-metfraa-gray-500 text-xs uppercase tracking-[0.25em] mt-3">Steeling the Future</p>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-2xl ring-1 ring-white/5 overflow-hidden">
+      <div class="p-8">
+        <div class="mb-1 text-xs font-bold uppercase tracking-widest text-metfraa-blue">Shared Mailbox</div>
+        <h1 class="display text-2xl font-bold text-metfraa-black mb-2">Who are you?</h1>
+        <p class="text-metfraa-gray-500 text-sm leading-relaxed mb-6">
+          You signed in with <span class="font-mono font-semibold text-metfraa-ink">{{ email }}</span>.
+          This mailbox is shared by multiple people. Pick yourself to continue.
+        </p>
+<div class="space-y-2">
+          {% for c in candidates %}
+          <form method="post" action="/auth/pick-identity">
+            <input type="hidden" name="employee_id" value="{{ c.id }}" />
+            <button type="submit"
+                    class="w-full text-left p-4 rounded-lg border-2 border-metfraa-gray-200 hover:border-metfraa-blue hover:bg-metfraa-blue/5 transition-all group">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-metfraa-blue flex items-center justify-center text-white font-bold">
+                  {{ c.name[0] | upper }}
+                </div>
+                <div class="flex-1">
+                  <div class="font-semibold text-metfraa-ink">{{ c.name }}</div>
+                  <div class="text-xs text-metfraa-gray-500">{{ c.designation }}{% if c.department %} · {{ c.department }}{% endif %}</div>
+                </div>
+                <svg class="w-5 h-5 text-metfraa-gray-300 group-hover:text-metfraa-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                </svg>
+              </div>
+            </button>
+          </form>
+          {% endfor %}
+        </div>
+
+        <div class="mt-6 text-center">
+          <a href="/auth/logout" class="text-xs text-metfraa-gray-500 hover:text-metfraa-ink underline">
+            Sign in with a different account
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
