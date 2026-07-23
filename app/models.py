@@ -362,3 +362,99 @@ class EHSSubmission(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     submitted_by = relationship("Employee", foreign_keys=[submitted_by_id])
+
+
+# ============================================================
+# Expense module (Phase 2) — Metfraa-only port of bsg-portal
+# ============================================================
+
+class ExpenseProject(Base):
+    __tablename__ = "expense_projects"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(32), nullable=True)
+    name = Column(String(200), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ExpenseEmployeeMeta(Base):
+    """Expense-policy level per employee (L1/L2/L3). Separate table so no
+    ALTER on the shared employees table is needed. Missing row = L1."""
+
+    __tablename__ = "expense_employee_meta"
+
+    employee_id = Column(Integer, ForeignKey("employees.id"), primary_key=True)
+    level = Column(String(8), default="L1", nullable=False)
+
+
+class ExpenseSubmission(Base):
+    __tablename__ = "expense_submissions"
+
+    id = Column(Integer, primary_key=True)
+    reference = Column(String(40), unique=True, nullable=False, index=True)   # MET-LTA-260723-A4F7
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    employee_name = Column(String(200), nullable=False)
+    employee_email = Column(String(200), nullable=True)
+    employee_level = Column(String(8), default="L1")
+    form_type = Column(String(32), nullable=False, index=True)                # met_local | met_cab | ...
+    period = Column(String(7), nullable=True, index=True)                     # YYYY-MM
+    payload = Column(JSON, default=dict)                                      # validated form data (source of truth)
+    total_amount = Column(Float, default=0.0, nullable=False)
+    # pending | approved | draft (returned for edit) | rejected |
+    # advance_approved | settlement_pending | settled | settlement_rejected
+    status = Column(String(24), default="pending", nullable=False, index=True)
+
+    reviewed_by = Column(String(200), nullable=True)
+    reviewed_at_ist = Column(String(32), nullable=True)
+    review_note = Column(Text, nullable=True)
+    changes_required = Column(Text, nullable=True)   # reject-to-draft message
+    returned_at_ist = Column(String(32), nullable=True)
+
+    # Travel-advance settlement (Phase 2B UI; columns ready)
+    actuals = Column(JSON, nullable=True)
+    settled_at_ist = Column(String(32), nullable=True)
+    settlement_reviewed_by = Column(String(200), nullable=True)
+    settlement_note = Column(Text, nullable=True)
+
+    pdf_web_url = Column(Text, nullable=True)
+    submitted_at_ist = Column(String(32), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    employee = relationship("Employee", foreign_keys=[employee_id])
+    attachments = relationship("ExpenseAttachment", back_populates="submission", cascade="all, delete-orphan")
+
+
+class ExpenseAttachment(Base):
+    """Bill / receipt uploaded with a submission. File lives in OneDrive."""
+
+    __tablename__ = "expense_attachments"
+
+    id = Column(Integer, primary_key=True)
+    submission_id = Column(Integer, ForeignKey("expense_submissions.id"), nullable=False, index=True)
+    filename = Column(String(300), nullable=False)
+    onedrive_path = Column(Text, nullable=False)
+    web_url = Column(Text, nullable=True)
+    mime_type = Column(String(100), default="image/jpeg")
+    size_bytes = Column(Integer, default=0)
+    row_idx = Column(Integer, nullable=True)          # DTR: which entry this bill belongs to
+    label = Column(String(200), nullable=True)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+
+    submission = relationship("ExpenseSubmission", back_populates="attachments")
+
+
+class ExpenseMonthlyPayment(Base):
+    """One row per (employee, year, month) once HR marks the payout complete."""
+
+    __tablename__ = "expense_monthly_payments"
+
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)
+    amount_paid = Column(Float, nullable=False)
+    paid_by = Column(String(200), nullable=False)
+    paid_at_ist = Column(String(32), nullable=False)
+
+    __table_args__ = (UniqueConstraint("employee_id", "year", "month", name="uq_emp_month_payment"),)

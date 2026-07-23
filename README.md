@@ -6,7 +6,7 @@ One app, one login, one home page for Metfraa Steel Buildings:
 |---|---|---|
 | **KPI Tracker** | ✅ Live (full parity with kpis.metfraa.com) | `/dashboard`, `/task-reports/`, `/monthly-kpi/`, `/site-visits/`, `/admin`, `/reports/` |
 | **EHS** | ✅ Live (Phase 1) | `/ehs/` — 21 forms, approvals, PDFs, master logs |
-| **Expense** | 🚧 Phase 2 | `/expense/` (coming-soon stub) |
+| **Expense** | ✅ Live (Phase 2) | `/expense/` — 7 Metfraa forms, bills, HR review, payments |
 
 FastAPI served as a single Vercel serverless function (`index.py`), data in the
 **same Neon Postgres** as the live KPI app — no migration, existing data appears
@@ -101,9 +101,29 @@ Locally the app behaves like a normal server (APScheduler runs unless
 Set `INIT_DB=true` on Vercel → redeploy → open `/health` → remove the var →
 redeploy. `create_all` only adds missing tables; existing KPI tables are untouched.
 
+## Expense module (Phase 2) — what shipped
+
+- 7 Metfraa forms ported (BSC stripped per scope): Local Travel, Cab, Monthly
+  Accommodation, Outstation, Daily Travel (DTR), Miscellaneous, Travel Advance.
+- Policy engine + validators ported 1:1 from bsg-portal (rates ₹4/₹10 per km,
+  80 km cab/car rules, <5 km block, L1/L2/L3 accommodation caps, DTR per-entry
+  purpose categorization + bill-required-for-auto rules, max 200 entries).
+- Workflow: pending → approved (PDF + `_MasterLog_<FORM>.xlsx` in OneDrive) or
+  **returned-to-draft** with a "what to change" note — employee edits the same
+  reference and resubmits. Travel Advance → `advance_approved` (settlement UI
+  is Phase 2B; DB columns ready).
+- Bills upload to `Reimbursements and Conveyance/<YYYY-MM>/<reference>/Bills/`
+  (override root with `EXPENSE_ONEDRIVE_ROOT`). DTR bills link per entry.
+- Expense levels (L1/L2/L3) live in `expense_employee_meta` — set via
+  `POST /expense/api/level/{employee_id}` (default L1). Monthly payments:
+  `GET/POST /expense/api/payments` (per-employee approved totals, mark paid).
+
+**⚠️ Deploy note:** five new tables — same drill: `INIT_DB=true` → redeploy →
+`/health` → remove var → redeploy.
+
+**Deferred to Phase 2B:** advance settlement UI, email notifications, and the
+historical-data import (with Phase 3).
+
 ## Roadmap
-- **Phase 2** — Expense module: Metfraa-only forms (Local, Cab, Accommodation,
-  Outstation, DTR, Advance, Payments); tables `expense_submissions`,
-  `expense_attachments`, `expense_projects`, `expense_monthly_payments`.
 - **Phase 3** — Data migration: live SQLite (bsg-portal) → Neon; EHS OneDrive JSON history → `ehs_submissions` (shape matches 1:1).
 - **Phase 4** — Cross-module dashboard, redirects, kill old services.

@@ -25,6 +25,7 @@ from .routes import monthly_kpi as monthly_kpi_routes
 from .routes import site_visits as site_visits_routes
 from .routes import cron as cron_routes
 from .routes import ehs as ehs_routes
+from .routes import expense as expense_routes
 from .services.scheduler import start_scheduler
 from .startup_migrations import run_startup_migrations
 
@@ -95,6 +96,7 @@ app.include_router(monthly_kpi_routes.router)
 app.include_router(site_visits_routes.router)
 app.include_router(cron_routes.router)
 app.include_router(ehs_routes.router)
+app.include_router(expense_routes.router)
 
 
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
@@ -153,6 +155,17 @@ def root(
             pending_unlocks = pending_resets = kpi_submitted = kpi_total = draft_visits = 0
 
         try:
+            from .models import ExpenseSubmission
+
+            exp_pending = (
+                db.query(ExpenseSubmission)
+                .filter(ExpenseSubmission.status == "pending")
+                .count()
+            )
+        except Exception:
+            exp_pending = 0
+
+        try:
             from .models import EHSSubmission
 
             ehs_pending = (
@@ -164,6 +177,7 @@ def root(
             ehs_pending = 0
 
         admin_stats = {
+            "exp_pending": exp_pending,
             "ehs_pending": ehs_pending,
             "pending_unlocks": pending_unlocks,
             "pending_resets": pending_resets,
@@ -176,26 +190,6 @@ def root(
         request,
         "home.html",
         {"user": user, "admin_stats": admin_stats},
-    )
-
-
-@app.get("/expense/", response_class=HTMLResponse)
-@app.get("/expense", response_class=HTMLResponse, include_in_schema=False)
-def expense_stub(
-    request: Request,
-    user: Employee | None = Depends(get_optional_user),
-):
-    if not user:
-        return RedirectResponse("/auth/login", status_code=303)
-    return templates.TemplateResponse(
-        request,
-        "coming_soon.html",
-        {
-            "user": user,
-            "module_name": "Expense Portal",
-            "module_desc": "Local, cab, accommodation, outstation, DTR, advance & payment claims — with bill uploads and approvals.",
-            "phase": "Phase 2",
-        },
     )
 
 

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Expense Review — Metfraa Portal{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 sm:px-6 pt-8 pb-16">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="display text-2xl font-bold text-metfraa-ink">Expense Review Queue</h1>
+      <p class="text-sm text-metfraa-gray-500">{{ subs|length }} pending</p>
+    </div>
+    <a href="/expense/" class="px-3 py-2 text-sm font-semibold rounded-lg ring-1 ring-metfraa-gray-200 bg-white hover:bg-metfraa-gray-50">← Expense Home</a>
+  </div>
+  <div class="space-y-3">
+    {% for s in subs %}
+    <a href="/expense/review/{{ s.reference }}" class="card-hover block bg-white rounded-xl ring-1 ring-metfraa-gray-200 px-5 py-4">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <div class="font-semibold text-metfraa-ink">{{ forms[s.form_type].title if s.form_type in forms else s.form_type }} · ₹{{ "%.2f"|format(s.total_amount) }}</div>
+          <div class="text-xs text-metfraa-gray-400 mt-0.5">{{ s.reference }} · {{ s.employee_name }} ({{ s.employee_level }}) · {{ s.period or '' }} · {{ s.submitted_at_ist }}</div>
+        </div>
+        <span class="text-metfraa-blue font-semibold text-sm">Review →</span>
+      </div>
+    </a>
+    {% else %}
+    <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 px-5 py-12 text-center text-metfraa-gray-400">🎉 Queue is empty</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

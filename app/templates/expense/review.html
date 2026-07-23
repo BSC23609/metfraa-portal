@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}{{ sub.reference }} — Expense{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 sm:px-6 pt-8 pb-20">
+  <div class="flex items-center gap-3 mb-4">
+    <a href="{% if is_admin %}/expense/review{% else %}/expense/{% endif %}" class="text-metfraa-gray-400 hover:text-metfraa-ink">←</a>
+    <div>
+      <h1 class="display text-xl font-bold text-metfraa-ink">{{ meta.icon }} {{ meta.title }} · ₹{{ "%.2f"|format(sub.total_amount) }}</h1>
+      <p class="text-xs text-metfraa-gray-400">{{ sub.reference }} · {{ sub.employee_name }} ({{ sub.employee_level }}) · {{ sub.period or '' }} · {{ sub.submitted_at_ist }}</p>
+    </div>
+  </div>
+
+  <div class="mb-3">
+    <span class="px-2 py-0.5 text-xs font-bold rounded-full
+      {% if sub.status in ('approved','advance_approved','settled') %}bg-emerald-50 text-emerald-700
+      {% elif sub.status in ('draft','settlement_rejected') %}bg-amber-50 text-amber-700
+      {% elif sub.status == 'rejected' %}bg-red-50 text-red-700
+      {% else %}bg-metfraa-blue/10 text-metfraa-blue{% endif %}">{{ sub.status|replace('_',' ')|capitalize }}</span>
+    {% if sub.pdf_web_url %}<a href="{{ sub.pdf_web_url }}" target="_blank" class="ml-2 text-sm text-metfraa-blue font-semibold hover:underline">Open PDF report</a>{% endif %}
+  </div>
+
+  <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4 mb-4">
+    <pre id="payload-view" class="text-xs text-metfraa-ink whitespace-pre-wrap"></pre>
+  </div>
+
+  {% if sub.attachments %}
+  <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4 mb-4">
+    <div class="text-sm font-semibold text-metfraa-ink mb-2">Bills ({{ sub.attachments|length }})</div>
+    <div class="flex flex-wrap gap-2">
+      {% for a in sub.attachments %}
+      <a href="/expense/api/bill?path={{ a.onedrive_path | urlencode }}" target="_blank" class="block">
+        {% if a.mime_type == 'application/pdf' %}
+        <div class="h-24 w-20 flex items-center justify-center rounded-lg ring-1 ring-metfraa-gray-200 text-2xl">📄</div>
+        {% else %}
+        <img src="/expense/api/bill?path={{ a.onedrive_path | urlencode }}" class="h-24 rounded-lg ring-1 ring-metfraa-gray-200 object-cover" loading="lazy">
+        {% endif %}
+        {% if a.row_idx is not none %}<div class="text-[10px] text-center text-metfraa-gray-400">Entry #{{ a.row_idx + 1 }}</div>{% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if is_admin and sub.status == 'pending' %}
+  <div id="msg" class="hidden rounded-lg p-3 text-sm mb-3"></div>
+  <div class="flex gap-3">
+    <button onclick="act('approve')" id="b1" class="flex-1 py-3 rounded-xl bg-emerald-600 text-white font-bold hover:opacity-90 disabled:opacity-50">
+      {% if sub.form_type == 'met_advance' %}Approve Advance{% else %}Approve{% endif %}
+    </button>
+    <button onclick="ret()" id="b2" class="flex-1 py-3 rounded-xl bg-amber-500 text-white font-bold hover:opacity-90 disabled:opacity-50">Return for Changes</button>
+  </div>
+  {% endif %}
+</div>
+<script>
+const PAYLOAD = {{ payload_json | safe }};
+document.getElementById('payload-view').textContent = JSON.stringify(PAYLOAD, null, 2);
+async function act(kind, body) {
+  const msg=document.getElementById('msg');
+  ['b1','b2'].forEach(i=>document.getElementById(i).disabled=true);
+  const r = await fetch(`/expense/api/review/{{ sub.reference }}/${kind}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})});
+  const j = await r.json();
+  msg.classList.remove('hidden');
+  if (r.ok && j.ok) { msg.className='rounded-lg p-3 text-sm mb-3 bg-emerald-50 text-emerald-800'; msg.textContent='Done'; setTimeout(()=>location='/expense/review',1200); }
+  else { msg.className='rounded-lg p-3 text-sm mb-3 bg-red-50 text-red-800'; msg.textContent=j.detail||'Failed'; ['b1','b2'].forEach(i=>document.getElementById(i).disabled=false); }
+}
+function ret(){ const c=prompt('What needs to change? (sent back to employee)'); if(c&&c.trim()) act('return',{changes_required:c.trim()}); }
+</script>
+{% endblock %}

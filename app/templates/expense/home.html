@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Expense — Metfraa Portal{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 sm:px-6 pt-8 pb-16">
+  <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
+    <div>
+      <h1 class="display text-2xl font-bold text-metfraa-ink">Expense Portal</h1>
+      <p class="text-sm text-metfraa-gray-500">Reimbursements & advances · your level: <b>{{ level }}</b></p>
+    </div>
+    {% if user.is_admin %}
+    <a href="/expense/review" class="px-3 py-2 text-sm font-semibold rounded-lg bg-metfraa-blue text-white hover:opacity-90">
+      Review Queue{% if pending %} <span class="ml-1 px-1.5 py-0.5 text-xs bg-white/20 rounded-full">{{ pending }}</span>{% endif %}
+    </a>
+    {% endif %}
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+    {% for ft, m in forms.items() %}
+    <a href="/expense/form/{{ ft }}" class="card-hover bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4 text-center">
+      <div class="text-2xl mb-2">{{ m.icon }}</div>
+      <div class="text-sm font-semibold text-metfraa-ink leading-tight">{{ m.title }}</div>
+      <div class="text-[10px] text-metfraa-gray-400 mt-1">{{ m.code }}</div>
+    </a>
+    {% endfor %}
+  </div>
+
+  <h2 class="text-xs font-bold uppercase tracking-wider text-metfraa-gray-400 mb-3">My Claims</h2>
+  <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 divide-y divide-metfraa-gray-100">
+    {% for s in mine %}
+    <a href="/expense/review/{{ s.reference }}" class="block px-4 py-3 hover:bg-metfraa-gray-50">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <div class="text-sm font-semibold text-metfraa-ink">{{ forms[s.form_type].title if s.form_type in forms else s.form_type }} · ₹{{ "%.2f"|format(s.total_amount) }}</div>
+          <div class="text-xs text-metfraa-gray-400">{{ s.reference }} · {{ s.period or '' }} · {{ s.submitted_at_ist }}</div>
+          {% if s.status == 'draft' and s.changes_required %}
+          <div class="text-xs text-amber-700 mt-1">↩ Returned: {{ s.changes_required }} — <a class="underline font-semibold" href="/expense/form/{{ s.form_type }}?draft={{ s.reference }}">edit & resubmit</a></div>
+          {% endif %}
+        </div>
+        <span class="px-2 py-0.5 text-xs font-bold rounded-full
+          {% if s.status in ('approved','advance_approved','settled') %}bg-emerald-50 text-emerald-700
+          {% elif s.status in ('draft','settlement_rejected') %}bg-amber-50 text-amber-700
+          {% elif s.status == 'rejected' %}bg-red-50 text-red-700
+          {% else %}bg-metfraa-blue/10 text-metfraa-blue{% endif %}">{{ s.status|replace('_',' ')|capitalize }}</span>
+      </div>
+    </a>
+    {% else %}
+    <div class="px-4 py-10 text-center text-metfraa-gray-400">No claims yet — pick a form above</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

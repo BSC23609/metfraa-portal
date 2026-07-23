@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.title }} — Expense{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 sm:px-6 pt-8 pb-24">
+  <div class="flex items-center gap-3 mb-2">
+    <a href="/expense/" class="text-metfraa-gray-400 hover:text-metfraa-ink">←</a>
+    <h1 class="display text-xl font-bold text-metfraa-ink">{{ meta.icon }} {{ meta.title }}</h1>
+  </div>
+  <div id="draft-banner" class="hidden mb-4 rounded-lg p-3 text-sm bg-amber-50 text-amber-800"></div>
+  {% if policy_form.rules %}
+  <details class="mb-4 bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-3 text-sm text-metfraa-gray-600">
+    <summary class="font-semibold cursor-pointer text-metfraa-ink">Policy rules</summary>
+    <ul class="list-disc ml-5 mt-2 space-y-1">{% for r in policy_form.rules %}<li>{{ r }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+
+  <div id="form-root" class="space-y-4"></div>
+
+  <div class="mt-5 bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4 flex items-center justify-between">
+    <div class="text-sm text-metfraa-gray-500">Total claim</div>
+    <div id="total" class="text-xl font-bold text-metfraa-ink">₹0.00</div>
+  </div>
+  <div id="msg" class="hidden mt-3 rounded-lg p-3 text-sm"></div>
+  <button id="submit-btn" class="mt-4 w-full py-3 rounded-xl bg-metfraa-blue text-white font-bold hover:opacity-90 disabled:opacity-50">Submit for Review</button>
+</div>
+
+<script>
+const FORM_TYPE = "{{ form_type }}";
+const POLICY = {{ policy_json | safe }};
+const PROJECTS = {{ projects_json | safe }};
+const PURPOSES = {{ purposes_json | safe }};
+const DRAFT = {{ draft_json | safe }};
+const LEVEL = "{{ level }}";
+const CURRENT_PERIOD = "{{ current_period }}";
+const INR = n => '₹' + (n||0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+// Row-based defs: header inputs + row columns [key,label,type,opts]
+const DEFS = {
+  met_local: {
+    header: [["period","Period (month)","month"],["vehicle_type","Vehicle","select",Object.keys(POLICY.rates||{}).map(k=>({v:k,l:POLICY.rates[k].label+" — ₹"+POLICY.rates[k].rate_per_km+"/km"}))],["vehicle_reg","Vehicle Reg. No. (optional)","text"]],
+    rowsKey: "trips", rowLabel: "Trip",
+    cols: [["date","Date","date"],["from","From","text"],["to","To","text"],["purpose","Purpose","text"],["km","KM","number"]],
+    rowAmount: r => { const rate=(POLICY.rates||{})[val("vehicle_type")]; return rate? (parseFloat(r.km)||0)*rate.rate_per_km : 0; },
+  },
+  met_cab: {
+    header: [["period","Period (month, optional)","month"]],
+    rowsKey: "rides", rowLabel: "Cab Trip",
+    cols: [["date","Date","date"],["time","Time","time"],["pickup","Pickup","text"],["drop","Drop","text"],["km","KM (≥80)","number"],["fare","Fare ₹","number"],["purpose","Purpose","text"]],
+    rowAmount: r => parseFloat(r.fare)||0, rowBill: true,
+  },
+  met_accommodation: {
+    header: [["period","Period (month)","month"]],
+    note: () => `Daily limit for your level ${LEVEL}: ₹${((POLICY.per_level||{})[LEVEL]||{}).daily_limit||'-'}`,
+    rowsKey: "entries", rowLabel: "Stay",
+    cols: [["date","Date","date"],["location","Location","text"],["hotel","Hotel","text"],["bill_no","Bill No.","text"],["amount","Amount ₹","number"]],
+    rowAmount: r => parseFloat(r.amount)||0, rowBill: true,
+  },
+  met_misc: {
+    rowsKey: "items", rowLabel: "Item",
+    cols: [["date","Date","date"],["purpose","Purpose","text"],["amount","Amount ₹","number"]],
+    rowAmount: r => parseFloat(r.amount)||0, rowBill: true,
+  },
+  met_advance: {
+    header: [["destination","Destination","text"],["travel_from","Travel From","date"],["travel_to","Travel To","date"],
+             ["purpose","Purpose / Justification","textarea"],["mode","Mode (optional)","text"],["notes","Notes (optional)","text"],["amount","Advance Amount ₹","number"]],
+    rowsKey: null,
+    totalFn: () => parseFloat(val("amount"))||0,
+  },
+  met_dtr: {
+    header: [["period","Period (month)","month"]],
+    rowsKey: "entries", rowLabel: "Commute",
+    cols: [["date","Date","date"],
+           ["mode","Mode","select",[{v:"bus",l:"Bus"},{v:"bike_taxi",l:"Bike Taxi"},{v:"auto",l:"Auto"},{v:"share_auto",l:"Share Auto"}]],
+           ["from","From","text"],["to","To","text"],["fare","Fare ₹","number"],
+           ["purpose_category","Purpose","select",PURPOSES.map(p=>({v:p,l:p.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase())}))],
+           ["project_id","Project (if Project Visit)","select",[{v:"",l:"—"}].concat(PROJECTS.map(p=>({v:p.id,l:p.name})))],
+           ["client_name","Site / Client / Vendor","text"],
+           ["purpose_other_reason","Other reason","text"],
+           ["remarks","Remarks","text"]],
+    rowAmount: r => parseFloat(r.fare)||0,
+    rowBill: true, billNote: "Required for Bike Taxi / Auto / Share Auto",
+  },
+  met_outstation: {
+    header: [["period","Period (month)","month"]],
+    custom: "outstation",
+  },
+};
+
+let rowSeq = 0;
+const root = document.getElementById('form-root');
+const def = DEFS[FORM_TYPE];
+
+function inputHtml(name, type, opts, value='') {
+  const cls = 'w-full rounded-lg border-metfraa-gray-300 text-sm';
+  if (type==='select') return `<select name="${name}" class="${cls}">`+ (opts||[]).map(o=>`<option value="${o.v}" ${String(o.v)===String(value)?'selected':''}>${o.l}</option>`).join('') + `</select>`;
+  if (type==='textarea') return `<textarea name="${name}" rows="2" class="${cls}">${value||''}</textarea>`;
+  return `<input type="${type}" name="${name}" value="${value||''}" step="any" class="${cls}">`;
+}
+function val(name){ const el=document.querySelector(`[name="h:${name}"]`); return el?el.value:''; }
+
+function renderHeader() {
+  if (!def.header) return;
+  const card = document.createElement('div');
+  card.className='bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4 grid grid-cols-1 md:grid-cols-2 gap-3';
+  card.innerHTML = def.header.map(([k,l,t,o])=>`<div><label class="block text-xs font-bold text-metfraa-gray-500 mb-1">${l}</label>${inputHtml('h:'+k,t,o,(DRAFT&&DRAFT.payload&&DRAFT.payload[k])||(k==='period'?CURRENT_PERIOD:''))}</div>`).join('');
+  root.appendChild(card);
+  if (def.note) { const n=document.createElement('div'); n.className='text-xs text-metfraa-gray-500 px-1'; n.textContent=def.note(); root.appendChild(n); }
+}
+
+function addRow(prefill={}) {
+  const id = rowSeq++;
+  const card = document.createElement('div');
+  card.className='bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4 relative';
+  card.dataset.row=id;
+  card.innerHTML = `<button class="absolute top-2 right-3 text-metfraa-gray-300 hover:text-red-500" onclick="this.parentElement.remove();recalc()">✕</button>
+    <div class="text-xs font-bold text-metfraa-gray-400 mb-2">${def.rowLabel}</div>
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-2">` +
+    def.cols.map(([k,l,t,o])=>`<div><label class="block text-[10px] font-bold text-metfraa-gray-400 mb-0.5">${l}</label>${inputHtml(`r:${id}:${k}`,t,o,prefill[k]||'')}</div>`).join('') +
+    `</div>` +
+    (def.rowBill?`<div class="mt-2 text-xs"><label class="font-semibold text-metfraa-blue cursor-pointer">📎 Attach bill <input type="file" name="bill:${id}" accept="image/*,application/pdf" class="hidden" onchange="this.parentElement.append(' ✓ '+this.files[0].name)"></label>${def.billNote?` <span class="text-metfraa-gray-400">${def.billNote}</span>`:''}</div>`:'');
+  root.appendChild(card);
+  card.addEventListener('input', recalc);
+}
+
+function rowsData() {
+  return [...root.querySelectorAll('[data-row]')].map(card => {
+    const id = card.dataset.row, r = {_id:id};
+    def.cols.forEach(([k])=>{ const el=card.querySelector(`[name="r:${id}:${k}"]`); r[k]=el?el.value:''; });
+    return r;
+  });
+}
+
+function recalc() {
+  let total = 0;
+  if (def.totalFn) total = def.totalFn();
+  else if (FORM_TYPE==='met_outstation') total = window.__outTotal ? window.__outTotal() : 0;
+  else rowsData().forEach(r => total += def.rowAmount(r));
+  document.getElementById('total').textContent = INR(total);
+}
+
+// -------- outstation custom builder (trips × category items)
+function renderOutstation() {
+  const CATS=["travel","accommodation","food","local_conveyance","others"];
+  window.__trips=[];
+  window.__outTotal = () => {
+    let t=0; document.querySelectorAll('.out-amt').forEach(i=>t+=parseFloat(i.value)||0); return t;
+  };
+  const addTrip = (pre={}) => {
+    const tid = rowSeq++;
+    const card=document.createElement('div');
+    card.className='bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4 relative out-trip'; card.dataset.trip=tid;
+    card.innerHTML=`<button class="absolute top-2 right-3 text-metfraa-gray-300 hover:text-red-500" onclick="this.parentElement.remove();recalc()">✕</button>
+      <div class="text-xs font-bold text-metfraa-gray-400 mb-2">Trip</div>
+      <div class="grid grid-cols-2 gap-2 mb-2">
+        <div><label class="block text-[10px] font-bold text-metfraa-gray-400">Destination</label><input name="t:${tid}:place" value="${pre.place||''}" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+        <div><label class="block text-[10px] font-bold text-metfraa-gray-400">Purpose</label><input name="t:${tid}:purpose" value="${pre.purpose||''}" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+        <div><label class="block text-[10px] font-bold text-metfraa-gray-400">From date</label><input type="date" name="t:${tid}:from_date" value="${pre.from_date||''}" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+        <div><label class="block text-[10px] font-bold text-metfraa-gray-400">To date</label><input type="date" name="t:${tid}:to_date" value="${pre.to_date||''}" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+      </div>
+      <div class="text-[10px] text-metfraa-gray-400 mb-1">Expense items (date / description / amount):</div>
+      ${CATS.map(c=>`<div class="mb-1"><span class="text-xs font-semibold">${c.replace('_',' ')}</span>
+        <div class="items-${tid}-${c} space-y-1"></div>
+        <button class="text-xs text-metfraa-blue" onclick="addItem(${tid},'${c}')">+ add ${c.replace('_',' ')}</button></div>`).join('')}
+      <div class="mt-2 text-xs"><label class="font-semibold text-metfraa-blue cursor-pointer">📎 Attach bills <input type="file" name="bill:trip${tid}" accept="image/*,application/pdf" multiple class="hidden" onchange="this.parentElement.append(' ✓ '+this.files.length+' file(s)')"></label></div>`;
+    root.appendChild(card); card.addEventListener('input', recalc);
+  };
+  window.addItem = (tid,cat)=>{
+    const box=document.querySelector(`.items-${tid}-${cat}`);
+    const div=document.createElement('div'); div.className='flex gap-1';
+    div.innerHTML=`<input type="date" class="out-date rounded-md border-metfraa-gray-200 text-xs py-1 w-32">
+      <input placeholder="desc" class="out-desc flex-1 rounded-md border-metfraa-gray-200 text-xs py-1">
+      <input type="number" step="any" placeholder="₹" class="out-amt w-24 rounded-md border-metfraa-gray-200 text-xs py-1">`;
+    box.appendChild(div); div.addEventListener('input', recalc);
+  };
+  window.__collectOutstation = () => {
+    const trips=[];
+    document.querySelectorAll('.out-trip').forEach(card=>{
+      const tid=card.dataset.trip;
+      const g=k=>{const el=card.querySelector(`[name="t:${tid}:${k}"]`);return el?el.value:'';};
+      const categories={};
+      CATS.forEach(c=>{categories[c]=[...card.querySelectorAll(`.items-${tid}-${c} > div`)].map(d=>({
+        date:d.querySelector('.out-date').value, desc:d.querySelector('.out-desc').value, amount:d.querySelector('.out-amt').value})).filter(x=>x.amount);});
+      trips.push({place:g('place'),purpose:g('purpose'),from_date:g('from_date'),to_date:g('to_date'),categories});
+    });
+    return trips;
+  };
+  addTrip();
+  const btn=document.createElement('button'); btn.className='text-sm font-semibold text-metfraa-blue'; btn.textContent='+ Add another trip'; btn.onclick=()=>addTrip();
+  root.appendChild(btn);
+}
+
+// -------- build UI
+renderHeader();
+if (def.custom==='outstation') renderOutstation();
+else if (def.rowsKey) {
+  const prefillRows = (DRAFT && DRAFT.payload && DRAFT.payload[def.rowsKey]) || [{}];
+  prefillRows.forEach(r=>addRow(r));
+  const btn=document.createElement('button'); btn.className='text-sm font-semibold text-metfraa-blue'; btn.textContent='+ Add row'; btn.onclick=()=>{addRow(); recalc();};
+  root.appendChild(btn);
+}
+if (DRAFT) {
+  const b=document.getElementById('draft-banner'); b.classList.remove('hidden');
+  b.textContent='↩ Returned for changes: ' + (DRAFT.changes_required||'') + ' — edit below and resubmit.';
+}
+recalc();
+
+// -------- submit
+document.getElementById('submit-btn').onclick = async () => {
+  const btn=document.getElementById('submit-btn'), msg=document.getElementById('msg');
+  btn.disabled=true; btn.textContent='Submitting…';
+  const data = {};
+  (def.header||[]).forEach(([k])=>data[k]=val(k));
+  if (FORM_TYPE==='met_outstation') data.trips = window.__collectOutstation();
+  else if (def.rowsKey) {
+    data[def.rowsKey] = rowsData().map(r=>{const c={...r}; delete c._id; return c;});
+  }
+  const fd = new FormData();
+  fd.append('data', JSON.stringify(data));
+  if (DRAFT) fd.append('resubmit_reference', DRAFT.reference);
+  // map per-row bills: DTR uses entry INDEX; others just attach generally
+  const rowCards=[...root.querySelectorAll('[data-row]')];
+  rowCards.forEach((card,idx)=>{
+    const fi=card.querySelector('input[type=file]');
+    if (fi && fi.files.length) for (const f of fi.files) fd.append('bill:'+ (FORM_TYPE==='met_dtr'? idx : 'g'+idx), f, f.name);
+  });
+  document.querySelectorAll('.out-trip input[type=file]').forEach((fi,i)=>{ for (const f of fi.files) fd.append('bill:g'+i, f, f.name); });
+  try {
+    const r = await fetch('/expense/api/submit/'+FORM_TYPE, {method:'POST', body:fd});
+    const j = await r.json();
+    msg.classList.remove('hidden');
+    if (r.ok && j.ok) {
+      msg.className='mt-3 rounded-lg p-3 text-sm bg-emerald-50 text-emerald-800';
+      msg.textContent='✅ '+j.message+' ('+j.reference+')';
+      btn.textContent='Submitted ✓';
+      setTimeout(()=>window.location='/expense/',1800);
+    } else {
+      msg.className='mt-3 rounded-lg p-3 text-sm bg-red-50 text-red-800';
+      msg.textContent=j.detail||'Submission failed';
+      btn.disabled=false; btn.textContent='Submit for Review';
+    }
+  } catch(e) {
+    msg.classList.remove('hidden');
+    msg.className='mt-3 rounded-lg p-3 text-sm bg-red-50 text-red-800';
+    msg.textContent='Network error — please retry';
+    btn.disabled=false; btn.textContent='Submit for Review';
+  }
+};
+</script>
+{% endblock %}
