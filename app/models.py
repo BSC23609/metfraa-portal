@@ -458,3 +458,25 @@ class ExpenseMonthlyPayment(Base):
     paid_at_ist = Column(String(32), nullable=False)
 
     __table_args__ = (UniqueConstraint("employee_id", "year", "month", name="uq_emp_month_payment"),)
+
+
+# ============================================================
+# Access control (Phase 2C) — roles + module access per employee
+# ============================================================
+
+class EmployeeAccess(Base):
+    """One row per employee. No row = defaults (all modules visible, no roles;
+    legacy employees.is_admin=True still acts as superadmin until a row exists)."""
+
+    __tablename__ = "employee_access"
+
+    employee_id = Column(Integer, ForeignKey("employees.id"), primary_key=True)
+    is_superadmin = Column(Boolean, default=False, nullable=False)
+    is_hr_admin = Column(Boolean, default=False, nullable=False)
+    kpi_admin = Column(Boolean, default=False, nullable=False)
+    expense_admin = Column(Boolean, default=False, nullable=False)
+    ehs_admin = Column(Boolean, default=False, nullable=False)
+    kpi_access = Column(Boolean, default=True, nullable=False)
+    expense_access = Column(Boolean, default=True, nullable=False)
+    ehs_access = Column(Boolean, default=True, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

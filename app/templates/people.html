@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}Employees — Metfraa Portal{% endblock %}
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 pt-8 pb-20">
+  <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
+    <div>
+      <h1 class="display text-2xl font-bold text-metfraa-ink">Employees & Access</h1>
+      <p class="text-sm text-metfraa-gray-500">{% if is_superadmin %}Superadmin — full control{% else %}HR Admin — details, access & passwords (roles need a Superadmin){% endif %}</p>
+    </div>
+    <button onclick="openAdd()" class="px-4 py-2 text-sm font-bold rounded-lg bg-metfraa-blue text-white hover:opacity-90">+ Add Employee</button>
+  </div>
+
+  <input id="search" placeholder="Search name / code / email…" oninput="render()"
+         class="w-full mb-4 rounded-xl border-metfraa-gray-300 text-sm">
+
+  <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-[11px] uppercase tracking-wider text-metfraa-gray-400 border-b border-metfraa-gray-100">
+          <th class="px-3 py-3">Employee</th>
+          <th class="px-3 py-3">Modules</th>
+          <th class="px-3 py-3">Roles</th>
+          <th class="px-3 py-3">Level</th>
+          <th class="px-3 py-3">Status</th>
+          <th class="px-3 py-3"></th>
+        </tr>
+      </thead>
+      <tbody id="rows" class="divide-y divide-metfraa-gray-100"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============ Edit / Add drawer ============ -->
+<div id="drawer" class="hidden fixed inset-0 z-50 bg-black/40" onclick="if(event.target===this)closeDrawer()">
+  <div class="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl overflow-y-auto p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 id="drawer-title" class="font-bold text-lg text-metfraa-ink"></h2>
+      <button onclick="closeDrawer()" class="text-metfraa-gray-400 hover:text-metfraa-ink text-xl">✕</button>
+    </div>
+    <div id="drawer-msg" class="hidden rounded-lg p-3 text-sm mb-3"></div>
+
+    <div class="space-y-3">
+      <div class="grid grid-cols-2 gap-2">
+        <div><label class="lbl">Employee Code</label><input id="f-code" class="inp"></div>
+        <div><label class="lbl">Name</label><input id="f-name" class="inp"></div>
+      </div>
+      <div><label class="lbl">Email</label><input id="f-email" class="inp"></div>
+      <div class="grid grid-cols-2 gap-2">
+        <div><label class="lbl">Designation</label><input id="f-desig" class="inp"></div>
+        <div><label class="lbl">Department</label><input id="f-dept" class="inp"></div>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div><label class="lbl">Expense Level</label>
+          <select id="f-level" class="inp"><option>L1</option><option>L2</option><option>L3</option></select></div>
+        <div><label class="lbl">Status</label>
+          <select id="f-active" class="inp"><option value="1">Active</option><option value="0">Inactive</option></select></div>
+      </div>
+
+      <div class="pt-2 border-t border-metfraa-gray-100">
+        <div class="lbl mb-2">Module Access</div>
+        <div class="flex gap-4 text-sm">
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-kpi_access"> KPI</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-expense_access"> Expense</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-ehs_access"> EHS</label>
+        </div>
+      </div>
+
+      <div class="pt-2 border-t border-metfraa-gray-100 {% if not is_superadmin %}opacity-50 pointer-events-none{% endif %}">
+        <div class="lbl mb-2">Roles {% if not is_superadmin %}(Superadmin only){% endif %}</div>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-is_superadmin"> <b>Superadmin</b></label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-is_hr_admin"> HR Admin</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-kpi_admin"> KPI Admin</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-expense_admin"> Expense Admin</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-ehs_admin"> EHS Admin</label>
+        </div>
+      </div>
+
+      <button id="save-btn" onclick="save()" class="w-full py-3 rounded-xl bg-metfraa-blue text-white font-bold hover:opacity-90 disabled:opacity-50">Save</button>
+      <div id="edit-only" class="hidden space-y-2">
+        <button onclick="resetPw()" class="w-full py-2 rounded-xl ring-1 ring-metfraa-gray-300 text-sm font-semibold hover:bg-metfraa-gray-50">🔑 Reset Password (temp)</button>
+        {% if is_superadmin %}
+        <button onclick="del()" class="w-full py-2 rounded-xl ring-1 ring-red-200 text-red-600 text-sm font-semibold hover:bg-red-50">🗑 Delete (only if no submissions)</button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.lbl{display:block;font-size:11px;font-weight:700;color:#6b7480;margin-bottom:2px}
+.inp{width:100%;border-radius:.5rem;border-color:#d1d7de;font-size:.875rem}
+</style>
+<script>
+let EMPS = [], editing = null;
+const ROLE_KEYS = ["is_superadmin","is_hr_admin","kpi_admin","expense_admin","ehs_admin"];
+const ACCESS_KEYS = ["kpi_access","expense_access","ehs_access"];
+
+async function load() {
+  EMPS = await (await fetch('/people/api/list')).json();
+  render();
+}
+function badge(txt, cls) { return `<span class="px-1.5 py-0.5 text-[10px] font-bold rounded ${cls}">${txt}</span>`; }
+function render() {
+  const q = (document.getElementById('search').value||'').toLowerCase();
+  const rows = EMPS.filter(e => !q || (e.name+e.employee_code+(e.email||'')).toLowerCase().includes(q));
+  document.getElementById('rows').innerHTML = rows.map(e => `
+    <tr class="${e.is_active?'':'opacity-50'}">
+      <td class="px-3 py-3">
+        <div class="font-semibold text-metfraa-ink">${e.name}</div>
+        <div class="text-xs text-metfraa-gray-400">${e.employee_code} · ${e.email||'no email'} · ${e.designation||''}</div>
+      </td>
+      <td class="px-3 py-3 space-x-1">
+        ${e.kpi_access?badge('KPI','bg-metfraa-blue/10 text-metfraa-blue'):''}
+        ${e.expense_access?badge('EXP','bg-emerald-50 text-emerald-700'):''}
+        ${e.ehs_access?badge('EHS','bg-amber-50 text-amber-700'):''}
+      </td>
+      <td class="px-3 py-3 space-x-1">
+        ${e.legacy_admin?badge('ADMIN (legacy)','bg-purple-50 text-purple-700'):''}
+        ${e.is_superadmin?badge('SUPER','bg-purple-100 text-purple-800'):''}
+        ${e.is_hr_admin?badge('HR','bg-pink-50 text-pink-700'):''}
+        ${e.kpi_admin?badge('KPI-A','bg-metfraa-blue/10 text-metfraa-blue'):''}
+        ${e.expense_admin?badge('EXP-A','bg-emerald-50 text-emerald-700'):''}
+        ${e.ehs_admin?badge('EHS-A','bg-amber-50 text-amber-700'):''}
+      </td>
+      <td class="px-3 py-3 text-xs font-bold">${e.expense_level}</td>
+      <td class="px-3 py-3 text-xs">${e.is_active?'Active':'Inactive'}</td>
+      <td class="px-3 py-3 text-right"><button onclick="openEdit(${e.id})" class="text-metfraa-blue font-semibold text-sm hover:underline">Edit</button></td>
+    </tr>`).join('');
+}
+function setForm(e) {
+  document.getElementById('f-code').value = e.employee_code||'';
+  document.getElementById('f-name').value = e.name||'';
+  document.getElementById('f-email').value = e.email||'';
+  document.getElementById('f-desig').value = e.designation||'';
+  document.getElementById('f-dept').value = e.department||'';
+  document.getElementById('f-level').value = e.expense_level||'L1';
+  document.getElementById('f-active').value = e.is_active===false?'0':'1';
+  ACCESS_KEYS.forEach(k=>document.getElementById('f-'+k).checked = e[k]!==false);
+  ROLE_KEYS.forEach(k=>document.getElementById('f-'+k).checked = !!(e[k] || (k==='is_superadmin'&&e.legacy_admin)));
+}
+function openAdd(){ editing=null; setForm({}); document.getElementById('drawer-title').textContent='Add Employee';
+  document.getElementById('edit-only').classList.add('hidden'); show(); }
+function openEdit(id){ editing=EMPS.find(x=>x.id===id); setForm(editing);
+  document.getElementById('drawer-title').textContent='Edit — '+editing.name;
+  document.getElementById('edit-only').classList.remove('hidden'); show(); }
+function show(){ document.getElementById('drawer').classList.remove('hidden'); msg(); }
+function closeDrawer(){ document.getElementById('drawer').classList.add('hidden'); }
+function msg(text, ok) {
+  const m=document.getElementById('drawer-msg');
+  if(!text){ m.classList.add('hidden'); return; }
+  m.classList.remove('hidden');
+  m.className='rounded-lg p-3 text-sm mb-3 '+(ok?'bg-emerald-50 text-emerald-800':'bg-red-50 text-red-800');
+  m.textContent=text;
+}
+function formBody() {
+  const b = {
+    employee_code: document.getElementById('f-code').value,
+    name: document.getElementById('f-name').value,
+    email: document.getElementById('f-email').value,
+    designation: document.getElementById('f-desig').value,
+    department: document.getElementById('f-dept').value,
+    expense_level: document.getElementById('f-level').value,
+    is_active: document.getElementById('f-active').value==='1',
+  };
+  ACCESS_KEYS.forEach(k=>b[k]=document.getElementById('f-'+k).checked);
+  {% if is_superadmin %}ROLE_KEYS.forEach(k=>b[k]=document.getElementById('f-'+k).checked);{% endif %}
+  return b;
+}
+async function save() {
+  const btn=document.getElementById('save-btn'); btn.disabled=true;
+  const url = editing ? '/people/api/'+editing.id : '/people/api/create';
+  const r = await fetch(url, {method: editing?'PATCH':'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(formBody())});
+  const j = await r.json(); btn.disabled=false;
+  if (r.ok && j.ok) { msg(j.message||'Saved', true); await load(); if(!editing) setTimeout(closeDrawer, j.temp_password?6000:800); }
+  else msg(j.detail||'Failed');
+}
+async function resetPw() {
+  const r = await fetch('/people/api/'+editing.id+'/reset-password', {method:'POST'});
+  const j = await r.json();
+  msg(r.ok? j.message : (j.detail||'Failed'), r.ok);
+}
+async function del() {
+  if (!confirm('Delete '+editing.name+' permanently? This only works if they have no submissions.')) return;
+  const r = await fetch('/people/api/'+editing.id, {method:'DELETE'});
+  const j = await r.json();
+  if (r.ok && j.ok) { closeDrawer(); load(); } else msg(j.detail||'Failed');
+}
+load();
+</script>
+{% endblock %}

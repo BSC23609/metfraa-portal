@@ -26,6 +26,7 @@ from .routes import site_visits as site_visits_routes
 from .routes import cron as cron_routes
 from .routes import ehs as ehs_routes
 from .routes import expense as expense_routes
+from .routes import people as people_routes
 from .services.scheduler import start_scheduler
 from .startup_migrations import run_startup_migrations
 
@@ -97,6 +98,7 @@ app.include_router(site_visits_routes.router)
 app.include_router(cron_routes.router)
 app.include_router(ehs_routes.router)
 app.include_router(expense_routes.router)
+app.include_router(people_routes.router)
 
 
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
@@ -111,8 +113,11 @@ def root(
     if user.must_reset_password:
         return RedirectResponse("/auth/change-password", status_code=303)
 
+    from .access import get_access
+
+    access = get_access(db, user)
     admin_stats = None
-    if user.is_admin:
+    if access.any_admin:
         from datetime import date
 
         from .models import (
@@ -189,7 +194,7 @@ def root(
     return templates.TemplateResponse(
         request,
         "home.html",
-        {"user": user, "admin_stats": admin_stats},
+        {"user": user, "admin_stats": admin_stats, "access": access},
     )
 
 

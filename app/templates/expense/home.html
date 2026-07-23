@@ -7,7 +7,7 @@
       <h1 class="display text-2xl font-bold text-metfraa-ink">Expense Portal</h1>
       <p class="text-sm text-metfraa-gray-500">Reimbursements & advances · your level: <b>{{ level }}</b></p>
     </div>
-    {% if user.is_admin %}
+    {% if admin_here %}
     <a href="/expense/review" class="px-3 py-2 text-sm font-semibold rounded-lg bg-metfraa-blue text-white hover:opacity-90">
       Review Queue{% if pending %} <span class="ml-1 px-1.5 py-0.5 text-xs bg-white/20 rounded-full">{{ pending }}</span>{% endif %}
     </a>

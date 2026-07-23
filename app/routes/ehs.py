@@ -36,7 +36,9 @@ from fastapi.templating import Jinja2Templates
 from ..deps import get_current_user, get_optional_user
 
 templates = Jinja2Templates(directory="app/templates")
-from ..ehs.forms import ALL_FORMS, FORMS_BY_ID, INSPECTORS, is_approver
+from ..access import get_access
+from ..ehs.forms import ALL_FORMS, FORMS_BY_ID, INSPECTORS
+from ..ehs.forms import is_approver as _legacy_approver
 from ..models import EHSProject, EHSSubmission, Employee
 from ..services import onedrive
 from ..services.ehs_excel_log import append_to_master_log, ehs_root
@@ -91,9 +93,19 @@ def _active_projects(db: Session) -> list[str]:
     return [p.name for p in db.query(EHSProject).filter(EHSProject.active == True).order_by(EHSProject.name).all()]  # noqa: E712
 
 
-def _require_approver(user: Employee) -> None:
-    if not is_approver(user):
-        raise HTTPException(status_code=403, detail="Approver or admin access required")
+def _is_approver(db: Session, user: Employee) -> bool:
+    return get_access(db, user).can_admin_ehs or _legacy_approver(user)
+
+
+def _require_approver(db: Session, user: Employee) -> None:
+    if not _is_approver(db, user):
+        raise HTTPException(status_code=403, detail="EHS Admin access required")
+
+
+def _require_module(db: Session, user: Employee) -> None:
+    acc = get_access(db, user)
+    if not (acc.ehs_access or acc.can_admin_ehs):
+        raise HTTPException(status_code=403, detail="You don't have access to the EHS module")
 
 
 # ---------------------------------------------------------------- pages
@@ -110,20 +122,22 @@ def ehs_home(request: Request, user: Employee | None = Depends(get_optional_user
         .limit(5)
         .all()
     )
+    _require_module(db, user)
     pending_count = 0
-    if is_approver(user):
+    if _is_approver(db, user):
         pending_count = db.query(EHSSubmission).filter(EHSSubmission.status == "pending").count()
     return templates.TemplateResponse(request, "ehs/home.html", {
         "user": user,
         "forms": ALL_FORMS,
         "my_recent": my_recent,
-        "is_approver": is_approver(user),
+        "is_approver": _is_approver(db, user),
         "pending_count": pending_count,
     })
 
 
 @router.get("/form/{form_id}", response_class=HTMLResponse)
 def ehs_form_page(form_id: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _require_module(db, user)
     form = FORMS_BY_ID.get(form_id)
     if not form:
         raise HTTPException(status_code=404, detail="Unknown form")
@@ -143,7 +157,8 @@ def ehs_form_page(form_id: str, request: Request, user: Employee = Depends(get_c
 @router.get("/submissions", response_class=HTMLResponse)
 def ehs_submissions_page(request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(EHSSubmission)
-    approver = is_approver(user)
+    _require_module(db, user)
+    approver = _is_approver(db, user)
     if not approver:
         q = q.filter(EHSSubmission.submitted_by_id == user.id)
     subs = q.order_by(EHSSubmission.id.desc()).limit(200).all()
@@ -154,7 +169,7 @@ def ehs_submissions_page(request: Request, user: Employee = Depends(get_current_
 
 @router.get("/approvals", response_class=HTMLResponse)
 def ehs_approvals_page(request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    _require_approver(user)
+    _require_approver(db, user)
     subs = (
         db.query(EHSSubmission)
         .filter(EHSSubmission.status == "pending")
@@ -166,7 +181,7 @@ def ehs_approvals_page(request: Request, user: Employee = Depends(get_current_us
 
 @router.get("/approvals/{sub_id}", response_class=HTMLResponse)
 def ehs_review_page(sub_id: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    _require_approver(user)
+    _require_approver(db, user)
     sub = db.query(EHSSubmission).filter(EHSSubmission.submission_id == sub_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
@@ -192,6 +207,7 @@ def ehs_review_page(sub_id: str, request: Request, user: Employee = Depends(get_
 
 @router.post("/api/forms/{form_id}")
 async def ehs_submit(form_id: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _require_module(db, user)
     form = FORMS_BY_ID.get(form_id)
     if not form:
         raise HTTPException(status_code=404, detail="Unknown form")
@@ -318,7 +334,7 @@ def _compute_edits(form: dict, sub, new_fields: dict, new_checklist: list) -> st
 
 @router.post("/api/approvals/{sub_id}/approve")
 async def ehs_approve(sub_id: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    _require_approver(user)
+    _require_approver(db, user)
     sub = db.query(EHSSubmission).filter(EHSSubmission.submission_id == sub_id).with_for_update().first()
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
@@ -420,7 +436,7 @@ def _int_or(v):
 
 @router.post("/api/approvals/{sub_id}/reject")
 async def ehs_reject(sub_id: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    _require_approver(user)
+    _require_approver(db, user)
     sub = db.query(EHSSubmission).filter(EHSSubmission.submission_id == sub_id).with_for_update().first()
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
@@ -466,8 +482,7 @@ def ehs_projects(user: Employee = Depends(get_current_user), db: Session = Depen
 
 @router.post("/api/projects")
 async def ehs_add_project(request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _require_approver(db, user)
     body = await request.json()
     name = (body.get("name") or "").strip()
     if not name:
@@ -482,8 +497,7 @@ async def ehs_add_project(request: Request, user: Employee = Depends(get_current
 
 @router.patch("/api/projects/{project_id}")
 async def ehs_toggle_project(project_id: int, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _require_approver(db, user)
     p = db.query(EHSProject).filter(EHSProject.id == project_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Not found")

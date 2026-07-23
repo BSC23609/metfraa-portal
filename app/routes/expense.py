@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user
+from ..access import get_access
 from ..expense.policy import FORM_META, POLICY, PURPOSE_CATEGORIES
 from ..expense.validators import validate
 from ..models import (
@@ -48,6 +49,21 @@ templates = Jinja2Templates(directory="app/templates")
 
 IST = pytz.timezone("Asia/Kolkata")
 DEFAULT_PROJECTS = [("AMNS", "AMNS Site - Oragadam"), ("KGISL", "KGISL Auditorium"), ("PTJ", "Patanjali"), ("APL", "Apollo")]
+
+
+def _can_admin(db: Session, user: Employee) -> bool:
+    return get_access(db, user).can_admin_expense
+
+
+def _require_admin(db: Session, user: Employee) -> None:
+    if not _can_admin(db, user):
+        raise HTTPException(status_code=403, detail="Expense Admin / HR Admin access required")
+
+
+def _require_module(db: Session, user: Employee) -> None:
+    acc = get_access(db, user)
+    if not (acc.expense_access or acc.can_admin_expense):
+        raise HTTPException(status_code=403, detail="You don't have access to the Expense module")
 
 
 def _ist() -> str:
@@ -98,15 +114,18 @@ def expense_home(request: Request, user: Employee | None = Depends(get_optional_
     mine = (db.query(ExpenseSubmission)
             .filter(ExpenseSubmission.employee_id == user.id)
             .order_by(ExpenseSubmission.id.desc()).limit(10).all())
-    pending = db.query(ExpenseSubmission).filter(ExpenseSubmission.status == "pending").count() if user.is_admin else 0
+    _require_module(db, user)
+    admin_here = _can_admin(db, user)
+    pending = db.query(ExpenseSubmission).filter(ExpenseSubmission.status == "pending").count() if admin_here else 0
     return templates.TemplateResponse(request, "expense/home.html", {
         "user": user, "forms": FORM_META, "mine": mine,
-        "level": _level_of(db, user.id), "pending": pending,
+        "level": _level_of(db, user.id), "pending": pending, "admin_here": admin_here,
     })
 
 
 @router.get("/form/{form_type}", response_class=HTMLResponse)
 def expense_form_page(form_type: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _require_module(db, user)
     meta = FORM_META.get(form_type)
     if not meta:
         raise HTTPException(status_code=404, detail="Unknown form")
@@ -136,8 +155,7 @@ def expense_form_page(form_type: str, request: Request, user: Employee = Depends
 
 @router.get("/review", response_class=HTMLResponse)
 def expense_review_queue(request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _require_admin(db, user)
     subs = (db.query(ExpenseSubmission)
             .filter(ExpenseSubmission.status == "pending")
             .order_by(ExpenseSubmission.id.asc()).all())
@@ -149,11 +167,12 @@ def expense_review_one(reference: str, request: Request, user: Employee = Depend
     sub = db.query(ExpenseSubmission).filter(ExpenseSubmission.reference == reference).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Not found")
-    if not user.is_admin and sub.employee_id != user.id:
+    admin_here = _can_admin(db, user)
+    if not admin_here and sub.employee_id != user.id:
         raise HTTPException(status_code=403, detail="Not yours")
     return templates.TemplateResponse(request, "expense/review.html", {
         "user": user, "sub": sub, "meta": FORM_META.get(sub.form_type, {}),
-        "payload_json": json.dumps(sub.payload or {}), "is_admin": user.is_admin,
+        "payload_json": json.dumps(sub.payload or {}), "is_admin": admin_here,
     })
 
 
@@ -161,6 +180,7 @@ def expense_review_one(reference: str, request: Request, user: Employee = Depend
 
 @router.post("/api/submit/{form_type}")
 async def expense_submit(form_type: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _require_module(db, user)
     meta = FORM_META.get(form_type)
     if not meta:
         raise HTTPException(status_code=404, detail="Unknown form")
@@ -261,8 +281,7 @@ def expense_bill_proxy(path: str, user: Employee = Depends(get_current_user)):
 
 @router.post("/api/review/{reference}/approve")
 async def expense_approve(reference: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _require_admin(db, user)
     sub = db.query(ExpenseSubmission).filter(ExpenseSubmission.reference == reference).with_for_update().first()
     if not sub:
         raise HTTPException(status_code=404, detail="Not found")
@@ -302,8 +321,7 @@ async def expense_approve(reference: str, request: Request, user: Employee = Dep
 @router.post("/api/review/{reference}/return")
 async def expense_return(reference: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     """Reject-to-draft: employee gets it back with a 'what to change' note."""
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _require_admin(db, user)
     sub = db.query(ExpenseSubmission).filter(ExpenseSubmission.reference == reference).with_for_update().first()
     if not sub:
         raise HTTPException(status_code=404, detail="Not found")
@@ -331,8 +349,7 @@ def expense_projects(user: Employee = Depends(get_current_user), db: Session = D
 
 @router.post("/api/projects")
 async def expense_add_project(request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _require_admin(db, user)
     body = await request.json()
     name = (body.get("name") or "").strip()
     if not name:
@@ -345,8 +362,7 @@ async def expense_add_project(request: Request, user: Employee = Depends(get_cur
 
 @router.patch("/api/projects/{project_id}")
 async def expense_toggle_project(project_id: int, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _require_admin(db, user)
     p = db.query(ExpenseProject).filter(ExpenseProject.id == project_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Not found")
@@ -361,8 +377,7 @@ async def expense_toggle_project(project_id: int, request: Request, user: Employ
 
 @router.post("/api/level/{employee_id}")
 async def expense_set_level(employee_id: int, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _require_admin(db, user)
     body = await request.json()
     level = (body.get("level") or "").strip().upper()
     if level not in ("L1", "L2", "L3"):
@@ -378,8 +393,7 @@ async def expense_set_level(employee_id: int, request: Request, user: Employee =
 
 @router.get("/api/payments")
 def expense_payments(year: int, month: int, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _require_admin(db, user)
     period = f"{year:04d}-{month:02d}"
     subs = (db.query(ExpenseSubmission)
             .filter(ExpenseSubmission.period == period,
@@ -402,8 +416,7 @@ def expense_payments(year: int, month: int, user: Employee = Depends(get_current
 
 @router.post("/api/payments")
 async def expense_mark_paid(request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _require_admin(db, user)
     body = await request.json()
     try:
         employee_id, year, month = int(body["employee_id"]), int(body["year"]), int(body["month"])

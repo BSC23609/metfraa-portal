@@ -40,6 +40,8 @@ py -3 -m py_compile app\services\ehs_excel_log.py      || goto :err
 py -3 -m py_compile app\services\expense_artifacts.py  || goto :err
 py -3 -m py_compile app\services\onedrive.py           || goto :err
 py -3 -m py_compile index.py                           || goto :err
+py -3 -m py_compile app\\access.py                     || goto :err
+py -3 -m py_compile app\\routes\\people.py              || goto :err
 echo    OK - all Python files pass
 echo.
 

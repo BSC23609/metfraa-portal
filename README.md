@@ -124,6 +124,23 @@ redeploy. `create_all` only adds missing tables; existing KPI tables are untouch
 **Deferred to Phase 2B:** advance settlement UI, email notifications, and the
 historical-data import (with Phase 3).
 
+## Employees & Access (Phase 2C) — what shipped
+
+Single screen at **/people** (linked from portal home for managers):
+- **Roles**: Superadmin (everything, only role that grants roles), HR Admin
+  (employee CRUD, passwords, expense levels + expense review), and per-module
+  admins (KPI / Expense / EHS admin functions only).
+- **Module access toggles** per employee — tile hidden and routes 403 when off.
+- Add employee (auto temp password, forced change on first login), edit details,
+  deactivate, reset password, hard delete (blocked if they have submissions).
+- **Legacy compatibility**: existing `is_admin=True` employees act as Superadmin
+  until granular roles are saved for them. `employees.is_admin` stays synced to
+  (Superadmin OR KPI Admin) because the KPI admin routes check it directly.
+- EHS approver env list still works as a fallback alongside the EHS Admin role.
+
+**⚠️ Deploy note:** one new table (`employee_access`) — `INIT_DB=true` dance again.
+After deploy, open /people as an existing admin and assign proper roles.
+
 ## Roadmap
 - **Phase 3** — Data migration: live SQLite (bsg-portal) → Neon; EHS OneDrive JSON history → `ehs_submissions` (shape matches 1:1).
 - **Phase 4** — Cross-module dashboard, redirects, kill old services.
