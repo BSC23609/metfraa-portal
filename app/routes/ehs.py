@@ -25,7 +25,7 @@ import random
 from datetime import datetime
 
 import pytz
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from starlette.datastructures import UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
@@ -43,6 +43,7 @@ from ..models import EHSProject, EHSSubmission, Employee
 from ..services import onedrive
 from ..services.ehs_excel_log import append_to_master_log, ehs_root
 from ..services.ehs_pdf import generate_ehs_pdf
+from ..services.portal_notify import notify_ehs_decision, notify_ehs_submitted
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/ehs", tags=["ehs"])
@@ -206,7 +207,7 @@ def ehs_review_page(sub_id: str, request: Request, user: Employee = Depends(get_
 # ---------------------------------------------------------------- submit API
 
 @router.post("/api/forms/{form_id}")
-async def ehs_submit(form_id: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+async def ehs_submit(form_id: str, request: Request, bg: BackgroundTasks, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_module(db, user)
     form = FORMS_BY_ID.get(form_id)
     if not form:
@@ -285,6 +286,7 @@ async def ehs_submit(form_id: str, request: Request, user: Employee = Depends(ge
     )
     db.add(sub)
     db.commit()
+    notify_ehs_submitted(bg, sub)
 
     return {
         "ok": True,
@@ -333,7 +335,7 @@ def _compute_edits(form: dict, sub, new_fields: dict, new_checklist: list) -> st
 
 
 @router.post("/api/approvals/{sub_id}/approve")
-async def ehs_approve(sub_id: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+async def ehs_approve(sub_id: str, request: Request, bg: BackgroundTasks, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_approver(db, user)
     sub = db.query(EHSSubmission).filter(EHSSubmission.submission_id == sub_id).with_for_update().first()
     if not sub:
@@ -424,6 +426,7 @@ async def ehs_approve(sub_id: str, request: Request, user: Employee = Depends(ge
         pass
 
     db.commit()
+    notify_ehs_decision(bg, sub)
     return {"ok": True, "status": "approved", "pdf": pdf_link, "edits": edits}
 
 
@@ -435,7 +438,7 @@ def _int_or(v):
 
 
 @router.post("/api/approvals/{sub_id}/reject")
-async def ehs_reject(sub_id: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+async def ehs_reject(sub_id: str, request: Request, bg: BackgroundTasks, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_approver(db, user)
     sub = db.query(EHSSubmission).filter(EHSSubmission.submission_id == sub_id).with_for_update().first()
     if not sub:
@@ -466,6 +469,7 @@ async def ehs_reject(sub_id: str, request: Request, user: Employee = Depends(get
             pass
 
     db.commit()
+    notify_ehs_decision(bg, sub)
     return {"ok": True, "status": "rejected"}
 
 

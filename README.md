@@ -121,8 +121,15 @@ redeploy. `create_all` only adds missing tables; existing KPI tables are untouch
 **⚠️ Deploy note:** five new tables — same drill: `INIT_DB=true` → redeploy →
 `/health` → remove var → redeploy.
 
-**Deferred to Phase 2B:** advance settlement UI, email notifications, and the
-historical-data import (with Phase 3).
+**Phase 2B (shipped):** Travel Advance settlement — employee settles an open
+advance with actuals + bills (balance auto-computed: company-owes vs
+employee-returns), admin approves (→ `settled`, settled PDF + log row) or
+returns with a note (→ resubmit). Email notifications on every workflow step
+for both Expense and EHS via the existing SMTP config — new env vars:
+`EXPENSE_HR_EMAIL` (default admin@metfraa.com) and `EHS_NOTIFY_EMAILS`
+(default: the approver list). No new tables — no INIT_DB needed for 2B alone.
+
+**Still deferred:** historical-data import (Phase 3).
 
 ## Employees & Access (Phase 2C) — what shipped
 

@@ -24,7 +24,7 @@ import string
 from datetime import datetime
 
 import pytz
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -39,6 +39,7 @@ from ..models import (
     ExpenseProject, ExpenseSubmission,
 )
 from ..services import onedrive
+from ..services.portal_notify import notify_expense_decision, notify_expense_submitted
 from ..services.expense_artifacts import (
     append_expense_log, expense_root, generate_expense_pdf, submission_folder,
 )
@@ -179,7 +180,7 @@ def expense_review_one(reference: str, request: Request, user: Employee = Depend
 # ---------------------------------------------------------------- submit
 
 @router.post("/api/submit/{form_type}")
-async def expense_submit(form_type: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+async def expense_submit(form_type: str, request: Request, bg: BackgroundTasks, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_module(db, user)
     meta = FORM_META.get(form_type)
     if not meta:
@@ -258,6 +259,7 @@ async def expense_submit(form_type: str, request: Request, user: Employee = Depe
         raise HTTPException(status_code=502, detail="Bill upload to OneDrive failed — please retry")
 
     db.commit()
+    notify_expense_submitted(bg, sub, meta["title"])
     return {"ok": True, "reference": sub.reference, "total": total, "status": "pending",
             "message": f"{meta['title']} submitted — ₹{total:,.2f} claimed, awaiting HR review."}
 
@@ -280,7 +282,7 @@ def expense_bill_proxy(path: str, user: Employee = Depends(get_current_user)):
 # ---------------------------------------------------------------- review actions
 
 @router.post("/api/review/{reference}/approve")
-async def expense_approve(reference: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+async def expense_approve(reference: str, request: Request, bg: BackgroundTasks, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_admin(db, user)
     sub = db.query(ExpenseSubmission).filter(ExpenseSubmission.reference == reference).with_for_update().first()
     if not sub:
@@ -315,11 +317,12 @@ async def expense_approve(reference: str, request: Request, user: Employee = Dep
         log.error(f"[expense-approve] log failed: {e}", exc_info=True)
 
     db.commit()
+    notify_expense_decision(bg, sub, meta.get("title", sub.form_type))
     return {"ok": True, "status": sub.status, "pdf": pdf_link}
 
 
 @router.post("/api/review/{reference}/return")
-async def expense_return(reference: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+async def expense_return(reference: str, request: Request, bg: BackgroundTasks, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     """Reject-to-draft: employee gets it back with a 'what to change' note."""
     _require_admin(db, user)
     sub = db.query(ExpenseSubmission).filter(ExpenseSubmission.reference == reference).with_for_update().first()
@@ -337,7 +340,118 @@ async def expense_return(reference: str, request: Request, user: Employee = Depe
     sub.reviewed_by = user.email or user.name
     sub.reviewed_at_ist = _ist()
     db.commit()
+    notify_expense_decision(bg, sub, FORM_META.get(sub.form_type, {}).get("title", sub.form_type))
     return {"ok": True, "status": "draft"}
+
+
+# ---------------------------------------------------------------- advance settlement (Phase 2B)
+
+@router.post("/api/settle/{reference}")
+async def expense_settle(reference: str, request: Request, bg: BackgroundTasks,
+                         user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Employee submits actuals against an approved advance."""
+    _require_module(db, user)
+    sub = db.query(ExpenseSubmission).filter(ExpenseSubmission.reference == reference).with_for_update().first()
+    if not sub or sub.form_type != "met_advance":
+        raise HTTPException(status_code=404, detail="Advance not found")
+    if sub.employee_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your advance")
+    if sub.status not in ("advance_approved", "settlement_rejected"):
+        raise HTTPException(status_code=409, detail=f"Advance is {sub.status} — settlement not open")
+
+    form_data = await request.form()
+    try:
+        raw = json.loads(form_data.get("data") or "{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid data")
+    items = raw.get("items") or []
+    clean, actual_total = [], 0.0
+    for it in items:
+        try:
+            amt = float(it.get("amount"))
+        except (TypeError, ValueError):
+            amt = 0
+        if amt <= 0 or not (it.get("date") and str(it.get("desc", "")).strip()):
+            raise HTTPException(status_code=400, detail="Each actual needs date, description and positive amount")
+        clean.append({"date": it["date"], "desc": str(it["desc"]).strip(), "amount": round(amt, 2)})
+        actual_total += amt
+    if not clean:
+        raise HTTPException(status_code=400, detail="Add at least one actual expense")
+
+    # bills for the settlement
+    folder = f"{submission_folder(sub)}/Settlement"
+    try:
+        for key, value in form_data.multi_items():
+            if key.startswith("bill:") and hasattr(value, "read"):
+                data = await value.read()
+                if not data:
+                    continue
+                data, mime = _compress(data, value.content_type or "image/jpeg")
+                ext = ".jpg" if mime == "image/jpeg" else ".pdf" if mime == "application/pdf" else ".bin"
+                path = f"{folder}/settle_{len(sub.attachments) + 1}{ext}"
+                info = onedrive.upload_to_path(data, path, mime)
+                db.add(ExpenseAttachment(submission_id=sub.id, filename=value.filename or "bill",
+                                         onedrive_path=path, web_url=info.get("webUrl"),
+                                         mime_type=mime, size_bytes=len(data), label="settlement"))
+    except Exception as e:
+        db.rollback()
+        log.error(f"[settle] bill upload failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="Bill upload failed — please retry")
+
+    advance_amt = float((sub.payload or {}).get("amount") or sub.total_amount)
+    sub.actuals = {"items": clean, "actual_total": round(actual_total, 2),
+                   "advance_amount": advance_amt,
+                   "balance": round(actual_total - advance_amt, 2)}
+    sub.status = "settlement_pending"
+    sub.settled_at_ist = _ist()
+    db.commit()
+    bal = sub.actuals["balance"]
+    return {"ok": True, "status": "settlement_pending", "actual_total": round(actual_total, 2),
+            "balance": bal,
+            "message": f"Settlement submitted — actuals ₹{actual_total:,.2f} vs advance ₹{advance_amt:,.2f} "
+                       + (f"(company owes you ₹{bal:,.2f})" if bal > 0 else f"(you return ₹{-bal:,.2f})" if bal < 0 else "(fully settled)")}
+
+
+@router.post("/api/settle/{reference}/decide")
+async def expense_settle_decide(reference: str, request: Request, bg: BackgroundTasks,
+                                user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Admin approves or rejects a pending settlement. body: {action: approve|reject, note}"""
+    _require_admin(db, user)
+    sub = db.query(ExpenseSubmission).filter(ExpenseSubmission.reference == reference).with_for_update().first()
+    if not sub or sub.form_type != "met_advance":
+        raise HTTPException(status_code=404, detail="Advance not found")
+    if sub.status != "settlement_pending":
+        raise HTTPException(status_code=409, detail=f"Settlement is {sub.status}")
+    body = await request.json()
+    action = body.get("action")
+    note = (body.get("note") or "").strip()
+    if action == "approve":
+        sub.status = "settled"
+        sub.settlement_reviewed_by = user.email or user.name
+        sub.settlement_note = note or None
+        meta = FORM_META.get(sub.form_type, {})
+        try:
+            pdf = generate_expense_pdf(sub, meta.get("title", "Travel Advance") + " (Settled)")
+            info = onedrive.upload_to_path(pdf, f"{submission_folder(sub)}/{sub.reference}_settled.pdf", "application/pdf")
+            sub.pdf_web_url = info.get("webUrl")
+        except Exception as e:
+            log.error(f"[settle-decide] PDF failed: {e}")
+        try:
+            append_expense_log(sub, meta.get("code", "ADV"),
+                               [a.web_url for a in sub.attachments if a.web_url], sub.pdf_web_url)
+        except Exception as e:
+            log.error(f"[settle-decide] log failed: {e}")
+    elif action == "reject":
+        if not note:
+            raise HTTPException(status_code=400, detail="A note is required when rejecting a settlement")
+        sub.status = "settlement_rejected"
+        sub.settlement_reviewed_by = user.email or user.name
+        sub.settlement_note = note
+    else:
+        raise HTTPException(status_code=400, detail="action must be approve or reject")
+    db.commit()
+    notify_expense_decision(bg, sub, "Travel Advance settlement")
+    return {"ok": True, "status": sub.status}
 
 
 # ---------------------------------------------------------------- projects / levels / payments
