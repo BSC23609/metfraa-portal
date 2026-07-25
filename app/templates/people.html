@@ -97,8 +97,20 @@ const ROLE_KEYS = ["is_superadmin","is_hr_admin","kpi_admin","expense_admin","eh
 const ACCESS_KEYS = ["kpi_access","expense_access","ehs_access"];
 
 async function load() {
-  EMPS = await (await fetch('/people/api/list')).json();
-  render();
+  try {
+    const r = await fetch('/people/api/list');
+    const j = await r.json();
+    if (!r.ok || !Array.isArray(j)) {
+      document.getElementById('rows').innerHTML =
+        `<tr><td colspan="6" class="px-4 py-8 text-center text-red-600 text-sm font-semibold">
+          Could not load employees (HTTP ${r.status}): ${(j && j.detail) || 'unknown error'} — screenshot this and check Vercel logs</td></tr>`;
+      return;
+    }
+    EMPS = j; render();
+  } catch(e) {
+    document.getElementById('rows').innerHTML =
+      `<tr><td colspan="6" class="px-4 py-8 text-center text-red-600 text-sm font-semibold">Network/JS error: ${e.message}</td></tr>`;
+  }
 }
 function badge(txt, cls) { return `<span class="px-1.5 py-0.5 text-[10px] font-bold rounded ${cls}">${txt}</span>`; }
 function render() {

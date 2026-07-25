@@ -123,20 +123,27 @@
                  class="h-9 w-auto"
                  onerror="this.outerHTML='<div class=&quot;flex items-baseline gap-1.5&quot;><div class=&quot;font-display font-bold text-white text-xl tracking-tight&quot;>METFRAA</div><div class=&quot;text-metfraa-blue text-[10px] uppercase tracking-widest&quot;>Steel</div></div>'" />
             <span class="text-metfraa-gray-400 text-xs hidden sm:block">|</span>
-            <span class="text-metfraa-gray-300 text-sm font-medium hidden sm:block">KPI Tracker</span>
+            <span class="text-metfraa-gray-300 text-sm font-medium hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/people') %}Employees{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
           </a>
         </div>
 
         <nav class="flex items-center gap-1">
-          <a href="/dashboard"
-             class="text-metfraa-gray-300 hover:text-white px-3 py-1.5 text-sm font-medium rounded-md hover:bg-white/5">
-            Dashboard
-          </a>
-          {% if user.is_admin %}
-          <a href="/admin"
-             class="text-metfraa-gray-300 hover:text-white px-3 py-1.5 text-sm font-medium rounded-md hover:bg-white/5">
-            Admin
-          </a>
+          {% set _p = request.url.path %}
+          {% set _navcls = "text-metfraa-gray-300 hover:text-white px-3 py-1.5 text-sm font-medium rounded-md hover:bg-white/5" %}
+          {% if _p.startswith('/ehs') %}
+            <a href="/ehs/" class="{{ _navcls }}">EHS Home</a>
+            <a href="/ehs/submissions" class="{{ _navcls }} hidden sm:block">Submissions</a>
+          {% elif _p.startswith('/expense') %}
+            <a href="/expense/" class="{{ _navcls }}">Expense Home</a>
+          {% elif _p.startswith('/people') %}
+            <a href="/" class="{{ _navcls }}">Portal Home</a>
+          {% elif _p == '/' %}
+            {# portal home: tiles are the nav #}
+          {% else %}
+            <a href="/dashboard" class="{{ _navcls }}">Dashboard</a>
+            {% if user.is_admin %}
+            <a href="/admin" class="{{ _navcls }}">KPI Admin</a>
+            {% endif %}
           {% endif %}
           <div class="relative ml-3" id="user-menu">
             <button onclick="document.getElementById('user-dropdown').classList.toggle('hidden')"
