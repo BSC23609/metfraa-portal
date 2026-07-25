@@ -50,9 +50,10 @@ def _temp_password(n: int = 8) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(n))
 
 
-def _row(db: Session, e: Employee) -> dict:
-    a = db.query(EmployeeAccess).filter(EmployeeAccess.employee_id == e.id).first()
-    m = db.query(ExpenseEmployeeMeta).filter(ExpenseEmployeeMeta.employee_id == e.id).first()
+def _row(db: Session, e: Employee, a=None, m=None, _bulk: bool = False) -> dict:
+    if not _bulk:
+        a = db.query(EmployeeAccess).filter(EmployeeAccess.employee_id == e.id).first()
+        m = db.query(ExpenseEmployeeMeta).filter(ExpenseEmployeeMeta.employee_id == e.id).first()
     return {
         "id": e.id, "employee_code": e.employee_code, "name": e.name, "email": e.email or "",
         "designation": e.designation or "", "department": e.department or "",
@@ -86,7 +87,10 @@ def people_page(request: Request, user: Employee | None = Depends(get_optional_u
 def people_list(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_manager(db, user)
     emps = db.query(Employee).order_by(Employee.is_active.desc(), Employee.name).all()
-    return [_row(db, e) for e in emps]
+    # bulk-load in 2 queries instead of 2 per employee (matters over TLS to Neon)
+    acc = {a.employee_id: a for a in db.query(EmployeeAccess).all()}
+    meta = {m.employee_id: m for m in db.query(ExpenseEmployeeMeta).all()}
+    return [_row(db, e, acc.get(e.id), meta.get(e.id), _bulk=True) for e in emps]
 
 
 @router.post("/api/create")

@@ -137,7 +137,10 @@ function render() {
       </td>
       <td class="px-3 py-3 text-xs font-bold">${e.expense_level}</td>
       <td class="px-3 py-3 text-xs">${e.is_active?'Active':'Inactive'}</td>
-      <td class="px-3 py-3 text-right"><button onclick="openEdit(${e.id})" class="text-metfraa-blue font-semibold text-sm hover:underline">Edit</button></td>
+      <td class="px-3 py-3 text-right whitespace-nowrap">
+        <button onclick="quickToggle(${e.id}, ${e.is_active?'false':'true'})" class="${e.is_active?'text-amber-600':'text-emerald-600'} font-semibold text-sm hover:underline mr-3">${e.is_active?'Deactivate':'Activate'}</button>
+        <button onclick="openEdit(${e.id})" class="text-metfraa-blue font-semibold text-sm hover:underline">Edit</button>
+      </td>
     </tr>`).join('');
 }
 function setForm(e) {
@@ -186,6 +189,13 @@ async function save() {
   const j = await r.json(); btn.disabled=false;
   if (r.ok && j.ok) { msg(j.message||'Saved', true); await load(); if(!editing) setTimeout(closeDrawer, j.temp_password?6000:800); }
   else msg(j.detail||'Failed');
+}
+async function quickToggle(id, makeActive) {
+  const e = EMPS.find(x=>x.id===id);
+  if (!confirm((makeActive?'Activate ':'Deactivate ')+e.name+'?')) return;
+  const r = await fetch('/people/api/'+id, {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({is_active: makeActive})});
+  const j = await r.json();
+  if (r.ok && j.ok) load(); else alert(j.detail||'Failed');
 }
 async function resetPw() {
   const r = await fetch('/people/api/'+editing.id+'/reset-password', {method:'POST'});
