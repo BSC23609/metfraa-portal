@@ -129,7 +129,25 @@ for both Expense and EHS via the existing SMTP config — new env vars:
 `EXPENSE_HR_EMAIL` (default admin@metfraa.com) and `EHS_NOTIFY_EMAILS`
 (default: the approver list). No new tables — no INIT_DB needed for 2B alone.
 
-**Still deferred:** historical-data import (Phase 3).
+**Phase 3 tooling (shipped):** `scripts/migrate_phase3.py` — run once against Neon:
+```
+python scripts/migrate_phase3.py expense /path/to/bsg-portal.db --dry-run   # then without --dry-run
+python scripts/migrate_phase3.py ehs --dry-run                              # reads OneDrive master logs
+```
+Both idempotent (safe to rerun). Expense: matches employees by email/code,
+maps JUNIOR/SENIOR/MANAGER → L1/L2/L3, remaps DTR project IDs, imports the
+full advance-settlement history, skips bsc_* rows, reports unmatched
+employees. EHS: rebuilds approved/rejected submissions from every form's
+`_MasterLog.xlsx` with fields, checklists, photo links and PDF links.
+Get the SQLite file from the old Render service (Shell → download `data/*.db`).
+
+## Cutover runbook (after the 2-week parallel run)
+1. Run both Phase 3 migrations (dry-run first, review the unmatched-employee list).
+2. Set `CRON_ENABLED=true` on Vercel — reminder emails now come from the portal.
+3. Suspend/delete the old Render services (metfraa-kpi, bsg-portal, metfraa-ehs).
+4. Point `kpis.metfraa.com` / `ehs.metfraa.com` / expense domain at Vercel
+   (add as additional domains on the project) or 301 them to app.metfraa.com.
+5. Announce to staff; old bookmarks to KPI URLs keep working on the new domain.
 
 ## Employees & Access (Phase 2C) — what shipped
 
