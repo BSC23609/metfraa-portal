@@ -24,6 +24,13 @@ STARTUP_MIGRATIONS = [
     "ALTER TABLE kpis ADD COLUMN IF NOT EXISTS target FLOAT NOT NULL DEFAULT 0",
     # If your DB has monthly_target, copy it to target:
     "UPDATE kpis SET target = monthly_target WHERE target = 0 AND monthly_target IS NOT NULL",
+    # --- 6-hotfix: legacy monthly_target column blocked new KPI inserts ---
+    # Drop NOT NULL so new rows (which only write to `target`) can be inserted.
+    # Optional: fully drop the column once you've verified no code reads it.
+    "ALTER TABLE kpis ALTER COLUMN monthly_target DROP NOT NULL",
+    # --- 6: KPI direction + bonus support ---
+    "ALTER TABLE kpis ADD COLUMN IF NOT EXISTS direction VARCHAR(16) NOT NULL DEFAULT 'higher_better'",
+    "ALTER TABLE kpis ADD COLUMN IF NOT EXISTS allow_bonus BOOLEAN NOT NULL DEFAULT FALSE",
     # Any future column additions go here.
 ]
 
@@ -32,6 +39,8 @@ STARTUP_MIGRATIONS = [
 # exist, they should silently fail rather than crash startup.
 OPTIONAL_MIGRATIONS = {
     "UPDATE kpis SET target = monthly_target WHERE target = 0 AND monthly_target IS NOT NULL",
+    # monthly_target may not exist on fresh DBs — that's fine
+    "ALTER TABLE kpis ALTER COLUMN monthly_target DROP NOT NULL",
 }
 
 

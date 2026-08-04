@@ -17,7 +17,7 @@
   <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
 
     {% if access.kpi_access or access.can_admin_kpi %}<!-- KPI -->
-    <a href="{% if user.is_admin %}/admin{% elif user.can_submit_task_report %}/task-reports/{% else %}/dashboard{% endif %}"
+    <a href="/dashboard"
        class="card-hover group relative bg-white rounded-2xl ring-1 ring-metfraa-gray-200 p-6 flex flex-col min-h-[220px]">
       <div class="w-11 h-11 rounded-xl bg-metfraa-blue/10 flex items-center justify-center mb-4">
         <svg class="w-6 h-6 text-metfraa-blue" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">

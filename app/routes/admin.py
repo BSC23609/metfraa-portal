@@ -67,12 +67,16 @@ def list_employees(
                 attendance = None
         out.append({
             "id": e.id,
+            "employee_code": e.employee_code,
             "name": e.name,
             "email": e.email,
+            "phone": e.phone,
             "designation": e.designation,
             "department": e.department,
+            "reports_to": e.reports_to,
             "is_admin": e.is_admin,
             "is_active": e.is_active,
+            "can_submit_task_report": e.can_submit_task_report,
             "current_month_score": current_score,
             "attendance": attendance,
             "kpi_count": kpi_n,
@@ -86,30 +90,97 @@ async def create_employee(
     user: Employee = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    from .auth import hash_password, DEFAULT_PASSWORD
+
     body = await request.json()
+    employee_code = (body.get("employee_code") or "").upper().strip()
     email = (body.get("email") or "").lower().strip()
     name = (body.get("name") or "").strip()
+    phone = (body.get("phone") or "").strip() or None
     designation = (body.get("designation") or "").strip()
     department = (body.get("department") or "").strip() or None
     reports_to = (body.get("reports_to") or "").strip() or None
     is_admin = bool(body.get("is_admin", False))
+    can_submit_task_report = bool(body.get("can_submit_task_report", True))
     jrr_text = body.get("jrr_text") or None
 
-    if not email or not name or not designation:
-        raise HTTPException(400, "email, name, designation are required")
+    # Required fields (email is now optional — employee_code is the login handle)
+    if not employee_code:
+        raise HTTPException(400, "employee_code is required (e.g. MET042)")
+    if not name:
+        raise HTTPException(400, "name is required")
+    if not designation:
+        raise HTTPException(400, "designation is required")
 
-    if db.query(Employee).filter(Employee.email.ilike(email)).first():
-        raise HTTPException(409, "Email already exists")
+    # Uniqueness — employee_code must be globally unique
+    if db.query(Employee).filter(Employee.employee_code == employee_code).first():
+        raise HTTPException(409, f"Employee code {employee_code} is already in use")
+
+    # If email supplied, it must not collide with an active employee (kept legacy behaviour)
+    if email and db.query(Employee).filter(Employee.email.ilike(email), Employee.is_active.is_(True)).first():
+        raise HTTPException(409, f"Email {email} is already in use by another active employee")
 
     emp = Employee(
-        email=email, name=name, designation=designation,
-        department=department, reports_to=reports_to,
-        is_admin=is_admin, is_active=True, jrr_text=jrr_text,
+        employee_code=employee_code,
+        password_hash=hash_password(DEFAULT_PASSWORD),
+        must_reset_password=True,
+        email=email or None,
+        name=name,
+        phone=phone,
+        designation=designation,
+        department=department,
+        reports_to=reports_to,
+        is_admin=is_admin,
+        is_active=True,
+        can_submit_task_report=can_submit_task_report,
+        jrr_text=jrr_text,
     )
     db.add(emp)
+    db.add(AuditLog(
+        actor_code=user.employee_code,
+        actor_email=user.email,
+        action="employee_created",
+        details={
+            "target_id": None,  # not yet flushed
+            "employee_code": employee_code,
+            "name": name,
+        },
+    ))
     db.commit()
     db.refresh(emp)
-    return {"id": emp.id, "email": emp.email, "name": emp.name}
+    return {
+        "id": emp.id,
+        "employee_code": emp.employee_code,
+        "email": emp.email,
+        "name": emp.name,
+        "default_password": DEFAULT_PASSWORD,
+        "note": "Default password set to Metfraa@123. Employee will be forced to change on first login.",
+    }
+
+
+@router.get("/api/next-employee-code")
+def suggest_next_employee_code(
+    user: Employee = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Look at existing MET### codes and suggest the next one in sequence.
+
+    Handles both MET01 (2-digit) and MET042 (3-digit) — always returns a
+    3-digit padded suggestion (MET001, MET042, MET111).
+    """
+    import re
+    highest = 0
+    for (code,) in db.query(Employee.employee_code).all():
+        m = re.match(r"^MET0*(\d+)$", (code or "").upper())
+        if m:
+            n = int(m.group(1))
+            if n > highest:
+                highest = n
+    next_n = highest + 1
+    return {
+        "suggested": f"MET{next_n:03d}",
+        "current_highest": highest,
+    }
 
 
 @router.put("/api/employees/{emp_id}")
@@ -123,13 +194,57 @@ async def update_employee(
     if not emp:
         raise HTTPException(404, "Employee not found")
     body = await request.json()
+
+    # Simple text fields
     for fld in ["name", "designation", "department", "reports_to", "jrr_text"]:
         if fld in body:
-            setattr(emp, fld, body[fld])
+            val = body[fld]
+            setattr(emp, fld, val.strip() if isinstance(val, str) and val.strip() else (None if fld != "name" else val))
+
+    # phone: nullable string
+    if "phone" in body:
+        emp.phone = (body.get("phone") or "").strip() or None
+
+    # employee_code: uppercased, must remain unique
+    if "employee_code" in body:
+        new_code = (body.get("employee_code") or "").upper().strip()
+        if not new_code:
+            raise HTTPException(400, "employee_code cannot be blank")
+        if new_code != emp.employee_code:
+            dup = db.query(Employee).filter(
+                Employee.employee_code == new_code,
+                Employee.id != emp.id,
+            ).first()
+            if dup:
+                raise HTTPException(409, f"Employee code {new_code} is already in use")
+            emp.employee_code = new_code
+
+    # email: nullable, but unique if provided
+    if "email" in body:
+        new_email = (body.get("email") or "").lower().strip() or None
+        if new_email and new_email != (emp.email or "").lower():
+            dup = db.query(Employee).filter(
+                Employee.email.ilike(new_email),
+                Employee.id != emp.id,
+                Employee.is_active.is_(True),
+            ).first()
+            if dup:
+                raise HTTPException(409, f"Email {new_email} is already in use by another active employee")
+        emp.email = new_email
+
     if "is_admin" in body:
         emp.is_admin = bool(body["is_admin"])
     if "is_active" in body:
         emp.is_active = bool(body["is_active"])
+    if "can_submit_task_report" in body:
+        emp.can_submit_task_report = bool(body["can_submit_task_report"])
+
+    db.add(AuditLog(
+        actor_code=user.employee_code,
+        actor_email=user.email,
+        action="employee_updated",
+        details={"target_id": emp.id, "employee_code": emp.employee_code},
+    ))
     db.commit()
     return {"success": True}
 
@@ -154,9 +269,8 @@ def list_kpis(
             "name": k.name,
             "unit": k.unit,
             "weight": k.weight,
-            "target": k.monthly_target,
+            "target": k.target,
             "display_order": k.display_order,
-            "is_active": k.is_active,
         }
         for k in kpis
     ]
@@ -182,9 +296,8 @@ async def add_kpi(
         name=name,
         unit=(body.get("unit") or "Count").strip(),
         weight=float(body.get("weight", 10)),
-        monthly_target=float(body.get("target", 0)),
+        target=float(body.get("target", 0)),
         display_order=max_order,
-        is_active=True,
     )
     db.add(kpi)
     db.commit()

@@ -110,22 +110,20 @@
   <header class="bg-metfraa-black border-b-[3px] border-metfraa-blue">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex items-center justify-between h-16">
-        <div class="flex items-center gap-3">
-          <a href="/" title="Portal home"
-             class="flex items-center justify-center w-9 h-9 rounded-md text-metfraa-gray-300 hover:text-white hover:bg-white/10">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75"/>
-            </svg>
-          </a>
-          <a href="/" class="flex items-center gap-3 group">
-            <img src="/static/img/metfraa_logo.png"
-                 alt="Metfraa"
-                 class="h-9 w-auto"
-                 onerror="this.outerHTML='<div class=&quot;flex items-baseline gap-1.5&quot;><div class=&quot;font-display font-bold text-white text-xl tracking-tight&quot;>METFRAA</div><div class=&quot;text-metfraa-blue text-[10px] uppercase tracking-widest&quot;>Steel</div></div>'" />
-            <span class="text-metfraa-gray-400 text-xs hidden sm:block">|</span>
-            <span class="text-metfraa-gray-300 text-sm font-medium hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/people') %}Employees{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
-          </a>
-        </div>
+        <a href="/" title="Portal home"
+           class="flex items-center justify-center w-9 h-9 rounded-md text-metfraa-gray-300 hover:text-white hover:bg-white/10 mr-1">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75"/>
+          </svg>
+        </a>
+        <a href="/" class="flex items-center gap-3 group">
+          <img src="/static/img/metfraa_logo.png"
+               alt="Metfraa"
+               class="h-9 w-auto"
+               onerror="this.outerHTML='<div class=&quot;flex items-baseline gap-1.5&quot;><div class=&quot;font-display font-bold text-white text-xl tracking-tight&quot;>METFRAA</div><div class=&quot;text-metfraa-blue text-[10px] uppercase tracking-widest&quot;>Steel</div></div>'" />
+          <span class="text-metfraa-gray-400 text-xs hidden sm:block">|</span>
+          <span class="text-metfraa-gray-300 text-sm font-medium hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/people') %}Employees{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
+        </a>
 
         <nav class="flex items-center gap-1">
           {% set _p = request.url.path %}
@@ -138,12 +136,29 @@
           {% elif _p.startswith('/people') %}
             <a href="/" class="{{ _navcls }}">Portal Home</a>
           {% elif _p == '/' %}
-            {# portal home: tiles are the nav #}
           {% else %}
-            <a href="/dashboard" class="{{ _navcls }}">Dashboard</a>
-            {% if user.is_admin %}
-            <a href="/admin" class="{{ _navcls }}">KPI Admin</a>
-            {% endif %}
+          <a href="/dashboard"
+             class="text-metfraa-gray-300 hover:text-white px-3 py-1.5 text-sm font-medium rounded-md hover:bg-white/5">
+            Home
+          </a>
+          <a href="/task-reports/"
+             class="text-metfraa-gray-300 hover:text-white px-3 py-1.5 text-sm font-medium rounded-md hover:bg-white/5">
+            Daily Tasks
+          </a>
+          <a href="/monthly-kpi/"
+             class="text-metfraa-gray-300 hover:text-white px-3 py-1.5 text-sm font-medium rounded-md hover:bg-white/5">
+            Monthly KPI
+          </a>
+          <a href="/site-visits/"
+             class="text-metfraa-gray-300 hover:text-white px-3 py-1.5 text-sm font-medium rounded-md hover:bg-white/5">
+            Site Visits
+          </a>
+          {% if user.is_admin %}
+          <a href="/admin"
+             class="text-metfraa-blue hover:text-white px-3 py-1.5 text-sm font-medium rounded-md hover:bg-metfraa-blue/20 border border-metfraa-blue/30">
+            Admin
+          </a>
+          {% endif %}
           {% endif %}
           <div class="relative ml-3" id="user-menu">
             <button onclick="document.getElementById('user-dropdown').classList.toggle('hidden')"
@@ -165,6 +180,9 @@
                 <span class="inline-block mt-2 px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase bg-metfraa-blue/10 text-metfraa-blue rounded">Admin</span>
                 {% endif %}
               </div>
+              <a href="/auth/change-password" class="block px-4 py-2 text-sm text-metfraa-gray-700 hover:bg-metfraa-gray-50">
+                Change password
+              </a>
               <a href="/auth/logout" class="block px-4 py-2 text-sm text-metfraa-gray-700 hover:bg-metfraa-gray-50">
                 Sign out
               </a>

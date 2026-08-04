@@ -104,6 +104,54 @@
       <template x-if="!loading && !report.editable && !report.pending_unlock">
         <span class="text-xs font-semibold px-2 py-1 rounded bg-metfraa-gray-100 text-metfraa-gray-700">LOCKED</span>
       </template>
+
+      <!-- Always-visible Request Unlock button (state-aware) -->
+      <button @click="requestUnlockClicked()"
+              :disabled="loading || (report.pending_unlock === true)"
+              :title="report.editable
+                ? 'This report is currently editable — you can just edit and re-submit. Click for details.'
+                : (report.pending_unlock ? 'You already have a pending unlock request for this date' : 'Ask admin to unlock this report so you can edit it')"
+              :class="!loading && !report.editable && !report.pending_unlock
+                ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                : 'bg-white border border-metfraa-gray-300 text-metfraa-gray-600 hover:border-amber-500 hover:text-amber-700'"
+              class="text-xs font-semibold px-3 py-1 rounded flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/></svg>
+        Request unlock
+      </button>
+    </div>
+  </div>
+
+  <!-- BIG "filling for" banner so users don't submit for wrong date accidentally -->
+  <div class="rounded-xl p-4 mb-4 border-2"
+       :class="reportDate === today
+         ? 'bg-blue-50 border-blue-200'
+         : 'bg-amber-50 border-amber-300'">
+    <div class="flex items-center gap-3">
+      <div class="text-2xl" x-text="reportDate === today ? '📅' : '⚠️'"></div>
+      <div class="flex-1">
+        <div class="text-[10px] font-bold uppercase tracking-wider"
+             :class="reportDate === today ? 'text-blue-700' : 'text-amber-800'">
+          You are filling the report for
+        </div>
+        <div class="display text-lg font-bold" :class="reportDate === today ? 'text-blue-900' : 'text-amber-900'"
+             x-text="prettyDate(reportDate) + (reportDate === today ? '  (Today)' : '  — NOT today!')"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PERSISTENT submission confirmation - stays until user leaves the page -->
+  <div x-show="lastSaved.date" x-cloak class="bg-emerald-50 border-2 border-emerald-300 rounded-xl p-4 mb-4">
+    <div class="flex items-start gap-3">
+      <div class="text-2xl">✅</div>
+      <div class="flex-1">
+        <div class="text-sm font-bold text-emerald-900">Report saved successfully</div>
+        <div class="text-xs text-emerald-800 mt-0.5">
+          <span x-text="prettyDate(lastSaved.date)"></span> · saved at <span class="mono font-bold" x-text="lastSaved.time"></span> ·
+          <span class="mono" x-text="lastSaved.n_tasks"></span> task<span x-show="lastSaved.n_tasks !== 1">s</span> recorded
+        </div>
+      </div>
+      <button @click="lastSaved = { date: null, time: '', n_tasks: 0 }"
+              class="text-emerald-600 hover:text-emerald-800 text-lg leading-none">&times;</button>
     </div>
   </div>
 
@@ -284,10 +332,18 @@
                 </template>
               </td>
               <td class="px-4 py-2 text-right">
-                <button @click="reportDate = h.report_date; loadReport()"
-                        class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark">
-                  Open
-                </button>
+                <div class="flex items-center gap-1 justify-end">
+                  <button @click="reportDate = h.report_date; loadReport()"
+                          class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark px-2 py-1 rounded hover:bg-metfraa-blue/5">
+                    Open
+                  </button>
+                  <button x-show="!h.editable && !h.pending_unlock"
+                          @click="requestUnlockFromHistory(h)"
+                          class="text-xs font-semibold text-amber-700 hover:text-white hover:bg-amber-600 border border-amber-300 px-2 py-1 rounded">
+                    🔓 Unlock
+                  </button>
+                  <span x-show="h.pending_unlock" class="text-[10px] text-amber-700 italic px-2">Pending</span>
+                </div>
               </td>
             </tr>
           </template>
@@ -350,13 +406,40 @@ function taskReport() {
     unlockSubmitting: false,
     toast: { show: false, msg: '', type: 'success' },
 
+    // Persistent submitted confirmation (survives page-open until dismissed)
+    lastSaved: { date: null, time: '', n_tasks: 0 },
+
+    prettyDate(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso + 'T00:00:00');
+        return d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+      } catch (e) { return iso; }
+    },
+
     async init() {
       await this.loadReport();
       await this.loadHistory();
+
+      // Warn user before closing tab if they have unsaved text
+      window.addEventListener('beforeunload', (e) => {
+        const validItems = this.items.filter(i => (i.task_description || '').trim());
+        const hasContent = validItems.length > 0 || this.tomorrowPlan.trim() || this.blockers.trim();
+        const savedRecently = this.lastSaved.date === this.reportDate;
+        if (hasContent && !savedRecently && this.report.editable) {
+          e.preventDefault();
+          e.returnValue = 'You have unsaved task report data. Are you sure you want to leave?';
+          return e.returnValue;
+        }
+      });
     },
 
     async loadReport() {
       this.loading = true;
+      // Clear stale success banner if we're looking at a different date now
+      if (this.lastSaved.date && this.lastSaved.date !== this.reportDate) {
+        this.lastSaved = { date: null, time: '', n_tasks: 0 };
+      }
       try {
         const res = await fetch('/task-reports/api/date/' + this.reportDate);
         const data = await res.json();
@@ -394,6 +477,17 @@ function taskReport() {
         this.showToast('Add at least one task before submitting.', 'error');
         return;
       }
+
+      // Confirm if user is submitting for a date that is NOT today
+      // (common source of "I submitted yesterday's report but it didn't save"
+      // when they actually submitted for today with yesterday's tasks)
+      if (this.reportDate !== this.today) {
+        const dateStr = this.prettyDate(this.reportDate);
+        if (!confirm(`You are submitting a report dated ${dateStr}.\n\nThis is NOT today. If you meant today, click Cancel and change the date first.\n\nContinue submitting for ${dateStr}?`)) {
+          return;
+        }
+      }
+
       this.saving = true;
       try {
         const res = await fetch('/task-reports/api/save', {
@@ -407,11 +501,21 @@ function taskReport() {
           }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Save failed');
-        this.showToast('Report saved', 'success');
+        if (!res.ok) throw new Error(data.detail || `Save failed (HTTP ${res.status})`);
+
+        // Persistent success banner (does NOT auto-dismiss)
+        const nowStr = new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+        this.lastSaved = {
+          date: this.reportDate,
+          time: nowStr,
+          n_tasks: validItems.length,
+        };
+        this.showToast(`✓ Saved ${validItems.length} task${validItems.length===1?'':'s'} for ${this.prettyDate(this.reportDate)}`, 'success');
         await this.loadReport();
         await this.loadHistory();
       } catch (e) {
+        // Error is BIG and STICKY - user must acknowledge
+        alert(`❌ REPORT NOT SAVED\n\n${e.message}\n\nYour tasks are still visible on this screen. Do not close the tab. Fix the issue above and click Submit again.`);
         this.showToast(e.message, 'error');
       } finally {
         this.saving = false;
@@ -433,6 +537,44 @@ function taskReport() {
       this.unlockModal = true;
     },
 
+    // One-click from history row: jump to that date + open unlock modal
+    async requestUnlockFromHistory(h) {
+      this.reportDate = h.report_date;
+      await this.loadReport();
+      // If loadReport somehow says it's editable (unlikely, but safety), don't open
+      if (this.report.editable) {
+        this.showToast('This report is actually editable now — you can just edit it.', 'success');
+        return;
+      }
+      if (this.report.pending_unlock) {
+        this.showToast('Already have a pending request for this date', 'error');
+        return;
+      }
+      this.openUnlockModal();
+    },
+
+    // Smart handler for the always-visible "Request unlock" button.
+    // Behaviour depends on current state of the report:
+    //   - editable  → friendly info (no unlock needed, just edit)
+    //   - pending   → already requested (button is disabled anyway)
+    //   - locked    → open the request modal
+    requestUnlockClicked() {
+      if (this.report.pending_unlock) {
+        this.showToast('You already have a pending unlock request for this date. Wait for admin approval.', 'error');
+        return;
+      }
+      if (this.report.editable) {
+        alert(
+          `This report for ${this.prettyDate(this.reportDate)} is currently editable.\n\n` +
+          `You can edit any field on this page directly and click "Save & Submit" to update it. ` +
+          `No unlock request is needed.\n\n` +
+          `Reports lock at 9:45 AM the following day. Only then would you need to request an unlock from admin.`
+        );
+        return;
+      }
+      this.openUnlockModal();
+    },
+
     async submitUnlockRequest() {
       this.unlockSubmitting = true;
       try {
@@ -443,9 +585,10 @@ function taskReport() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Request failed');
-        this.showToast('Unlock request sent', 'success');
+        this.showToast('Unlock request sent — admin will approve or deny shortly', 'success');
         this.unlockModal = false;
         await this.loadReport();
+        await this.loadHistory();  // refresh so history row shows "Pending"
       } catch (e) {
         this.showToast(e.message, 'error');
       } finally {

@@ -225,21 +225,38 @@ async def save_report(
     _require_task_report_permission(user)
     body = await request.json()
 
+    # Always log the attempt for post-mortem debugging when users say
+    # "my report didn't save". This shows up in Render logs.
+    print(
+        f"[task_report_save] attempt user={user.employee_code} "
+        f"date={body.get('report_date')} "
+        f"n_items={len(body.get('items', []) or [])} "
+        f"has_plan={bool(body.get('tomorrow_plan'))} "
+        f"has_blockers={bool(body.get('blockers'))}"
+    )
+
     try:
         target = date.fromisoformat(body.get("report_date", ""))
     except ValueError:
+        print(f"[task_report_save] REJECTED bad date user={user.employee_code} value={body.get('report_date')!r}")
         raise HTTPException(400, "Invalid or missing report_date")
 
     today = _today_ist()
     if target > today:
+        print(f"[task_report_save] REJECTED future date user={user.employee_code} date={target} today={today}")
         raise HTTPException(400, "Cannot submit for a future date.")
 
     approved_unlock = _has_approved_unlock(db, user.id, target)
     editable = _is_editable(target, has_active_unlock=approved_unlock)
     if not editable:
+        lock_at = _lock_moment_for(target).strftime("%d %b %H:%M IST")
+        print(
+            f"[task_report_save] REJECTED locked user={user.employee_code} date={target} "
+            f"locked_at={lock_at} approved_unlock={approved_unlock}"
+        )
         raise HTTPException(
             403,
-            "This report is locked. Request an unlock from your admin to make changes.",
+            f"This report locked at {lock_at}. Request an unlock from admin to make changes.",
         )
 
     tomorrow_plan = (body.get("tomorrow_plan") or "").strip()
@@ -263,6 +280,7 @@ async def save_report(
         })
 
     if not items and not tomorrow_plan and not blockers:
+        print(f"[task_report_save] REJECTED empty user={user.employee_code} date={target}")
         raise HTTPException(400, "Report is empty. Add at least one task.")
 
     # Upsert
@@ -272,6 +290,7 @@ async def save_report(
         .first()
     )
     now_utc = datetime.utcnow()
+    was_new = report is None
     if not report:
         report = DailyTaskReport(
             employee_id=user.id,
@@ -310,11 +329,23 @@ async def save_report(
             "report_id": report.id,
             "report_date": target.isoformat(),
             "n_tasks": len(items),
+            "was_new": was_new,
         },
     ))
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[task_report_save] COMMIT FAILED user={user.employee_code} date={target} err={e}")
+        import traceback; traceback.print_exc()
+        raise HTTPException(500, f"Save failed at database commit: {str(e)[:200]}")
+
     db.refresh(report)
+    print(
+        f"[task_report_save] OK user={user.employee_code} date={target} "
+        f"report_id={report.id} n_tasks={len(items)} was_new={was_new}"
+    )
 
     pending_unlock = _has_pending_unlock(db, user.id, target)
     editable = _is_editable(target, has_active_unlock=approved_unlock)

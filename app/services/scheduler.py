@@ -16,16 +16,22 @@ log = logging.getLogger(__name__)
 # ---------------- MISSED-DAY ALERT ----------------
 
 def _missed_day_alert():
-    """Send email alerts to employees who missed the previous day's entry.
+    """Send email alerts to employees who missed yesterday's daily task report.
 
-    NOTE: this is a placeholder that dispatches to the existing legacy logic.
-    In v2 (post-migration), legacy daily entries are wiped, so this may be
-    a no-op — but we keep the cron running for schema compatibility.
+    Checks the DailyTaskReport table (the current one). Legacy DailyEntry
+    table is ignored — nothing writes to it anymore.
+
+    Skips:
+      - Sundays
+      - Inactive employees
+      - Employees without email (can't send them anyway)
+      - Employees with can_submit_task_report=False (factory/non-desk staff)
+      - Employees who DID submit yesterday
     """
     try:
         import pytz
         from ..database import SessionLocal
-        from ..models import DailyEntry, Employee
+        from ..models import DailyTaskReport, Employee
         from .email_service import send_email_async, missed_day_email_html
 
         IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
@@ -38,21 +44,32 @@ def _missed_day_alert():
 
         db = SessionLocal()
         try:
+            # Only nag people who are:
+            #   active + have an email + expected to submit task reports
             employees = (
                 db.query(Employee)
                 .filter(Employee.is_active.is_(True))
                 .filter(Employee.email.isnot(None))
+                .filter(Employee.can_submit_task_report.is_(True))
                 .all()
             )
-            missed_ids = set(e.id for e in employees)
+            expected_ids = {e.id for e in employees}
+
+            # Find who actually submitted yesterday (using the CURRENT table)
             submitted_ids = {
-                r.employee_id for r in db.query(DailyEntry)
-                .filter(DailyEntry.entry_date == yesterday)
+                r.employee_id for r in db.query(DailyTaskReport)
+                .filter(DailyTaskReport.report_date == yesterday)
                 .all()
             }
-            missed_ids -= submitted_ids
+
+            missed_ids = expected_ids - submitted_ids
+            log.info(
+                f"[missed-day-cron] {yesterday}: "
+                f"expected={len(expected_ids)} submitted={len(submitted_ids)} "
+                f"missed={len(missed_ids)}"
+            )
             if not missed_ids:
-                log.info(f"[missed-day-cron] no missed submissions for {yesterday}")
+                log.info(f"[missed-day-cron] no missed submissions for {yesterday} — everyone submitted")
                 return
 
             import asyncio
@@ -61,10 +78,10 @@ def _missed_day_alert():
                 for emp in employees:
                     if emp.id not in missed_ids or not emp.email:
                         continue
-                    subject = f"Missed KPI entry: {yesterday.strftime('%d %b %Y')}"
+                    subject = f"Missed daily task report: {yesterday.strftime('%d %b %Y')}"
                     html = missed_day_email_html(emp.name, yesterday.strftime('%d %b %Y'), base_url)
                     loop.run_until_complete(send_email_async(emp.email, subject, html))
-                    log.info(f"[missed-day-cron] emailed {emp.name}")
+                    log.info(f"[missed-day-cron] emailed {emp.name} ({emp.employee_code})")
             finally:
                 loop.close()
         finally:

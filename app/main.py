@@ -1,8 +1,7 @@
 """Metfraa Portal — main FastAPI application.
 
-One app, one login: KPI Tracker (live), Expense (coming soon), EHS (coming soon).
-Built on the KPI Tracker foundation — KPI routes stay flat (/dashboard, /task-reports/,
-/monthly-kpi/, /site-visits/, /admin) so existing bookmarks keep working.
+One app, one login: KPI Tracker + Expense + EHS. Built on the KPI Tracker
+foundation — KPI routes stay flat so existing bookmarks keep working.
 """
 import os
 from contextlib import asynccontextmanager
@@ -32,18 +31,13 @@ from .startup_migrations import run_startup_migrations
 
 settings = get_settings()
 
-
 IS_VERCEL = bool(os.getenv("VERCEL"))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Init DB tables and start scheduler on startup.
-
-    On Vercel (serverless), lifespan runs on EVERY cold start, so we skip
-    create_all + migrations unless INIT_DB=true — the schema already exists
-    in the live Neon DB. Run once with INIT_DB=true on a fresh database.
-    """
+    """Init DB + scheduler. On Vercel: skip create_all unless INIT_DB=true,
+    never run APScheduler (vercel.json crons hit /cron/* instead)."""
     if not IS_VERCEL:
         data_dir = os.path.join(os.path.dirname(__file__), "data")
         os.makedirs(data_dir, exist_ok=True)
@@ -57,13 +51,8 @@ async def lifespan(app: FastAPI):
 
     sched = None
     if IS_VERCEL:
-        # Serverless — no long-running process. Vercel Cron hits /cron/* instead
-        # (see vercel.json). Gated by CRON_ENABLED during the parallel run.
         print("[startup] Vercel detected — APScheduler off, using /cron endpoints")
     elif os.getenv("DISABLE_SCHEDULER", "").lower() in ("1", "true", "yes"):
-        # During the parallel run, the OLD kpis.metfraa.com service still runs the
-        # scheduler. Keep it disabled here to avoid duplicate reminder emails.
-        # After cutover (old service killed), remove this env var on Render.
         print("[startup] Scheduler disabled via DISABLE_SCHEDULER env var")
     else:
         try:
@@ -80,7 +69,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Metfraa Portal",
     description="KPIs, Expenses & EHS for Metfraa Steel Buildings — one login, one home.",
-    version="3.0.0",
+    version="3.1.0",
     lifespan=lifespan,
 )
 

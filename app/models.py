@@ -53,6 +53,14 @@ class KPI(Base):
     target = Column(Float, nullable=False, default=20.0)
     display_order = Column(Integer, default=0)
 
+    # --- Direction & bonus (Phase 6) ---
+    # direction: "higher_better" (default) — actual/target × 100
+    #            "lower_better"  — target/actual × 100 (fewer complaints = better)
+    direction = Column(String(16), nullable=False, default="higher_better")
+    # allow_bonus: if True, achievement can exceed 100% (capped at 200%)
+    #              if False (default), achievement is capped at 100%
+    allow_bonus = Column(Boolean, nullable=False, default=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     employee = relationship("Employee", back_populates="kpis")

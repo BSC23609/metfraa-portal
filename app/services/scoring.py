@@ -67,11 +67,31 @@ def compute_monthly_score(
             .all()
         )
         actual_sum = sum(ke.value for ke in actual)
-        target = k.monthly_target or 0
-        if target > 0:
-            achievement = min(100.0, (actual_sum / target) * 100.0)
+        target = k.target or 0
+        direction = getattr(k, 'direction', 'higher_better') or 'higher_better'
+        allow_bonus = bool(getattr(k, 'allow_bonus', False))
+
+        # Compute raw achievement based on direction
+        if direction == 'lower_better':
+            # Fewer is better (complaints, rejections, downtime, delays)
+            if actual_sum == 0:
+                # Perfect — zero occurrences
+                raw = 200.0 if allow_bonus else 100.0
+            elif target > 0:
+                raw = (target / actual_sum) * 100.0
+            else:
+                # target=0 with actual>0 means failure
+                raw = 0.0
         else:
-            achievement = 0.0
+            # higher_better (default) — more is better
+            if target > 0:
+                raw = (actual_sum / target) * 100.0
+            else:
+                raw = 0.0
+
+        # Apply cap based on bonus setting
+        cap = 200.0 if allow_bonus else 100.0
+        achievement = min(cap, raw)
         weighted = achievement * (k.weight / 100.0)
         kpi_results.append({
             "kpi": k,
@@ -80,6 +100,8 @@ def compute_monthly_score(
             "achievement_pct": round(achievement, 1),
             "weight": k.weight,
             "weighted_score": round(weighted, 2),
+            "direction": direction,
+            "allow_bonus": allow_bonus,
         })
 
     final_score = round(sum(r["weighted_score"] for r in kpi_results), 2)

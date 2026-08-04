@@ -36,14 +36,19 @@
   <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
     <a href="/dashboard" class="flex items-center gap-3">
       <img src="/static/img/metfraa_logo.png" alt="Metfraa" class="h-8" onerror="this.style.display='none'">
+      <span class="text-sm font-semibold">|</span>
       <span class="text-sm font-semibold">KPI Tracker</span>
     </a>
     <div class="flex items-center gap-4 text-xs sm:text-sm">
-      <a href="/task-reports/" class="hover:text-metfraa-blue">Daily tasks</a>
-      <a href="/monthly-kpi/" class="text-metfraa-blue font-semibold">Monthly KPI</a>
+      <a href="/dashboard" class="hover:text-metfraa-blue">Home</a>
+      <a href="/task-reports/" class="hover:text-metfraa-blue">Daily Tasks</a>
+      <a href="/monthly-kpi/" class="hover:text-metfraa-blue text-metfraa-blue font-semibold">Monthly KPI</a>
       <a href="/site-visits/" class="hover:text-metfraa-blue">Site Visits</a>
-      <a href="/dashboard" class="hover:text-metfraa-blue">Dashboard</a>
+      {% if user.is_admin %}
+      <a href="/admin" class="text-metfraa-blue font-semibold border border-metfraa-blue/40 px-2 py-1 rounded hover:bg-metfraa-blue/10">Admin</a>
+      {% endif %}
       <span class="text-metfraa-gray-400">{{ user.employee_code }} — {{ user.name.split(' ')[0] }}</span>
+      <a href="/auth/change-password" class="text-metfraa-gray-400 hover:text-white">Change PW</a>
       <a href="/auth/logout" class="text-metfraa-gray-400 hover:text-white">Sign out</a>
     </div>
   </div>

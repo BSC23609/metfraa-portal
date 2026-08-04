@@ -436,6 +436,7 @@
       <table class="w-full text-sm">
         <thead class="bg-metfraa-gray-50">
           <tr class="text-left">
+            <th class="px-5 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Code</th>
             <th class="px-5 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Name</th>
             <th class="px-5 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Email</th>
             <th class="px-5 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Designation</th>
@@ -448,9 +449,13 @@
           <template x-for="emp in employees" :key="emp.id">
             <tr class="hover:bg-metfraa-gray-50">
               <td class="px-5 py-3">
+                <span class="mono text-xs font-semibold text-metfraa-blue" x-text="emp.employee_code || '—'"></span>
+              </td>
+              <td class="px-5 py-3">
                 <div class="font-semibold text-metfraa-ink flex items-center gap-2" >
                   <span x-text="emp.name"></span>
                   <span x-show="emp.is_admin" class="text-[10px] font-bold tracking-wide uppercase bg-metfraa-blue/10 text-metfraa-blue rounded px-1.5 py-0.5">Admin</span>
+                  <span x-show="!emp.can_submit_task_report" class="text-[10px] font-bold tracking-wide uppercase bg-metfraa-gray-100 text-metfraa-gray-500 rounded px-1.5 py-0.5" title="Does not submit daily task reports">No DTR</span>
                 </div>
                 <div class="text-[11px] text-metfraa-gray-500" x-text="emp.department"></div>
               </td>
@@ -475,6 +480,11 @@
                           title="View"
                           class="text-xs font-semibold text-metfraa-blue hover:text-metfraa-blue-dark px-2 py-1">
                     View
+                  </button>
+                  <button @click="resetEmployeePassword(emp)"
+                          title="Reset password to Metfraa@123"
+                          class="text-metfraa-gray-500 hover:text-amber-600 p-1.5 rounded hover:bg-amber-50">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
                   </button>
                   <button @click="openEditEmployee(emp)"
                           title="Edit employee"
@@ -697,10 +707,27 @@
         </button>
       </div>
       <div class="space-y-3">
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+          <div class="font-semibold">ℹ On create:</div>
+          <ul class="mt-1 space-y-0.5 pl-4 list-disc">
+            <li>Password will be set to <span class="mono font-bold">Metfraa@123</span></li>
+            <li>Employee will be forced to change it on their first login</li>
+            <li>They log in using their <b>employee code</b> (not email)</li>
+          </ul>
+        </div>
+
         <div>
-          <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Email *</label>
-          <input type="email" x-model="newEmp.email" placeholder="firstname@metfraa.com"
-                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Employee Code *</label>
+          <div class="flex gap-2">
+            <input type="text" x-model="newEmp.employee_code" placeholder="e.g. MET042"
+                   class="flex-1 mono text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue uppercase" />
+            <button @click="suggestEmployeeCode()"
+                    type="button"
+                    class="text-xs font-semibold text-metfraa-blue hover:bg-metfraa-blue/5 border border-metfraa-blue/30 px-3 rounded-lg whitespace-nowrap">
+              Suggest next
+            </button>
+          </div>
+          <p class="text-[10px] text-metfraa-gray-400 mt-0.5">Format: MET### (e.g. MET001, MET042, MET111). Used as login handle.</p>
         </div>
         <div>
           <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Full name *</label>
@@ -711,6 +738,18 @@
           <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Designation *</label>
           <input type="text" x-model="newEmp.designation"
                  class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Email (optional)</label>
+            <input type="email" x-model="newEmp.email" placeholder="firstname@metfraa.com"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Phone (optional)</label>
+            <input type="tel" x-model="newEmp.phone" placeholder="+91 90000 00000"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
@@ -731,10 +770,16 @@
                     class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue"></textarea>
           <p class="text-[11px] text-metfraa-gray-500 mt-1">After creating the employee, go to KPI Master to add their KPIs.</p>
         </div>
-        <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" x-model="newEmp.is_admin" class="rounded text-metfraa-blue focus:ring-metfraa-blue" />
-          Grant admin privileges
-        </label>
+        <div class="pt-1 space-y-2 border-t border-metfraa-gray-100 pt-3">
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" x-model="newEmp.is_admin" class="rounded text-metfraa-blue focus:ring-metfraa-blue" />
+            <span>Grant <b>admin</b> privileges</span>
+          </label>
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" x-model="newEmp.can_submit_task_report" class="rounded text-metfraa-blue focus:ring-metfraa-blue" />
+            <span>Can submit <b>daily task reports</b> (uncheck for factory / non-desk staff)</span>
+          </label>
+        </div>
       </div>
       <div class="mt-5 flex justify-end gap-2">
         <button @click="newEmpModal = false"
@@ -870,14 +915,14 @@
       <div class="p-5 border-b border-metfraa-gray-200">
         <div class="text-xs font-bold uppercase tracking-widest text-metfraa-blue">Edit Employee</div>
         <h3 class="display text-xl font-bold text-metfraa-black mt-1" x-text="editEmp.name"></h3>
-        <p class="text-xs text-metfraa-gray-500 mono mt-0.5" x-text="editEmp.email"></p>
+        <p class="text-xs text-metfraa-gray-500 mono mt-0.5" x-text="editEmp.employee_code"></p>
       </div>
       <div class="p-5 space-y-3">
         <div>
-          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Email</label>
-          <input type="email" x-model="editEmp.email"
-                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
-          <p class="text-[10px] text-metfraa-gray-400 mt-0.5">Used for Microsoft 365 sign-in.</p>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Employee Code (login handle)</label>
+          <input type="text" x-model="editEmp.employee_code"
+                 class="w-full mono text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue uppercase" />
+          <p class="text-[10px] text-amber-700 mt-0.5">⚠ Changing this changes what they type at login. Tell them before saving.</p>
         </div>
         <div>
           <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Full name</label>
@@ -891,6 +936,18 @@
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
+            <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Email</label>
+            <input type="email" x-model="editEmp.email"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          </div>
+          <div>
+            <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Phone</label>
+            <input type="tel" x-model="editEmp.phone" placeholder="+91"
+                   class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
             <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Department</label>
             <input type="text" x-model="editEmp.department"
                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
@@ -901,10 +958,16 @@
                    class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
           </div>
         </div>
-        <label class="flex items-center gap-2 pt-1">
-          <input type="checkbox" x-model="editEmp.is_admin" class="rounded">
-          <span class="text-sm text-metfraa-ink">Grant admin privileges</span>
-        </label>
+        <div class="pt-2 space-y-2 border-t border-metfraa-gray-100">
+          <label class="flex items-center gap-2 pt-2">
+            <input type="checkbox" x-model="editEmp.is_admin" class="rounded">
+            <span class="text-sm text-metfraa-ink">Grant <b>admin</b> privileges</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="checkbox" x-model="editEmp.can_submit_task_report" class="rounded">
+            <span class="text-sm text-metfraa-ink">Can submit <b>daily task reports</b></span>
+          </label>
+        </div>
       </div>
       <div class="p-5 border-t border-metfraa-gray-200 flex justify-end gap-2">
         <button @click="editEmpModal = false"
@@ -1459,7 +1522,7 @@ function adminApp() {
     tab: 'daily',  // default to daily activity for admins
     // Edit/Delete employee state
     editEmpModal: false,
-    editEmp: { id: null, name: '', email: '', designation: '', department: '', reports_to: '', is_admin: false },
+    editEmp: { id: null, employee_code: '', name: '', email: '', phone: '', designation: '', department: '', reports_to: '', is_admin: false, can_submit_task_report: true },
     editEmpSaving: false,
     deleteEmpModal: false,
     deleteEmp: { id: null, name: '', email: '', designation: '' },
@@ -1535,7 +1598,12 @@ function adminApp() {
     generatingReport: false,
 
     newEmpModal: false,
-    newEmp: { email: '', name: '', designation: '', department: '', reports_to: '', is_admin: false, jrr_text: '' },
+    newEmp: {
+      employee_code: '', email: '', name: '', phone: '',
+      designation: '', department: '', reports_to: '',
+      is_admin: false, can_submit_task_report: true, jrr_text: ''
+    },
+    suggestingCode: false,
 
     newKpiModal: false,
     newKpi: { name: '', unit: 'Count', weight: 10, target: 0 },
@@ -1555,6 +1623,12 @@ function adminApp() {
 
     init() {
       this.loadDailyActivity();
+      // Password-resets badge count
+      this.loadPasswordResets();
+      // Initialize daily-excel date picker to yesterday
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      this.dailyExcelDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     },
 
     async loadDailyActivity() {
@@ -1704,19 +1778,27 @@ function adminApp() {
     openEditEmployee(emp) {
       this.editEmp = {
         id: emp.id,
+        employee_code: emp.employee_code || '',
         name: emp.name || '',
         email: emp.email || '',
+        phone: emp.phone || '',
         designation: emp.designation || '',
         department: emp.department || '',
         reports_to: emp.reports_to || '',
         is_admin: !!emp.is_admin,
+        can_submit_task_report: emp.can_submit_task_report !== false,
       };
       this.editEmpModal = true;
     },
 
     async saveEditEmployee() {
-      if (!this.editEmp.name.trim() || !this.editEmp.email.trim() || !this.editEmp.designation.trim()) {
-        toast('Name, email and designation are required', 'error');
+      const code = (this.editEmp.employee_code || '').trim().toUpperCase();
+      if (!code) {
+        toast('Employee code is required', 'error');
+        return;
+      }
+      if (!this.editEmp.name.trim() || !this.editEmp.designation.trim()) {
+        toast('Name and designation are required', 'error');
         return;
       }
       this.editEmpSaving = true;
@@ -1725,12 +1807,15 @@ function adminApp() {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            employee_code: code,
             name: this.editEmp.name.trim(),
-            email: this.editEmp.email.trim(),
+            email: this.editEmp.email.trim() || null,
+            phone: this.editEmp.phone.trim() || null,
             designation: this.editEmp.designation.trim(),
             department: this.editEmp.department.trim() || null,
             reports_to: this.editEmp.reports_to.trim() || null,
             is_admin: !!this.editEmp.is_admin,
+            can_submit_task_report: !!this.editEmp.can_submit_task_report,
           }),
         });
         const data = await res.json();
@@ -1738,12 +1823,6 @@ function adminApp() {
         toast('Employee updated', 'success');
         this.editEmpModal = false;
         await this.loadEmployees();
-      // Load password resets in background for the pending badge
-      this.loadPasswordResets();
-      // Initialize daily excel date picker to yesterday
-      const d = new Date();
-      d.setDate(d.getDate() - 1);
-      this.dailyExcelDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       } catch (e) {
         toast(e.message, 'error');
       } finally {
@@ -2012,22 +2091,70 @@ function adminApp() {
     },
 
     async createEmployee() {
-      if (!this.newEmp.email || !this.newEmp.name || !this.newEmp.designation) {
-        toast('Email, name and designation are required', 'error');
+      const code = (this.newEmp.employee_code || '').trim().toUpperCase();
+      if (!code) {
+        toast('Employee code is required (e.g. MET042)', 'error');
+        return;
+      }
+      if (!this.newEmp.name || !this.newEmp.designation) {
+        toast('Name and designation are required', 'error');
         return;
       }
       try {
         const res = await fetch('/admin/api/employees', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.newEmp),
+          body: JSON.stringify({
+            employee_code: code,
+            name: this.newEmp.name.trim(),
+            email: (this.newEmp.email || '').trim().toLowerCase() || null,
+            phone: (this.newEmp.phone || '').trim() || null,
+            designation: this.newEmp.designation.trim(),
+            department: (this.newEmp.department || '').trim() || null,
+            reports_to: (this.newEmp.reports_to || '').trim() || null,
+            is_admin: !!this.newEmp.is_admin,
+            can_submit_task_report: this.newEmp.can_submit_task_report !== false,
+            jrr_text: this.newEmp.jrr_text || null,
+          }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Create failed');
-        toast('Employee added — now define their KPIs in the KPI Master tab', 'success');
+        toast(`${data.name} added (${data.employee_code}). Default password: Metfraa@123`, 'success');
         this.newEmpModal = false;
-        this.newEmp = { email: '', name: '', designation: '', department: '', reports_to: '', is_admin: false, jrr_text: '' };
+        this.newEmp = {
+          employee_code: '', email: '', name: '', phone: '',
+          designation: '', department: '', reports_to: '',
+          is_admin: false, can_submit_task_report: true, jrr_text: ''
+        };
         this.loadEmployees();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    },
+
+    async suggestEmployeeCode() {
+      this.suggestingCode = true;
+      try {
+        const res = await fetch('/admin/api/next-employee-code');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Suggest failed');
+        this.newEmp.employee_code = data.suggested;
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.suggestingCode = false;
+      }
+    },
+
+    async resetEmployeePassword(emp) {
+      if (!confirm(`Reset password for ${emp.name} (${emp.employee_code}) to Metfraa@123?\n\nThey will be forced to change it on next login. Tell them the default password.`)) return;
+      try {
+        const res = await fetch('/admin/api/employees/' + emp.id + '/reset-password', {
+          method: 'POST',
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Reset failed');
+        toast(`Password reset for ${emp.name}. Default: Metfraa@123`, 'success');
       } catch (e) {
         toast(e.message, 'error');
       }
