@@ -155,17 +155,28 @@
                 <span class="font-semibold text-sm text-metfraa-ink" x-text="kpi.name"></span>
               </div>
               <div class="text-xs text-metfraa-gray-500">
-                Target: <span class="font-mono font-semibold" x-text="kpi.target + ' ' + kpi.unit"></span>
+                Target: <span class="font-mono font-semibold" x-text="kpi.unit === 'Yes/No' ? (kpi.target >= 1 ? 'Yes' : 'No') : (kpi.target + ' ' + kpi.unit)"></span>
                 · Weight: <span class="font-mono font-semibold" x-text="kpi.weight + '%'"></span>
               </div>
             </div>
             <div class="flex items-center gap-2">
-              <input type="number" step="any" min="0"
-                     :disabled="!period.editable"
-                     x-model.number="values[kpi.id]"
-                     class="w-32 text-right text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50 px-2 py-1.5"
-                     :placeholder="'0 ' + kpi.unit" />
-              <span class="text-xs text-metfraa-gray-500 w-14" x-text="kpi.unit"></span>
+              <template x-if="kpi.unit === 'Yes/No'">
+                <select :disabled="!period.editable"
+                        x-model.number="values[kpi.id]"
+                        class="w-32 text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50 px-2 py-1.5">
+                  <option :value="undefined">— select —</option>
+                  <option :value="1">Yes</option>
+                  <option :value="0">No</option>
+                </select>
+              </template>
+              <template x-if="kpi.unit !== 'Yes/No'">
+                <input type="number" step="any" min="0"
+                       :disabled="!period.editable"
+                       x-model.number="values[kpi.id]"
+                       class="w-32 text-right text-sm rounded border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue disabled:bg-metfraa-gray-50 px-2 py-1.5"
+                       :placeholder="'0 ' + kpi.unit" />
+              </template>
+              <span class="text-xs text-metfraa-gray-500 w-14" x-text="kpi.unit === 'Yes/No' ? '' : kpi.unit"></span>
               <div class="text-right w-20">
                 <div class="text-[10px] uppercase tracking-wider text-metfraa-gray-500">Achievement</div>
                 <div :class="achievement(kpi) >= 80 ? 'text-emerald-700' : achievement(kpi) >= 50 ? 'text-amber-700' : 'text-red-700'"

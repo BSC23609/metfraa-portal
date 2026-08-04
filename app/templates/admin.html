@@ -229,7 +229,7 @@
                   <div class="flex items-center justify-between py-2 px-3 bg-metfraa-gray-50 rounded-lg">
                     <div class="text-sm text-metfraa-ink flex-1" x-text="kv.name"></div>
                     <div class="text-sm font-mono font-bold text-metfraa-blue ml-3">
-                      <span x-text="kv.value"></span> <span class="text-xs text-metfraa-gray-500" x-text="kv.unit"></span>
+                      <span x-text="kv.unit === 'Yes/No' ? (Number(kv.value) >= 1 ? 'Yes' : 'No') : kv.value"></span> <span class="text-xs text-metfraa-gray-500" x-text="kv.unit === 'Yes/No' ? '' : kv.unit"></span>
                     </div>
                   </div>
                 </template>
@@ -581,6 +581,7 @@
                       <option value="Hours">Hours</option>
                       <option value="%">%</option>
                       <option value="₹">₹</option>
+                      <option value="Yes/No">Yes/No</option>
                     </select>
                   </td>
                   <td class="py-2">
@@ -817,12 +818,13 @@
         <div class="grid grid-cols-3 gap-3">
           <div>
             <label class="text-xs font-semibold text-metfraa-gray-500 block mb-1">Unit</label>
-            <select x-model="newKpi.unit" class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue">
+            <select x-model="newKpi.unit" @change="if (newKpi.unit === 'Yes/No') newKpi.target = 1" class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue">
               <option value="Count">Count</option>
               <option value="MT">MT</option>
               <option value="Hours">Hours</option>
               <option value="%">%</option>
               <option value="₹">₹</option>
+              <option value="Yes/No">Yes/No</option>
             </select>
           </div>
           <div>
