@@ -19,7 +19,7 @@ SESSION_COOKIE = "metfraa_session"
 # JWT settings
 JWT_SECRET = os.getenv("SESSION_SECRET") or os.getenv("SECRET_KEY") or "change-me-in-production"
 JWT_ALG = "HS256"
-JWT_EXPIRY_HOURS = 8
+JWT_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", str(24 * 180)))  # 180 days — employees stay logged in
 
 
 def issue_session_token(employee: Employee) -> str:

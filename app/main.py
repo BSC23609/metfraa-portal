@@ -189,6 +189,21 @@ def root(
 
 
 
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    from fastapi.responses import FileResponse
+
+    return FileResponse("app/static/sw.js", media_type="application/javascript",
+                        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
+
+
+@app.get("/manifest.json", include_in_schema=False)
+def manifest():
+    from fastapi.responses import FileResponse
+
+    return FileResponse("app/static/manifest.json", media_type="application/manifest+json")
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
