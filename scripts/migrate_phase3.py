@@ -66,12 +66,15 @@ def migrate_expense(sqlite_path: str, dry: bool) -> None:
     unmatched = []
     src_emps = {r["id"]: r for r in src.execute("SELECT * FROM employees WHERE company='metfraa'")}
     id_map = {}
+    meta_done: set[int] = set()
     for sid, r in src_emps.items():
         e = by_email.get((r["email"] or "").strip().lower()) or by_code.get((r["employee_code"] or "").strip().upper())
         if e:
             id_map[sid] = e
             level = LEVEL_MAP.get((r["level"] or "").upper())
-            if level and not db.query(ExpenseEmployeeMeta).filter_by(employee_id=e.id).first():
+            if (level and e.id not in meta_done
+                    and not db.query(ExpenseEmployeeMeta).filter_by(employee_id=e.id).first()):
+                meta_done.add(e.id)
                 if not dry:
                     db.add(ExpenseEmployeeMeta(employee_id=e.id, level=level))
         else:
@@ -113,6 +116,12 @@ def migrate_expense(sqlite_path: str, dry: bool) -> None:
         for e in (payload.get("entries") or []):
             if isinstance(e, dict) and e.get("project_id") in proj_map:
                 e["project_id"] = proj_map[e["project_id"]]
+        # Metfraa-expenses stores submission-level purpose fields as columns —
+        # fold them into payload so nothing is lost (keys prefixed to avoid collisions)
+        rk = r.keys()
+        for col in ("purpose_category", "project_id", "client_name", "purpose_other_reason"):
+            if col in rk and r[col] not in (None, "") and col not in payload:
+                payload[col] = proj_map.get(r[col], r[col]) if col == "project_id" else r[col]
         try:
             actuals = json.loads(r["actuals_json"]) if r["actuals_json"] else None
         except (json.JSONDecodeError, TypeError):
