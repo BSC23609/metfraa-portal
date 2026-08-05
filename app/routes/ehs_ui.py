@@ -535,3 +535,331 @@ async def api_submit(form_id: str, request: Request, bg: BackgroundTasks,
         return await ehs_api.ehs_submit(form_id, request, bg, user, db)
     except HTTPException as ex:
         return _err(ex.status_code, str(ex.detail))
+
+
+# ============================================================================
+# Slices 3-5 — Admin dashboard, charts, and project settings
+#
+# The reference aggregated by parsing every form's _MasterLog.xlsx out of
+# OneDrive (with a 60s in-memory cache because that was slow). The portal
+# aggregates the same facts straight out of ehs_submissions, so the cache
+# and its cache-clear endpoints become no-ops that stay for UI parity.
+# ============================================================================
+
+from datetime import timedelta  # noqa: E402
+
+CHART_FORMS = ["toolbox", "induction", "ehs-audit", "incident", "permit-record"]
+
+
+def _today_ist() -> str:
+    return ehs_api._now_ist().strftime("%Y-%m-%d")
+
+
+def _default_range(startDate, endDate):
+    end = endDate or _today_ist()
+    if not startDate:
+        d = ehs_api.datetime.strptime(end, "%Y-%m-%d") - timedelta(days=29)
+        startDate = d.strftime("%Y-%m-%d")
+    return startDate, end
+
+
+def _valid_range(a, b) -> bool:
+    return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", a or "") and re.match(r"^\d{4}-\d{2}-\d{2}$", b or ""))
+
+
+def _day(sub) -> str:
+    return (sub.submitted_at_ist or "")[:10]
+
+
+def _enumerate_days(start: str, end: str) -> list[str]:
+    d0 = ehs_api.datetime.strptime(start, "%Y-%m-%d")
+    d1 = ehs_api.datetime.strptime(end, "%Y-%m-%d")
+    out = []
+    while d0 <= d1:
+        out.append(d0.strftime("%Y-%m-%d"))
+        d0 += timedelta(days=1)
+    return out
+
+
+@router.get("/api/admin/dashboard")
+def api_admin_dashboard(request: Request, startDate: str | None = None, endDate: str | None = None,
+                        user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    startDate, endDate = _default_range(startDate, endDate)
+    if not _valid_range(startDate, endDate):
+        return _err(400, "startDate and endDate must be YYYY-MM-DD")
+
+    every = db.query(EHSSubmission).all()
+    in_range = [s for s in every if startDate <= _day(s) <= endDate]
+
+    def counts(rows):
+        c = {"total": len(rows), "approved": 0, "rejected": 0, "pending": 0}
+        for r in rows:
+            c[r.status if r.status in c else "approved"] += 1
+        return c
+
+    today = _today_ist()
+    week_ago = (ehs_api.datetime.strptime(today, "%Y-%m-%d") - timedelta(days=6)).strftime("%Y-%m-%d")
+
+    buckets = {}
+    for s in in_range:
+        d = _day(s)
+        if not d:
+            continue
+        b = buckets.setdefault(d, {"date": d, "total": 0, "approved": 0, "rejected": 0, "pending": 0})
+        b["total"] += 1
+        b[s.status if s.status in b else "approved"] += 1
+    daily = [buckets.get(d, {"date": d, "total": 0, "approved": 0, "rejected": 0, "pending": 0})
+             for d in _enumerate_days(startDate, endDate)]
+
+    by_category = {
+        "general": {"total": 0, "approved": 0, "rejected": 0, "pending": 0, "label": "General EHS Records"},
+        "equipment": {"total": 0, "approved": 0, "rejected": 0, "pending": 0, "label": "Equipment Inspections"},
+    }
+    for s in in_range:
+        f = FORMS_BY_ID.get(s.form_id)
+        if not f or f["category"] not in by_category:
+            continue
+        cat = by_category[f["category"]]
+        cat["total"] += 1
+        cat[s.status if s.status in cat else "approved"] += 1
+
+    by_form = []
+    for f in _ALL:
+        rows = [s for s in in_range if s.form_id == f["id"]]
+        c = counts(rows)
+        by_form.append({"id": f["id"], "code": f["code"], "title": f["title"],
+                        "category": f["category"], **c})
+
+    overall = counts(in_range)
+    return {
+        "range": {"startDate": startDate, "endDate": endDate,
+                  "days": len(_enumerate_days(startDate, endDate))},
+        "kpi": {
+            "today": len([s for s in every if _day(s) == today]),
+            "last7Days": len([s for s in every if week_ago <= _day(s) <= today]),
+            "totalInRange": overall["total"],
+            "pendingNow": len([s for s in every if s.status == "pending"]),
+        },
+        "breakdown": overall,
+        "dailyActivity": daily,
+        "byCategory": by_category,
+        "byForm": by_form,
+    }
+
+
+@router.post("/api/admin/dashboard/cache-clear")
+def api_admin_dashboard_cache_clear(request: Request, user=Depends(get_optional_user),
+                                    db: Session = Depends(get_db)):
+    return _admin_guard(request, user, db) or {"ok": True}
+
+
+# ---------------------------------------------------------------- charts
+
+@router.get("/api/admin/charts")
+def api_admin_charts(request: Request, startDate: str | None = None, endDate: str | None = None,
+                     project: str | None = None,
+                     user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    startDate, endDate = _default_range(startDate, endDate)
+    if not _valid_range(startDate, endDate):
+        return _err(400, "startDate and endDate must be YYYY-MM-DD")
+
+    all_projects = db.query(EHSProject).order_by(EHSProject.name).all()
+    alias_map = {}
+    for p in all_projects:
+        alias_map[p.name.lower()] = p.name
+        for a in (p.aliases or []):
+            k = str(a).strip().lower()
+            if k:
+                alias_map[k] = p.name
+
+    def resolve(raw):
+        if not raw:
+            return "(unspecified)"
+        return alias_map.get(str(raw).strip().lower()) or str(raw).strip() or "(unspecified)"
+
+    def is_test(name) -> bool:
+        return bool(name and re.search("test", str(name), re.I))
+
+    subs = db.query(EHSSubmission).filter(EHSSubmission.form_id.in_(CHART_FORMS)).all()
+
+    def keep(s, raw) -> bool:
+        d = _day(s)
+        if d < startDate or d > endDate:
+            return False
+        if (s.status or "approved").lower() not in ("approved", ""):
+            return False
+        resolved = resolve(raw)
+        if is_test(resolved):
+            return False
+        if project and resolved != project:
+            return False
+        return True
+
+    def group_count(rows_keys):
+        b = {}
+        for k in rows_keys:
+            b[k] = b.get(k, 0) + 1
+        return sorted([{"label": k, "count": v} for k, v in b.items()],
+                      key=lambda x: -x["count"])
+
+    def field(s, *keys):
+        f = s.fields or {}
+        for k in keys:
+            if f.get(k):
+                return f[k]
+        return ""
+
+    def num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0
+
+    toolbox = group_count([resolve(field(s, "project_name")) for s in subs
+                           if s.form_id == "toolbox" and keep(s, field(s, "project_name"))])
+    induction = group_count([resolve(field(s, "project_name")) for s in subs
+                             if s.form_id == "induction" and keep(s, field(s, "project_name"))])
+
+    ehs_by = {}
+    for s in subs:
+        if s.form_id != "ehs-audit":
+            continue
+        raw = field(s, "site_name", "project_name")
+        if not keep(s, raw):
+            continue
+        k = resolve(raw)
+        e = ehs_by.setdefault(k, {"unsafeActs": 0, "unsafeConditions": 0})
+        e["unsafeActs"] += num(field(s, "unsafe_acts"))
+        e["unsafeConditions"] += num(field(s, "unsafe_conditions"))
+    ehs_audit = sorted(
+        [{"project": k, **v} for k, v in ehs_by.items()],
+        key=lambda x: -(x["unsafeActs"] + x["unsafeConditions"]))
+
+    inc_by = {}
+    for s in subs:
+        if s.form_id != "incident":
+            continue
+        raw = field(s, "site_name", "project_name")
+        if not keep(s, raw):
+            continue
+        k = resolve(raw)
+        c = inc_by.setdefault(k, {"Major": 0, "Minor": 0, "Near Miss": 0, "Unspecified": 0})
+        t = field(s, "accident_type")
+        c[t if t in ("Major", "Minor", "Near Miss") else "Unspecified"] += 1
+    incident = sorted(
+        [{"project": k, "major": v["Major"], "minor": v["Minor"],
+          "nearMiss": v["Near Miss"], "unspecified": v["Unspecified"],
+          "total": sum(v.values())} for k, v in inc_by.items()],
+        key=lambda x: -x["total"])
+
+    permit = group_count([resolve(field(s, "project_name", "site_name")) for s in subs
+                          if s.form_id == "permit-record"
+                          and keep(s, field(s, "project_name", "site_name"))])
+
+    return {
+        "range": {"startDate": startDate, "endDate": endDate},
+        "projectFilter": project or None,
+        "availableProjects": [{"id": p.id, "name": p.name, "active": p.active}
+                              for p in all_projects if not is_test(p.name)],
+        "toolbox": toolbox,
+        "induction": induction,
+        "ehsAudit": ehs_audit,
+        "incident": incident,
+        "permitRecord": permit,
+    }
+
+
+@router.post("/api/admin/charts/cache-clear")
+def api_admin_charts_cache_clear(request: Request, user=Depends(get_optional_user),
+                                 db: Session = Depends(get_db)):
+    return _admin_guard(request, user, db) or {"ok": True}
+
+
+# -------------------------------------------------------------- settings
+
+def _project_json(p: EHSProject) -> dict:
+    return {
+        "id": p.id,
+        "name": p.name,
+        "active": bool(p.active),
+        "aliases": list(p.aliases or []),
+        "createdAt": p.created_at.strftime("%Y-%m-%d %H:%M:%S") if p.created_at else "",
+        "createdBy": p.created_by or "unknown",
+    }
+
+
+@router.get("/api/admin/projects")
+def api_admin_projects(request: Request, user=Depends(get_optional_user),
+                       db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    return [_project_json(p) for p in db.query(EHSProject).order_by(EHSProject.name).all()]
+
+
+@router.post("/api/admin/projects")
+async def api_admin_project_create(request: Request, user=Depends(get_optional_user),
+                                   db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    body = await request.json()
+    name = str(body.get("name") or "").strip()
+    if not name:
+        return _err(400, "Project name is required")
+    if db.query(EHSProject).filter(EHSProject.name == name).first():
+        return _err(400, f'A project named "{name}" already exists')
+    aliases = [str(a).strip() for a in (body.get("aliases") or []) if str(a).strip()]
+    p = EHSProject(name=name, active=True, aliases=aliases, created_by=_me(db, user).email)
+    db.add(p)
+    db.commit()
+    return _project_json(p)
+
+
+@router.patch("/api/admin/projects/{project_id}")
+async def api_admin_project_update(project_id: int, request: Request,
+                                   user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    p = db.query(EHSProject).filter(EHSProject.id == project_id).first()
+    if not p:
+        return _err(404, "Project not found")
+    body = await request.json()
+    if "name" in body:
+        name = str(body["name"]).strip()
+        if not name:
+            return _err(400, "Project name cannot be empty")
+        clash = db.query(EHSProject).filter(EHSProject.name == name,
+                                            EHSProject.id != project_id).first()
+        if clash:
+            return _err(400, f'A project named "{name}" already exists')
+        p.name = name
+    if "active" in body:
+        p.active = bool(body["active"])
+    if "aliases" in body:
+        if not isinstance(body["aliases"], list):
+            return _err(400, "Aliases must be an array")
+        p.aliases = [str(a).strip() for a in body["aliases"] if str(a).strip()]
+    db.commit()
+    return _project_json(p)
+
+
+@router.delete("/api/admin/projects/{project_id}")
+def api_admin_project_delete(project_id: int, request: Request,
+                             user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    p = db.query(EHSProject).filter(EHSProject.id == project_id).first()
+    if not p:
+        return _err(404, "Project not found")
+    db.delete(p)
+    db.commit()
+    return {"ok": True}
