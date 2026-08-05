@@ -7,6 +7,8 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+import logging
+import pathlib
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -74,12 +76,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-# EHS parity assets — reference served these at /css /js /img; prefixed with /ehs
-app.mount("/ehs/css", StaticFiles(directory="app/static/ehs/css"), name="ehs-css")
-app.mount("/ehs/js", StaticFiles(directory="app/static/ehs/js"), name="ehs-js")
-app.mount("/ehs/img", StaticFiles(directory="app/static/ehs/img"), name="ehs-img")
-templates = Jinja2Templates(directory="app/templates")
+_STATIC = pathlib.Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
+# EHS parity assets — reference served these at /css /js /img; prefixed with /ehs.
+# Guarded: StaticFiles raises at import if a directory is absent, which would
+# crash every route in the portal, not just EHS.
+_EHS_STATIC = _STATIC / "ehs"
+for _sub in ("css", "js", "img"):
+    _dir = _EHS_STATIC / _sub
+    if _dir.is_dir():
+        app.mount(f"/ehs/{_sub}", StaticFiles(directory=str(_dir)), name=f"ehs-{_sub}")
+    else:
+        logging.getLogger(__name__).error(
+            "EHS static dir missing, /ehs/%s will 404: %s", _sub, _dir)
+templates = Jinja2Templates(directory=str(pathlib.Path(__file__).resolve().parent / "templates"))
 
 # Routers
 app.include_router(auth_routes.router)
@@ -199,7 +209,7 @@ def root(
 def service_worker():
     from fastapi.responses import FileResponse
 
-    return FileResponse("app/static/sw.js", media_type="application/javascript",
+    return FileResponse(str(_STATIC / "sw.js"), media_type="application/javascript",
                         headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
 
 
@@ -207,7 +217,7 @@ def service_worker():
 def manifest():
     from fastapi.responses import FileResponse
 
-    return FileResponse("app/static/manifest.json", media_type="application/manifest+json")
+    return FileResponse(str(_STATIC / "manifest.json"), media_type="application/manifest+json")
 
 
 @app.get("/health")

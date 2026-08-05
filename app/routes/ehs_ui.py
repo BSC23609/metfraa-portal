@@ -33,7 +33,9 @@ from ..models import EHSProject, EHSSubmission, Employee
 
 router = APIRouter(prefix="/ehs", tags=["ehs-ui"])
 
-PAGES = pathlib.Path("app/static/ehs")
+# Resolved from this file, not the process CWD — serverless runtimes do not
+# guarantee CWD is the repo root.
+PAGES = pathlib.Path(__file__).resolve().parent.parent / "static" / "ehs"
 
 
 # ------------------------------------------------------------------ helpers
@@ -42,8 +44,11 @@ def _err(status: int, message: str, **extra):
     return JSONResponse(status_code=status, content={"error": message, **extra})
 
 
-def _page(name: str) -> FileResponse:
-    return FileResponse(PAGES / name, media_type="text/html")
+def _page(name: str):
+    f = PAGES / name
+    if not f.is_file():
+        return _err(500, f"EHS page asset missing from deployment: {name}")
+    return FileResponse(f, media_type="text/html")
 
 
 class EhsUser:
