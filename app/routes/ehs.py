@@ -1,4 +1,10 @@
-"""EHS module routes (Phase 1).
+"""EHS module routes (Phase 1) — API / workflow layer.
+
+Page routes and the reference JSON contract now live in ehs_ui.py (the
+UI-parity layer). This module keeps submit / approve / reject / photo
+proxy plus the OneDrive + Excel + PDF side-effects.
+
+Original header:
 
 Pages:   /ehs/                (module home — form grid + my recent submissions)
          /ehs/form/{form_id}  (dynamic form rendered from the registry)
@@ -110,101 +116,6 @@ def _require_module(db: Session, user: Employee) -> None:
 
 
 # ---------------------------------------------------------------- pages
-
-@router.get("/", response_class=HTMLResponse)
-@router.get("", response_class=HTMLResponse, include_in_schema=False)
-def ehs_home(request: Request, user: Employee | None = Depends(get_optional_user), db: Session = Depends(get_db)):
-    if not user:
-        return RedirectResponse("/auth/login", status_code=303)
-    my_recent = (
-        db.query(EHSSubmission)
-        .filter(EHSSubmission.submitted_by_id == user.id)
-        .order_by(EHSSubmission.id.desc())
-        .limit(5)
-        .all()
-    )
-    _require_module(db, user)
-    pending_count = 0
-    if _is_approver(db, user):
-        pending_count = db.query(EHSSubmission).filter(EHSSubmission.status == "pending").count()
-    return templates.TemplateResponse(request, "ehs/home.html", {
-        "user": user,
-        "forms": ALL_FORMS,
-        "my_recent": my_recent,
-        "is_approver": _is_approver(db, user),
-        "pending_count": pending_count,
-    })
-
-
-@router.get("/form/{form_id}", response_class=HTMLResponse)
-def ehs_form_page(form_id: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    _require_module(db, user)
-    form = FORMS_BY_ID.get(form_id)
-    if not form:
-        raise HTTPException(status_code=404, detail="Unknown form")
-    today = _now_ist().strftime("%Y-%m-%d")
-    now_hm = _now_ist().strftime("%H:%M")
-    return templates.TemplateResponse(request, "ehs/form.html", {
-        "user": user,
-        "form": form,
-        "form_json": json.dumps(form),
-        "projects": _active_projects(db),
-        "inspectors": INSPECTORS,
-        "today": today,
-        "now_hm": now_hm,
-    })
-
-
-@router.get("/submissions", response_class=HTMLResponse)
-def ehs_submissions_page(request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    q = db.query(EHSSubmission)
-    _require_module(db, user)
-    approver = _is_approver(db, user)
-    if not approver:
-        q = q.filter(EHSSubmission.submitted_by_id == user.id)
-    subs = q.order_by(EHSSubmission.id.desc()).limit(200).all()
-    return templates.TemplateResponse(request, "ehs/submissions.html", {
-        "user": user, "subs": subs, "is_approver": approver,
-    })
-
-
-@router.get("/approvals", response_class=HTMLResponse)
-def ehs_approvals_page(request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    _require_approver(db, user)
-    subs = (
-        db.query(EHSSubmission)
-        .filter(EHSSubmission.status == "pending")
-        .order_by(EHSSubmission.id.asc())
-        .all()
-    )
-    return templates.TemplateResponse(request, "ehs/approvals.html", {"user": user, "subs": subs})
-
-
-@router.get("/approvals/{sub_id}", response_class=HTMLResponse)
-def ehs_review_page(sub_id: str, request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    _require_approver(db, user)
-    sub = db.query(EHSSubmission).filter(EHSSubmission.submission_id == sub_id).first()
-    if not sub:
-        raise HTTPException(status_code=404, detail="Submission not found")
-    form = FORMS_BY_ID.get(sub.form_id)
-    if not form:
-        raise HTTPException(status_code=500, detail=f"Form config missing for {sub.form_id}")
-    return templates.TemplateResponse(request, "ehs/review.html", {
-        "user": user,
-        "sub": sub,
-        "form": form,
-        "form_json": json.dumps(form),
-        "sub_json": json.dumps({
-            "submissionId": sub.submission_id,
-            "fields": sub.fields or {},
-            "checklist": sub.checklist or [],
-            "photos": sub.photos or {"fields": {}, "checklist": {}},
-            "status": sub.status,
-        }),
-    })
-
-
-# ---------------------------------------------------------------- submit API
 
 @router.post("/api/forms/{form_id}")
 async def ehs_submit(form_id: str, request: Request, bg: BackgroundTasks, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -474,15 +385,6 @@ async def ehs_reject(sub_id: str, request: Request, bg: BackgroundTasks, user: E
 
 
 # ---------------------------------------------------------------- projects API
-
-@router.get("/api/projects")
-def ehs_projects(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
-    _active_projects(db)  # seeds defaults on first call
-    return [
-        {"id": p.id, "name": p.name, "active": p.active}
-        for p in db.query(EHSProject).order_by(EHSProject.name).all()
-    ]
-
 
 @router.post("/api/projects")
 async def ehs_add_project(request: Request, user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):

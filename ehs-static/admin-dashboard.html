@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Dashboard — Metfraa EHS</title>
+  <link rel="icon" type="image/png" href="/ehs/img/logo.png">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/ehs/css/app.css">
+  <link rel="stylesheet" href="/ehs/css/admin-dashboard.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <a href="/ehs/" style="display:flex;align-items:center;gap:14px;text-decoration:none;color:inherit;">
+        <img src="/ehs/img/logo.png?v=2" alt="Metfraa" class="app-header__logo">
+        <div>
+          <h1 class="app-header__title">EHS Portal</h1>
+          <div class="app-header__sub">Admin Dashboard</div>
+        </div>
+      </a>
+      <div class="app-header__spacer"></div>
+      <div id="user-pill"></div>
+      <a href="/ehs/" class="app-header__btn">All Forms</a>
+      <a href="/ehs/submissions" class="app-header__btn">Submissions</a>
+      <a href="/ehs/admin-charts" class="app-header__btn">Charts</a>
+      <a href="/ehs/admin-settings" class="app-header__btn">Settings</a>
+      <a href="/auth/logout" class="app-header__btn">Logout</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="page-head">
+      <div>
+        <h2 class="page-title">Admin Dashboard</h2>
+        <p class="page-subtitle" id="range-subtitle">Loading…</p>
+      </div>
+      <button id="refresh-btn" class="btn-secondary" type="button">↻ Refresh</button>
+    </div>
+
+    <!-- Date range picker -->
+    <div class="filter-bar">
+      <div class="filter-field">
+        <label>From date</label>
+        <input type="date" id="filter-start">
+      </div>
+      <div class="filter-field">
+        <label>To date</label>
+        <input type="date" id="filter-end">
+      </div>
+      <div class="filter-field" style="flex:0 0 auto;">
+        <label>Quick presets</label>
+        <div class="preset-buttons">
+          <button class="preset-btn" data-days="7">7d</button>
+          <button class="preset-btn" data-days="30">30d</button>
+          <button class="preset-btn" data-days="90">90d</button>
+          <button class="preset-btn" data-days="365">1y</button>
+        </div>
+      </div>
+      <button id="apply-range" class="btn-submit btn-submit--small" type="button">Apply</button>
+    </div>
+
+    <div id="dashboard-mount">
+      <div class="loading">Loading dashboard…</div>
+    </div>
+  </main>
+
+  <script src="/ehs/js/admin-dashboard.js"></script>
+</body>
+</html>

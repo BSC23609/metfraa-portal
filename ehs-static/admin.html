@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin — Metfraa EHS</title>
+  <link rel="icon" type="image/png" href="/ehs/img/logo.png">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/ehs/css/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <img src="/ehs/img/logo.png" alt="Metfraa" class="app-header__logo">
+      <div>
+        <h1 class="app-header__title">EHS Portal · Admin</h1>
+        <div class="app-header__sub">Configuration &amp; Audit</div>
+      </div>
+      <div class="app-header__spacer"></div>
+      <a href="/ehs/" class="app-header__btn">App</a>
+      <a href="/auth/logout" class="app-header__btn">Logout</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <h2 class="page-title">Admin Panel</h2>
+    <p class="page-subtitle">Configuration overview and quick-links to OneDrive logs.</p>
+
+    <div class="admin-stat-row" id="stat-row">Loading…</div>
+
+    <div class="form-shell">
+      <div class="form-section">
+        <h3 class="form-section__title">Where to find your data</h3>
+        <p>Every submission writes <strong>two</strong> things to OneDrive:</p>
+        <ol>
+          <li>A <strong>PDF report</strong> at <code>Metfraa-EHS / &lt;form-folder&gt; / Reports / YYYY / MM /</code></li>
+          <li>An appended row in <code>_MasterLog.xlsx</code> at <code>Metfraa-EHS / &lt;form-folder&gt; /</code></li>
+        </ol>
+        <p>Open the OneDrive root folder in your browser to see all data:</p>
+        <p><a id="onedrive-link" href="https://onedrive.live.com" target="_blank" rel="noopener">Open OneDrive →</a></p>
+      </div>
+
+      <div class="form-section">
+        <h3 class="form-section__title">Adding more inspectors / admins</h3>
+        <p>To add an inspector to the dropdown, edit <code>server/lib/forms-config.js</code> → <code>INSPECTORS</code> array → redeploy.</p>
+        <p>To add an admin email, update the <code>ADMIN_EMAILS</code> environment variable in Render and redeploy.</p>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    fetch('/ehs/admin/api/info').then(r => r.json()).then(info => {
+      const stats = [
+        { label: 'OneDrive Account', value: info.onedriveUser || '—' },
+        { label: 'Root Folder', value: info.onedriveRoot },
+        { label: 'Admin Emails', value: info.adminEmails.length },
+        { label: 'Logged in as', value: info.user.email },
+      ];
+      document.getElementById('stat-row').innerHTML = stats.map(s => `
+        <div class="admin-stat">
+          <div class="admin-stat__label">${s.label}</div>
+          <div class="admin-stat__value">${s.value}</div>
+        </div>
+      `).join('');
+    });
+  </script>
+</body>
+</html>

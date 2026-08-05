@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pending Approvals — Metfraa EHS</title>
+  <link rel="icon" type="image/png" href="/ehs/img/logo.png">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/ehs/css/app.css">
+  <link rel="stylesheet" href="/ehs/css/submissions.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <a href="/ehs/" style="display:flex;align-items:center;gap:14px;text-decoration:none;color:inherit;">
+        <img src="/ehs/img/logo.png?v=2" alt="Metfraa" class="app-header__logo">
+        <div>
+          <h1 class="app-header__title">EHS Portal</h1>
+          <div class="app-header__sub">Pending Approvals</div>
+        </div>
+      </a>
+      <div class="app-header__spacer"></div>
+      <div id="user-pill"></div>
+      <a href="/ehs/" class="app-header__btn">All Forms</a>
+      <a href="/ehs/submissions" class="app-header__btn">Submissions</a>
+      <a href="/auth/logout" class="app-header__btn">Logout</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="page-head">
+      <div>
+        <h2 class="page-title">Pending Approvals</h2>
+        <p class="page-subtitle">Review and approve (or reject) submissions waiting for sign-off.</p>
+      </div>
+      <button id="refresh-btn" class="btn-secondary" type="button">↻ Refresh</button>
+    </div>
+
+    <div id="approvals-list">
+      <div class="loading">Loading pending submissions…</div>
+    </div>
+  </main>
+
+  <script src="/ehs/js/approvals.js"></script>
+</body>
+</html>

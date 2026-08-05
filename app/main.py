@@ -24,6 +24,7 @@ from .routes import monthly_kpi as monthly_kpi_routes
 from .routes import site_visits as site_visits_routes
 from .routes import cron as cron_routes
 from .routes import ehs as ehs_routes
+from .routes import ehs_ui as ehs_ui_routes
 from .routes import expense as expense_routes
 from .routes import people as people_routes
 from .services.scheduler import start_scheduler
@@ -74,6 +75,10 @@ app = FastAPI(
 )
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+# EHS parity assets — reference served these at /css /js /img; prefixed with /ehs
+app.mount("/ehs/css", StaticFiles(directory="app/static/ehs/css"), name="ehs-css")
+app.mount("/ehs/js", StaticFiles(directory="app/static/ehs/js"), name="ehs-js")
+app.mount("/ehs/img", StaticFiles(directory="app/static/ehs/img"), name="ehs-img")
 templates = Jinja2Templates(directory="app/templates")
 
 # Routers
@@ -85,6 +90,7 @@ app.include_router(task_reports_routes.router)
 app.include_router(monthly_kpi_routes.router)
 app.include_router(site_visits_routes.router)
 app.include_router(cron_routes.router)
+app.include_router(ehs_ui_routes.router)   # parity pages + contract (must precede ehs_routes)
 app.include_router(ehs_routes.router)
 app.include_router(expense_routes.router)
 app.include_router(people_routes.router)
