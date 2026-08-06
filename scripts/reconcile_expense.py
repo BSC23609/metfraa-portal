@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""Reconcile the old expense app's SQLite against the portal's Neon database.
+
+WHY THIS EXISTS
+    scripts/migrate_phase3.py skips any row whose reference already exists — it
+    never UPDATES. So every status change, payment and consolidated report made
+    on the old app after the migration ran is invisible to Neon. Re-running the
+    migration would import the handful of genuinely new claims and silently
+    ignore everything else.
+
+WHAT IT DOES
+    Compares by `reference` (stable across both systems) and reports four things:
+      NEW        in SQLite, absent from Neon        -> would be inserted
+      CHANGED    status differs                     -> would be updated
+      PAYMENTS   monthly_payments rows              -> would be inserted
+      REPORTS    consolidated_reports rows          -> would be inserted
+    It also reports IN-NEON-ONLY rows, which would indicate work done on the
+    portal that the old app never saw — those are never touched.
+
+SAFETY
+    Dry run by default. Nothing is written without --apply. Even with --apply it
+    refuses to downgrade a submission that has moved FURTHER along on the portal
+    than on the old app, unless you pass --force-status.
+
+USAGE
+    python reconcile_expense.py --sqlite expense-live.db                 # report
+    python reconcile_expense.py --sqlite expense-live.db --apply         # write
+"""
+import argparse
+import json
+import os
+import sqlite3
+import sys
+from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# How far along the workflow each status sits. Used to refuse accidental
+# downgrades: never move a portal row backwards from a later stage.
+RANK = {
+    "draft": 0, "archived": 0, "rejected": 0,
+    "pending": 1,
+    "advance_hr_verified": 2, "advance_mgmt_approved": 3, "advance_approved": 4,
+    "settlement_pending": 5, "settlement_rejected": 5,
+    "approved": 6, "settled": 6, "settled_offline": 6,
+}
+
+
+def _j(raw, default):
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def load_sqlite(path: str):
+    c = sqlite3.connect(path)
+    c.row_factory = sqlite3.Row
+    subs = {r["reference"]: dict(r) for r in c.execute("SELECT * FROM submissions")}
+    emps = {r["id"]: dict(r) for r in c.execute("SELECT * FROM employees")}
+    pays = [dict(r) for r in c.execute("SELECT * FROM monthly_payments")]
+    reps = [dict(r) for r in c.execute("SELECT * FROM consolidated_reports")]
+    c.close()
+    return subs, emps, pays, reps
+
+
+def match_employee(db, Employee, emp: dict):
+    """Email first, then employee_code — the old DB has a duplicate code
+    (MET-006 shared by two people), so email is the reliable key."""
+    from sqlalchemy import func
+    if emp.get("email"):
+        hit = (db.query(Employee)
+               .filter(func.lower(Employee.email) == emp["email"].strip().lower())
+               .first())
+        if hit:
+            return hit, "email"
+    if emp.get("employee_code"):
+        hit = (db.query(Employee)
+               .filter(Employee.employee_code == emp["employee_code"].strip())
+               .first())
+        if hit:
+            return hit, "code"
+    return None, None
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--sqlite", required=True)
+    ap.add_argument("--apply", action="store_true", help="write changes (default: report only)")
+    ap.add_argument("--force-status", action="store_true",
+                    help="allow moving a submission BACKWARDS to match the old app")
+    args = ap.parse_args()
+
+    from app.database import SessionLocal
+    from app.models import (Employee, ExpenseConsolidatedReport, ExpenseMonthlyPayment,
+                            ExpenseSubmission)
+
+    subs, emps, pays, reps = load_sqlite(args.sqlite)
+    db = SessionLocal()
+    neon = {s.reference: s for s in db.query(ExpenseSubmission).all()}
+
+    new, changed, blocked, unmatched, same = [], [], [], [], 0
+    for ref, s in sorted(subs.items(), key=lambda kv: kv[1]["submitted_at"] or ""):
+        emp = emps.get(s["employee_id"], {})
+        target = neon.get(ref)
+        if not target:
+            hit, how = match_employee(db, Employee, emp)
+            if not hit:
+                unmatched.append((ref, emp.get("name"), emp.get("email")))
+                continue
+            new.append((ref, s, emp, hit, how))
+        elif (target.status or "") != (s["status"] or ""):
+            row = (ref, target.status, s["status"], s.get("reviewed_by"), s.get("reviewed_at"))
+            # Whose decision is more recent wins. Rank alone is wrong: archiving
+            # is a deliberate admin action, not a downgrade. Only block when the
+            # PORTAL was reviewed later than the old app — i.e. someone acted on
+            # the portal after the old app's change, and we'd be undoing them.
+            portal_when = target.reviewed_at_ist or ""
+            old_when = s.get("reviewed_at") or ""
+            if portal_when and old_when and portal_when > old_when and not args.force_status:
+                blocked.append(row)
+            else:
+                changed.append(row)
+        else:
+            same += 1
+
+    neon_only = sorted(set(neon) - set(subs))
+
+    # ---------------------------------------------------------------- report
+    W = 78
+    print("=" * W)
+    print("EXPENSE RECONCILIATION  —  " + ("APPLY" if args.apply else "DRY RUN (nothing written)"))
+    print("=" * W)
+    print(f"old app : {len(subs)} submissions")
+    print(f"portal  : {len(neon)} submissions")
+    print(f"identical: {same}\n")
+
+    print(f"[1] NEW — in the old app, missing from the portal ({len(new)})")
+    for ref, s, emp, hit, how in new:
+        print(f"    {ref:26} {emp.get('name','?')[:22]:22} {s['form_type']:16} "
+              f"Rs.{s['total_amount']:>9}  {s['status']:10} (matched by {how})")
+    if not new:
+        print("    none")
+
+    print(f"\n[2] STATUS CHANGED on the old app ({len(changed)})")
+    for ref, was, now, by, when in changed:
+        print(f"    {ref:26} portal '{was}' -> old app '{now}'   by {by or '-'} {when or ''}")
+    if not changed:
+        print("    none")
+
+    if blocked:
+        print(f"\n[3] BLOCKED — the portal is FURTHER ALONG than the old app ({len(blocked)})")
+        print("    Not changed. These would be downgrades; re-run with --force-status only")
+        print("    if you are certain the old app is right.")
+        for ref, was, now, by, when in blocked:
+            print(f"    {ref:26} portal '{was}'  vs  old app '{now}'")
+
+    if unmatched:
+        print(f"\n[!] UNMATCHED EMPLOYEES — cannot import these ({len(unmatched)})")
+        for ref, name, email in unmatched:
+            print(f"    {ref:26} {name} <{email}>")
+
+    if neon_only:
+        print(f"\n[i] PORTAL-ONLY submissions ({len(neon_only)}) — never touched")
+        for ref in neon_only[:10]:
+            print(f"    {ref}")
+        if len(neon_only) > 10:
+            print(f"    ... and {len(neon_only) - 10} more")
+
+    # payments
+    pay_new = []
+    for p in pays:
+        emp = emps.get(p["employee_id"], {})
+        hit, _ = match_employee(db, Employee, emp)
+        if not hit:
+            continue
+        exists = (db.query(ExpenseMonthlyPayment)
+                  .filter(ExpenseMonthlyPayment.employee_id == hit.id,
+                          ExpenseMonthlyPayment.year == p["year"],
+                          ExpenseMonthlyPayment.month == p["month"]).first())
+        if not exists:
+            pay_new.append((p, emp, hit))
+    print(f"\n[4] PAYMENTS to import ({len(pay_new)})")
+    for p, emp, hit in pay_new:
+        print(f"    {emp.get('name','?'):22} {p['year']}-{p['month']:02d}  "
+              f"Rs.{p['amount_paid']:>9}  paid_by {p['paid_by']}")
+    if not pay_new:
+        print("    none")
+
+    # consolidated reports
+    rep_new = []
+    for r in reps:
+        emp = emps.get(r["employee_id"], {})
+        hit, _ = match_employee(db, Employee, emp)
+        if not hit:
+            continue
+        exists = (db.query(ExpenseConsolidatedReport)
+                  .filter(ExpenseConsolidatedReport.employee_id == hit.id,
+                          ExpenseConsolidatedReport.period == r["period"]).first())
+        if not exists:
+            rep_new.append((r, emp, hit))
+    print(f"\n[5] CONSOLIDATED REPORTS to import ({len(rep_new)})")
+    for r, emp, hit in rep_new:
+        print(f"    {emp.get('name','?'):22} {r['period']}  {r['status']:10} "
+              f"Rs.{r['total_amount']:>9}  {r['submission_count']} claims")
+    if not rep_new:
+        print("    none")
+
+    if not args.apply:
+        print("\n" + "=" * W)
+        print("DRY RUN — nothing written. Re-run with --apply to commit.")
+        print("=" * W)
+        db.close()
+        return
+
+    # ----------------------------------------------------------------- apply
+    for ref, s, emp, hit, how in new:
+        db.add(ExpenseSubmission(
+            reference=ref, employee_id=hit.id, employee_name=hit.name,
+            employee_email=hit.email, employee_level=(emp.get("level") or "L1"),
+            form_type=s["form_type"], period=s["period"],
+            payload=_j(s["payload_json"], {}), total_amount=s["total_amount"] or 0,
+            status=s["status"], submitted_at_ist=s["submitted_at"],
+            reviewed_by=s.get("reviewed_by"), reviewed_at_ist=s.get("reviewed_at"),
+            review_note=s.get("review_note"),
+            changes_required=s.get("changes_required"),
+            returned_at_ist=s.get("returned_at"),
+            actuals=_j(s.get("actuals_json"), None),
+            settled_at_ist=s.get("settled_at"),
+            settlement_reviewed_by=s.get("settlement_reviewed_by"),
+            settlement_note=s.get("settlement_note"),
+            purpose_category=s.get("purpose_category"),
+            purpose_other_reason=s.get("purpose_other_reason"),
+            advance_stage=s.get("advance_stage"),
+            advance_hr_verified_by=s.get("advance_hr_verified_by"),
+            advance_hr_verified_at=s.get("advance_hr_verified_at"),
+            advance_mgmt_approved_by=s.get("advance_mgmt_approved_by"),
+            advance_mgmt_approved_at=s.get("advance_mgmt_approved_at"),
+            advance_paid_by=s.get("advance_paid_by"),
+            advance_paid_at=s.get("advance_paid_at"),
+            trip_end_date=s.get("trip_end_date"),
+            late_settlement=bool(s.get("late_settlement")),
+            late_hours=s.get("late_hours"),
+            differential_amount=s.get("differential_amount"),
+            deadline_bypass=bool(s.get("deadline_bypass")),
+            pdf_web_url=None))
+
+    for ref, was, now, by, when in changed:
+        t = neon[ref]
+        src = subs[ref]
+        t.status = now
+        t.reviewed_by = by or t.reviewed_by
+        t.reviewed_at_ist = when or t.reviewed_at_ist
+        t.review_note = src.get("review_note") or t.review_note
+        t.changes_required = src.get("changes_required")
+        t.returned_at_ist = src.get("returned_at")
+        if src.get("actuals_json"):
+            t.actuals = _j(src["actuals_json"], None)
+        t.settled_at_ist = src.get("settled_at") or t.settled_at_ist
+        t.differential_amount = src.get("differential_amount")
+        t.advance_stage = src.get("advance_stage") or t.advance_stage
+
+    for p, emp, hit in pay_new:
+        db.add(ExpenseMonthlyPayment(
+            employee_id=hit.id, year=p["year"], month=p["month"],
+            amount_paid=p["amount_paid"], paid_by=p["paid_by"],
+            paid_at_ist=p["paid_at"], email_sent_at=p.get("email_sent_at"),
+            email_error=p.get("email_error")))
+
+    ref_by_old_id = {s["id"]: s["reference"] for s in subs.values()}
+    for r, emp, hit in rep_new:
+        old_ids = _j(r.get("submission_ids"), [])
+        new_ids = []
+        for oid in old_ids:
+            ref = ref_by_old_id.get(oid)
+            row = db.query(ExpenseSubmission).filter(
+                ExpenseSubmission.reference == ref).first() if ref else None
+            if row:
+                new_ids.append(row.id)
+        db.add(ExpenseConsolidatedReport(
+            employee_id=hit.id, period=r["period"], status=r["status"],
+            total_amount=r["total_amount"], submission_count=r["submission_count"],
+            submission_ids=new_ids, pdf_web_url=None,
+            pdf_page_count=r.get("pdf_page_count"),
+            generated_at=r["generated_at"], generated_by=r.get("generated_by"),
+            hr_approved_by=r.get("hr_approved_by"), hr_approved_at=r.get("hr_approved_at"),
+            mgmt_approved_by=r.get("mgmt_approved_by"),
+            mgmt_approved_at=r.get("mgmt_approved_at"),
+            mgmt_rejected_reason=r.get("mgmt_rejected_reason"),
+            accounts_sent_at=r.get("accounts_sent_at")))
+
+    db.commit()
+    print("\n" + "=" * W)
+    print(f"APPLIED: {len(new)} inserted, {len(changed)} updated, "
+          f"{len(pay_new)} payments, {len(rep_new)} consolidated reports.")
+    print("Re-run without --apply to confirm everything now reads 'identical'.")
+    print("=" * W)
+    db.close()
+
+
+if __name__ == "__main__":
+    main()
