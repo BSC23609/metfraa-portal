@@ -1,0 +1,369 @@
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index 3e2050c..c5c87cd 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -6,6 +6,7 @@ Uses ALTER TABLE IF NOT EXISTS which never errors on existing schema.
+ Add new column additions here as we ship them.
+ """
+ import logging
++import time as _time
+ from sqlalchemy import text
+ from .database import engine
+ 
+@@ -50,14 +51,24 @@ def run_startup_migrations() -> None:
+     Each statement runs in its own transaction so a failure on one doesn't
+     prevent the others from running.
+     """
+-    for stmt in STARTUP_MIGRATIONS:
+-        try:
+-            with engine.begin() as conn:
+-                conn.execute(text(stmt))
+-            log.info(f"[migrate] applied: {stmt[:100]}")
+-        except Exception as e:
+-            # Optional migrations (like the monthly_target copy) can fail silently
+-            if stmt in OPTIONAL_MIGRATIONS:
+-                log.info(f"[migrate] optional skipped: {stmt[:100]} — {e}")
+-            else:
+-                log.error(f"[migrate] FAILED: {stmt} — {e}")
++    # One connection for every statement. Under NullPool (serverless) a fresh
++    # engine.begin() per statement opens a new TLS connection to Neon, so 12
++    # statements meant 12 round-trip handshakes on every cold start.
++    _t0 = _time.time()
++    with engine.connect() as conn:
++        for stmt in STARTUP_MIGRATIONS:
++            try:
++                with conn.begin():
++                    conn.execute(text(stmt))
++                log.info(f"[migrate] applied: {stmt[:100]}")
++            except Exception as e:
++                # Optional migrations (like the monthly_target copy) can fail silently
++                if stmt in OPTIONAL_MIGRATIONS:
++                    log.info(f"[migrate] optional skipped: {stmt[:100]} — {e}")
++                else:
++                    log.error(f"[migrate] FAILED: {stmt} — {e}")
++    log.warning(
++        f"[migrate] startup migrations ran in {_time.time() - _t0:.2f}s. "
++        "This runs on EVERY cold start while INIT_DB is set — "
++        "unset INIT_DB in Vercel now that the schema is current."
++    )
+diff --git a/portal-speed-fix-v3.patch b/portal-speed-fix-v3.patch
+deleted file mode 100644
+index ce27dbb..0000000
+--- a/portal-speed-fix-v3.patch
++++ /dev/null
+@@ -1,266 +0,0 @@
+-diff --git a/app/routes/ehs.py b/app/routes/ehs.py
+-index 8f94b91..3cea3ea 100644
+---- a/app/routes/ehs.py
+-+++ b/app/routes/ehs.py
+-@@ -48,7 +48,7 @@ from ..ehs.forms import is_approver as _legacy_approver
+- from ..models import EHSProject, EHSSubmission, Employee
+- from ..services import onedrive
+- from ..services.ehs_excel_log import append_to_master_log, ehs_root
+--from ..services.ehs_pdf import generate_ehs_pdf
+-+# reportlab is heavy; imported inside the approve handler that uses it.
+- from ..services.portal_notify import notify_ehs_decision, notify_ehs_submitted
+- 
+- log = logging.getLogger(__name__)
+-@@ -315,6 +315,7 @@ async def ehs_approve(sub_id: str, request: Request, bg: BackgroundTasks, user:
+-     # ---- Generate + upload PDF
+-     pdf_link = None
+-     try:
+-+        from ..services.ehs_pdf import generate_ehs_pdf
+-         pdf_bytes = generate_ehs_pdf(form, sub, photo_buffers)
+-         safe_title = form["title"].replace(" ", "-").replace("/", "-")
+-         pdf_name = f"{sub.submission_id}_{safe_title}.pdf"
+-diff --git a/app/routes/expense.py b/app/routes/expense.py
+-index 33bce7e..e93e23c 100644
+---- a/app/routes/expense.py
+-+++ b/app/routes/expense.py
+-@@ -40,9 +40,11 @@ from ..models import (
+- )
+- from ..services import onedrive
+- from ..services.portal_notify import notify_expense_decision, notify_expense_submitted
+--from ..services.expense_artifacts import (
+--    append_expense_log, expense_root, generate_expense_pdf, submission_folder,
+--)
+-+def _artifacts():
+-+    """Lazy accessor — reportlab + openpyxl cost ~0.9s to import and are only
+-+    needed when a PDF or master-log row is actually produced."""
+-+    from ..services import expense_artifacts as _a
+-+    return _a
+- 
+- log = logging.getLogger(__name__)
+- router = APIRouter(prefix="/expense", tags=["expense"])
+-@@ -238,7 +240,7 @@ async def expense_submit(form_type: str, request: Request, bg: BackgroundTasks,
+-         db.flush()
+- 
+-     # Upload bills to OneDrive
+--    folder = f"{submission_folder(sub)}/Bills"
+-+    folder = f"{_artifacts().submission_folder(sub)}/Bills"
+-     try:
+-         for key, data, mime, fname in bills:
+-             data, mime = _compress(data, mime)
+-@@ -268,7 +270,7 @@ async def expense_submit(form_type: str, request: Request, bg: BackgroundTasks,
+- 
+- @router.get("/api/bill")
+- def expense_bill_proxy(path: str, user: Employee = Depends(get_current_user)):
+--    root = expense_root()
+-+    root = _artifacts().expense_root()
+-     clean = path.strip("/")
+-     if not clean.startswith(root + "/") or ".." in clean:
+-         raise HTTPException(status_code=400, detail="Invalid path")
+-@@ -304,15 +306,15 @@ async def expense_approve(reference: str, request: Request, bg: BackgroundTasks,
+-     meta = FORM_META.get(sub.form_type, {})
+-     pdf_link = None
+-     try:
+--        pdf_bytes = generate_expense_pdf(sub, meta.get("title", sub.form_type))
+--        info = onedrive.upload_to_path(pdf_bytes, f"{submission_folder(sub)}/{sub.reference}.pdf", "application/pdf")
+-+        pdf_bytes = _artifacts().generate_expense_pdf(sub, meta.get("title", sub.form_type))
+-+        info = onedrive.upload_to_path(pdf_bytes, f"{_artifacts().submission_folder(sub)}/{sub.reference}.pdf", "application/pdf")
+-         pdf_link = info.get("webUrl")
+-         sub.pdf_web_url = pdf_link
+-     except Exception as e:
+-         log.error(f"[expense-approve] PDF failed: {e}", exc_info=True)
+-     try:
+-         bill_links = [a.web_url for a in sub.attachments if a.web_url]
+--        append_expense_log(sub, meta.get("code", "X"), bill_links, pdf_link)
+-+        _artifacts().append_expense_log(sub, meta.get("code", "X"), bill_links, pdf_link)
+-     except Exception as e:
+-         log.error(f"[expense-approve] log failed: {e}", exc_info=True)
+- 
+-@@ -379,7 +381,7 @@ async def expense_settle(reference: str, request: Request, bg: BackgroundTasks,
+-         raise HTTPException(status_code=400, detail="Add at least one actual expense")
+- 
+-     # bills for the settlement
+--    folder = f"{submission_folder(sub)}/Settlement"
+-+    folder = f"{_artifacts().submission_folder(sub)}/Settlement"
+-     try:
+-         for key, value in form_data.multi_items():
+-             if key.startswith("bill:") and hasattr(value, "read"):
+-@@ -431,13 +433,13 @@ async def expense_settle_decide(reference: str, request: Request, bg: Background
+-         sub.settlement_note = note or None
+-         meta = FORM_META.get(sub.form_type, {})
+-         try:
+--            pdf = generate_expense_pdf(sub, meta.get("title", "Travel Advance") + " (Settled)")
+--            info = onedrive.upload_to_path(pdf, f"{submission_folder(sub)}/{sub.reference}_settled.pdf", "application/pdf")
+-+            pdf = _artifacts().generate_expense_pdf(sub, meta.get("title", "Travel Advance") + " (Settled)")
+-+            info = onedrive.upload_to_path(pdf, f"{_artifacts().submission_folder(sub)}/{sub.reference}_settled.pdf", "application/pdf")
+-             sub.pdf_web_url = info.get("webUrl")
+-         except Exception as e:
+-             log.error(f"[settle-decide] PDF failed: {e}")
+-         try:
+--            append_expense_log(sub, meta.get("code", "ADV"),
+-+            _artifacts().append_expense_log(sub, meta.get("code", "ADV"),
+-                                [a.web_url for a in sub.attachments if a.web_url], sub.pdf_web_url)
+-         except Exception as e:
+-             log.error(f"[settle-decide] log failed: {e}")
+-diff --git a/app/routes/reports.py b/app/routes/reports.py
+-index 280afff..b31cbcc 100644
+---- a/app/routes/reports.py
+-+++ b/app/routes/reports.py
+-@@ -12,8 +12,8 @@ import io
+- from ..database import get_db
+- from ..models import Employee, MonthlyReport, MonthlyKPIActual, AuditLog
+- from ..deps import get_current_user, require_admin
+--from ..services.pdf_report import generate_monthly_pdf, report_filename
+--from ..services.excel_master import build_master_workbook
+-+# Heavy (matplotlib + reportlab + openpyxl ~1.2s): imported inside the handlers
+-+# that need them, so a cold start doesn't pay for them on every request.
+- from ..services import onedrive
+- from ..config import get_settings
+- 
+-@@ -105,6 +105,7 @@ def _do_generate(db, employee, year, month, generated_by, skip_submission_check=
+- 
+-     # Generate PDF
+-     try:
+-+        from ..services.pdf_report import generate_monthly_pdf, report_filename
+-         pdf_bytes = generate_monthly_pdf(db, employee.id, year, month, generated_by=generated_by)
+-     except Exception as e:
+-         raise HTTPException(500, f"PDF generation failed: {e}")
+-@@ -169,6 +170,7 @@ def download_pdf(
+-     if not user.is_admin and user.id != employee_id:
+-         raise HTTPException(403, "Forbidden")
+- 
+-+    from ..services.pdf_report import generate_monthly_pdf, report_filename
+-     pdf_bytes = generate_monthly_pdf(db, employee_id, year, month,
+-                                      generated_by=user.email or user.employee_code)
+-     fname = report_filename(target, year, month)
+-@@ -185,6 +187,7 @@ def sync_master_excel(
+-     db: Session = Depends(get_db),
+- ):
+-     """Build the master Excel and upload to OneDrive."""
+-+    from ..services.excel_master import build_master_workbook
+-     xlsx_bytes = build_master_workbook(db)
+-     fname = "Metfraa_KPI_Master.xlsx"
+-     onedrive_path = settings.onedrive_folder
+-@@ -218,6 +221,7 @@ def download_master_excel(
+-     db: Session = Depends(get_db),
+- ):
+-     """Download the master Excel directly."""
+-+    from ..services.excel_master import build_master_workbook
+-     xlsx_bytes = build_master_workbook(db)
+-     return StreamingResponse(
+-         io.BytesIO(xlsx_bytes),
+-diff --git a/app/services/ehs_excel_log.py b/app/services/ehs_excel_log.py
+-index b4dd940..61292ae 100644
+---- a/app/services/ehs_excel_log.py
+-+++ b/app/services/ehs_excel_log.py
+-@@ -8,8 +8,6 @@ import io
+- import logging
+- import os
+- 
+--from openpyxl import Workbook, load_workbook
+--from openpyxl.styles import Alignment, Font, PatternFill
+- 
+- from . import onedrive
+- 
+-@@ -40,6 +38,8 @@ def _headers_for(form: dict) -> list[str]:
+- 
+- 
+- def append_to_master_log(form: dict, sub, file_links: dict, pdf_link: str | None) -> None:
+-+    from openpyxl import Workbook, load_workbook
+-+    from openpyxl.styles import Alignment, Font, PatternFill
+-     """sub: EHSSubmission ORM object. file_links: {"fields": {key: [url]}, "checklist": {idx: [url]}}."""
+-     log_path = f"{ehs_root()}/{form['folder']}/_MasterLog.xlsx"
+- 
+-diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+-index 3e2050c..9194810 100644
+---- a/app/startup_migrations.py
+-+++ b/app/startup_migrations.py
+-@@ -6,6 +6,7 @@ Uses ALTER TABLE IF NOT EXISTS which never errors on existing schema.
+- Add new column additions here as we ship them.
+- """
+- import logging
+-+import time
+- from sqlalchemy import text
+- from .database import engine
+- 
+-@@ -50,14 +51,22 @@ def run_startup_migrations() -> None:
+-     Each statement runs in its own transaction so a failure on one doesn't
+-     prevent the others from running.
+-     """
+--    for stmt in STARTUP_MIGRATIONS:
+--        try:
+--            with engine.begin() as conn:
+--                conn.execute(text(stmt))
+--            log.info(f"[migrate] applied: {stmt[:100]}")
+--        except Exception as e:
+-+    # One connection for all statements. Under NullPool (serverless) a fresh
+-+    # `engine.begin()` per statement means a new TLS handshake to Neon each
+-+    # time — 12 statements became 12 round-trip connections on every boot.
+-+    t0 = time.time()
+-+    with engine.connect() as conn:
+-+        for stmt in STARTUP_MIGRATIONS:
+-+            try:
+-+                with conn.begin():
+-+                    conn.execute(text(stmt))
+-+                log.info(f"[migrate] applied: {stmt[:100]}")
+-+            except Exception as e:
+-             # Optional migrations (like the monthly_target copy) can fail silently
+--            if stmt in OPTIONAL_MIGRATIONS:
+--                log.info(f"[migrate] optional skipped: {stmt[:100]} — {e}")
+--            else:
+--                log.error(f"[migrate] FAILED: {stmt} — {e}")
+-+                if stmt in OPTIONAL_MIGRATIONS:
+-+                    log.info(f"[migrate] optional skipped: {stmt[:100]} — {e}")
+-+                else:
+-+                    log.error(f"[migrate] FAILED: {stmt} — {e}")
+-+    log.warning(f"[migrate] startup migrations ran in {time.time() - t0:.2f}s — "
+-+                f"this happens on EVERY cold start while INIT_DB is set. "
+-+                f"Unset INIT_DB in Vercel once the schema is current.")
+-diff --git a/vercel.json b/vercel.json
+-index 71ce3a5..31daa56 100644
+---- a/vercel.json
+-+++ b/vercel.json
+-@@ -1,9 +1,41 @@
+- {
+-+  "regions": [
+-+    "sin1"
+-+  ],
+-   "rewrites": [
+--    { "source": "/(.*)", "destination": "/api/index" }
+-+    {
+-+      "source": "/(.*)",
+-+      "destination": "/api/index"
+-+    }
+-   ],
+-   "crons": [
+--    { "path": "/cron/missed-day", "schedule": "30 4 * * *" },
+--    { "path": "/cron/daily-task-report", "schedule": "35 4 * * *" }
+-+    {
+-+      "path": "/cron/missed-day",
+-+      "schedule": "30 4 * * *"
+-+    },
+-+    {
+-+      "path": "/cron/daily-task-report",
+-+      "schedule": "35 4 * * *"
+-+    }
+-+  ],
+-+  "headers": [
+-+    {
+-+      "source": "/ehs/(css|js|img)/(.*)",
+-+      "headers": [
+-+        {
+-+          "key": "Cache-Control",
+-+          "value": "public, max-age=600, stale-while-revalidate=86400"
+-+        }
+-+      ]
+-+    },
+-+    {
+-+      "source": "/static/(.*)",
+-+      "headers": [
+-+        {
+-+          "key": "Cache-Control",
+-+          "value": "public, max-age=600, stale-while-revalidate=86400"
+-+        }
+-+      ]
+-+    }
+-   ]
+- }
+diff --git a/vercel.json b/vercel.json
+index 71ce3a5..31daa56 100644
+--- a/vercel.json
++++ b/vercel.json
+@@ -1,9 +1,41 @@
+ {
++  "regions": [
++    "sin1"
++  ],
+   "rewrites": [
+-    { "source": "/(.*)", "destination": "/api/index" }
++    {
++      "source": "/(.*)",
++      "destination": "/api/index"
++    }
+   ],
+   "crons": [
+-    { "path": "/cron/missed-day", "schedule": "30 4 * * *" },
+-    { "path": "/cron/daily-task-report", "schedule": "35 4 * * *" }
++    {
++      "path": "/cron/missed-day",
++      "schedule": "30 4 * * *"
++    },
++    {
++      "path": "/cron/daily-task-report",
++      "schedule": "35 4 * * *"
++    }
++  ],
++  "headers": [
++    {
++      "source": "/ehs/(css|js|img)/(.*)",
++      "headers": [
++        {
++          "key": "Cache-Control",
++          "value": "public, max-age=600, stale-while-revalidate=86400"
++        }
++      ]
++    },
++    {
++      "source": "/static/(.*)",
++      "headers": [
++        {
++          "key": "Cache-Control",
++          "value": "public, max-age=600, stale-while-revalidate=86400"
++        }
++      ]
++    }
+   ]
+ }

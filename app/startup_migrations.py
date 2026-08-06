@@ -6,6 +6,7 @@ Uses ALTER TABLE IF NOT EXISTS which never errors on existing schema.
 Add new column additions here as we ship them.
 """
 import logging
+import time as _time
 from sqlalchemy import text
 from .database import engine
 
@@ -50,14 +51,24 @@ def run_startup_migrations() -> None:
     Each statement runs in its own transaction so a failure on one doesn't
     prevent the others from running.
     """
-    for stmt in STARTUP_MIGRATIONS:
-        try:
-            with engine.begin() as conn:
-                conn.execute(text(stmt))
-            log.info(f"[migrate] applied: {stmt[:100]}")
-        except Exception as e:
-            # Optional migrations (like the monthly_target copy) can fail silently
-            if stmt in OPTIONAL_MIGRATIONS:
-                log.info(f"[migrate] optional skipped: {stmt[:100]} — {e}")
-            else:
-                log.error(f"[migrate] FAILED: {stmt} — {e}")
+    # One connection for every statement. Under NullPool (serverless) a fresh
+    # engine.begin() per statement opens a new TLS connection to Neon, so 12
+    # statements meant 12 round-trip handshakes on every cold start.
+    _t0 = _time.time()
+    with engine.connect() as conn:
+        for stmt in STARTUP_MIGRATIONS:
+            try:
+                with conn.begin():
+                    conn.execute(text(stmt))
+                log.info(f"[migrate] applied: {stmt[:100]}")
+            except Exception as e:
+                # Optional migrations (like the monthly_target copy) can fail silently
+                if stmt in OPTIONAL_MIGRATIONS:
+                    log.info(f"[migrate] optional skipped: {stmt[:100]} — {e}")
+                else:
+                    log.error(f"[migrate] FAILED: {stmt} — {e}")
+    log.warning(
+        f"[migrate] startup migrations ran in {_time.time() - _t0:.2f}s. "
+        "This runs on EVERY cold start while INIT_DB is set — "
+        "unset INIT_DB in Vercel now that the schema is current."
+    )
