@@ -1,0 +1,117 @@
+diff --git a/app/static/ehs/admin-charts.html b/app/static/ehs/admin-charts.html
+index 626e791..0d7956d 100644
+--- a/app/static/ehs/admin-charts.html
++++ b/app/static/ehs/admin-charts.html
+@@ -26,7 +26,7 @@
+       <a href="/ehs/submissions" class="app-header__btn">Submissions</a>
+       <a href="/ehs/admin-dashboard" class="app-header__btn">Dashboard</a>
+       <a href="/ehs/admin-settings" class="app-header__btn">Settings</a>
+-      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
++      <a href="/" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+       <a href="/auth/logout" class="app-header__btn">Logout</a>
+     </div>
+   </header>
+diff --git a/app/static/ehs/admin-dashboard.html b/app/static/ehs/admin-dashboard.html
+index d2d091d..a2e0cae 100644
+--- a/app/static/ehs/admin-dashboard.html
++++ b/app/static/ehs/admin-dashboard.html
+@@ -25,7 +25,7 @@
+       <a href="/ehs/submissions" class="app-header__btn">Submissions</a>
+       <a href="/ehs/admin-charts" class="app-header__btn">Charts</a>
+       <a href="/ehs/admin-settings" class="app-header__btn">Settings</a>
+-      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
++      <a href="/" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+       <a href="/auth/logout" class="app-header__btn">Logout</a>
+     </div>
+   </header>
+diff --git a/app/static/ehs/admin-settings.html b/app/static/ehs/admin-settings.html
+index 5c49844..b1b4c99 100644
+--- a/app/static/ehs/admin-settings.html
++++ b/app/static/ehs/admin-settings.html
+@@ -25,7 +25,7 @@
+       <a href="/ehs/" class="app-header__btn">All Forms</a>
+       <a href="/ehs/admin-dashboard" class="app-header__btn">Dashboard</a>
+       <a href="/ehs/admin-charts" class="app-header__btn">Charts</a>
+-      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
++      <a href="/" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+       <a href="/auth/logout" class="app-header__btn">Logout</a>
+     </div>
+   </header>
+diff --git a/app/static/ehs/admin.html b/app/static/ehs/admin.html
+index 548adea..fbaa70f 100644
+--- a/app/static/ehs/admin.html
++++ b/app/static/ehs/admin.html
+@@ -18,7 +18,7 @@
+       </div>
+       <div class="app-header__spacer"></div>
+       <a href="/ehs/" class="app-header__btn">App</a>
+-      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
++      <a href="/" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+       <a href="/auth/logout" class="app-header__btn">Logout</a>
+     </div>
+   </header>
+diff --git a/app/static/ehs/approval-review.html b/app/static/ehs/approval-review.html
+index a3ff77e..fc8c07a 100644
+--- a/app/static/ehs/approval-review.html
++++ b/app/static/ehs/approval-review.html
+@@ -22,7 +22,7 @@
+       <div class="app-header__spacer"></div>
+       <div id="user-pill"></div>
+       <a href="/ehs/approvals" class="app-header__btn">← Back to list</a>
+-      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
++      <a href="/" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+       <a href="/auth/logout" class="app-header__btn">Logout</a>
+     </div>
+   </header>
+diff --git a/app/static/ehs/approvals.html b/app/static/ehs/approvals.html
+index cf9ebb7..538de3a 100644
+--- a/app/static/ehs/approvals.html
++++ b/app/static/ehs/approvals.html
+@@ -23,7 +23,7 @@
+       <div id="user-pill"></div>
+       <a href="/ehs/" class="app-header__btn">All Forms</a>
+       <a href="/ehs/submissions" class="app-header__btn">Submissions</a>
+-      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
++      <a href="/" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+       <a href="/auth/logout" class="app-header__btn">Logout</a>
+     </div>
+   </header>
+diff --git a/app/static/ehs/dashboard.html b/app/static/ehs/dashboard.html
+index 3d2a67a..26e4c0e 100644
+--- a/app/static/ehs/dashboard.html
++++ b/app/static/ehs/dashboard.html
+@@ -28,7 +28,7 @@
+       <a id="admin-link" href="/ehs/admin-dashboard" class="app-header__btn app-header__btn--admin" style="display:none">Admin</a>
+       <a id="charts-link" href="/ehs/admin-charts" class="app-header__btn app-header__btn--admin" style="display:none">Charts</a>
+       <a id="settings-link" href="/ehs/admin-settings" class="app-header__btn app-header__btn--admin" style="display:none">Settings</a>
+-      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
++      <a href="/" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+       <a href="/auth/logout" class="app-header__btn">Logout</a>
+     </div>
+   </header>
+diff --git a/app/static/ehs/form.html b/app/static/ehs/form.html
+index 9e2520a..7f995f7 100644
+--- a/app/static/ehs/form.html
++++ b/app/static/ehs/form.html
+@@ -19,7 +19,7 @@
+       <div class="app-header__spacer"></div>
+       <div id="user-pill"></div>
+       <a href="/ehs/" class="app-header__btn">All Forms</a>
+-      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
++      <a href="/" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+       <a href="/auth/logout" class="app-header__btn">Logout</a>
+     </div>
+   </header>
+diff --git a/app/static/ehs/submissions.html b/app/static/ehs/submissions.html
+index b1b4c73..40d0f1d 100644
+--- a/app/static/ehs/submissions.html
++++ b/app/static/ehs/submissions.html
+@@ -22,7 +22,7 @@
+       <div class="app-header__spacer"></div>
+       <div id="user-pill"></div>
+       <a href="/ehs/" class="app-header__btn">All Forms</a>
+-      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
++      <a href="/" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+       <a href="/auth/logout" class="app-header__btn">Logout</a>
+     </div>
+   </header>
