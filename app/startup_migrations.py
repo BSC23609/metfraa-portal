@@ -67,6 +67,10 @@ EXPENSE_PARITY_MIGRATIONS = [
     "UPDATE expense_submissions SET advance_stage = 'accounts_pay' "
     "WHERE form_type = 'met_advance' AND status = 'advance_approved' AND advance_stage IS NULL",
 ]
+EXPENSE_PARITY_MIGRATIONS += [
+    "CREATE INDEX IF NOT EXISTS ix_expense_pending_uploads_token "
+    "ON expense_pending_uploads (upload_token)",
+]
 STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + EXPENSE_PARITY_MIGRATIONS
 
 

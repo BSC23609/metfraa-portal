@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Float, Date, DateTime, Boolean, Text,
+    Column, Integer, String, Float, Date, DateTime, Boolean, Text, LargeBinary,
     ForeignKey, JSON, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
@@ -575,6 +575,29 @@ class ExpenseConsolidatedReport(Base):
     mgmt_rejected_reason = Column(Text, nullable=True)
     accounts_sent_at = Column(String(32), nullable=True)
     accounts_email_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    employee = relationship("Employee", foreign_keys=[employee_id])
+
+
+class ExpensePendingUpload(Base):
+    """A bill uploaded before its submission exists.
+
+    The source app wrote these to a mounted disk and kept the path. Vercel
+    has no writable disk, so the bytes live here keyed by the SPA's
+    upload_token and are moved to OneDrive when the form is submitted.
+    Rows are deleted once claimed (or by the cleanup of an abandoned token).
+    """
+    __tablename__ = "expense_pending_uploads"
+
+    id = Column(Integer, primary_key=True)
+    upload_token = Column(String(64), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    filename = Column(String(300), nullable=False)
+    mime_type = Column(String(100), default="application/octet-stream")
+    size_bytes = Column(Integer, default=0)
+    row_idx = Column(Integer, nullable=True)
+    content = Column(LargeBinary, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     employee = relationship("Employee", foreign_keys=[employee_id])
