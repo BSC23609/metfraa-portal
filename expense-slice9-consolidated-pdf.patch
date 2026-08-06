@@ -1,0 +1,274 @@
+diff --git a/app/routes/expense_ui.py b/app/routes/expense_ui.py
+index 4e8fc46..38908f6 100644
+--- a/app/routes/expense_ui.py
++++ b/app/routes/expense_ui.py
+@@ -1731,6 +1731,32 @@ def api_admin_employees(request: Request, all: str | None = None,
+ 
+ TERMINAL_GOOD = ("approved", "settled", "settled_offline", "archived")
+ 
++def _build_consolidated(db: Session, r: ExpenseConsolidatedReport) -> str | None:
++    """Render the consolidated PDF and push it to OneDrive. Fail-soft."""
++    try:
++        from ..routes.expense import _artifacts
++        art = _artifacts()
++        emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
++        rows = (db.query(ExpenseSubmission)
++                .filter(ExpenseSubmission.id.in_(list(r.submission_ids or [])))
++                .order_by(ExpenseSubmission.submitted_at_ist).all())
++        pdf, pages = art.build_consolidated_pdf(
++            r, {"name": emp.name if emp else "", "email": emp.email if emp else "",
++                "code": emp.employee_code if emp else ""}, rows)
++        safe = (emp.employee_code if emp and emp.employee_code else str(r.employee_id))
++        path = (f"{art.expense_root()}/{r.period}/_Consolidated/"
++                f"{safe}_{r.period}.pdf")
++        info = _od.upload_to_path(pdf, path, "application/pdf")
++        r.pdf_web_url = (info or {}).get("webUrl") or path
++        r.pdf_page_count = pages or None
++        return r.pdf_web_url
++    except Exception as e:
++        log.error("[consolidated-pdf] build failed for report %s: %s", r.id, e,
++                  exc_info=True)
++        return None
++
++
++
+ 
+ def _rollup_for_period(db: Session, period: str) -> list[dict]:
+     """Port of listMonthlySummaryForPeriod, including the payable CASE:
+@@ -1920,6 +1946,7 @@ async def api_send_for_approval(request: Request, bg: BackgroundTasks,
+     r.mgmt_rejected_reason = None
+     if not existing:
+         db.add(r)
++    _build_consolidated(db, r)
+     db.commit()
+     err = None
+     try:
+@@ -2020,11 +2047,15 @@ def api_regenerate_pdf(report_id: int, request: Request,
+         return _err(404, "Not found")
+     if r.status != "pending_mgmt":
+         return _err(400, f"Can only regenerate while pending_mgmt — report is {r.status}")
+-    return _err(501, "PDF generation lands with the artifacts slice.")
++    url = _build_consolidated(db, r)
++    db.commit()
++    if not url:
++        return _err(502, "PDF generation failed — see server logs.")
++    return {"ok": True, "pdf_path": url, "pdf_page_count": r.pdf_page_count}
+ 
+ 
+ @router.post("/api/admin/consolidated/{report_id}/resend-email")
+-def api_resend_email(report_id: int, request: Request,
++def api_resend_email(report_id: int, request: Request, bg: BackgroundTasks,
+                      user=Depends(get_optional_user), db: Session = Depends(get_db)):
+     blocked = _admin_guard(request, user, db)
+     if blocked:
+@@ -2033,7 +2064,22 @@ def api_resend_email(report_id: int, request: Request,
+          .filter(ExpenseConsolidatedReport.id == report_id).first())
+     if not r:
+         return _err(404, "Not found")
+-    return _err(501, "Email delivery lands with the notifications slice.")
++    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
++    name = emp.name if emp else ""
++    try:
++        if r.status == "pending_mgmt":
++            notify_consolidated_for_review(bg, r, name)
++            target = "management"
++        elif r.status == "approved":
++            notify_consolidated_to_accounts(bg, r, name)
++            target = "accounts"
++        else:
++            return _err(400, f"Nothing to resend for a report in '{r.status}'.")
++    except Exception as e:
++        return _err(502, f"Resend failed: {e}")
++    r.mgmt_emailed_at = r.mgmt_emailed_at or _ist_now()
++    db.commit()
++    return {"ok": True, "resent_to": target}
+ 
+ 
+ # ============================================================================
+@@ -2284,3 +2330,28 @@ async def api_smtp_test_send(request: Request, user=Depends(get_optional_user),
+             "ok": False, "error": "SMTP not configured — set SMTP_USER and SMTP_PASS.",
+             "code": None})
+     return {"ok": True, "to": to}
++
++
++@router.get("/api/admin/consolidated/{report_id}/pdf")
++def api_consolidated_pdf(report_id: int, request: Request,
++                         user=Depends(get_optional_user), db: Session = Depends(get_db)):
++    blocked = _admin_guard(request, user, db)
++    if blocked:
++        return blocked
++    r = (db.query(ExpenseConsolidatedReport)
++         .filter(ExpenseConsolidatedReport.id == report_id).first())
++    if not r:
++        return _err(404, "Not found")
++    if not r.pdf_web_url:
++        return _err(404, "No PDF has been generated for this report yet.")
++    path = r.pdf_web_url
++    if path.startswith("http"):
++        # Stored as a share URL — the caller can open it directly.
++        return {"pdf_path": path}
++    data = _od.download_from_path(path)
++    if data is None:
++        return _err(404, "PDF not found in OneDrive")
++    from fastapi.responses import Response as _R
++    return _R(content=data, media_type="application/pdf",
++              headers={"Content-Disposition":
++                       f'inline; filename="consolidated-{r.period}.pdf"'})
+diff --git a/app/services/expense_artifacts.py b/app/services/expense_artifacts.py
+index 4603500..ab14759 100644
+--- a/app/services/expense_artifacts.py
++++ b/app/services/expense_artifacts.py
+@@ -197,3 +197,153 @@ def append_expense_log(sub, form_code: str, bill_links: list[str], pdf_link: str
+     wb.save(buf)
+     onedrive.upload_to_path(buf.getvalue(), path, XLSX_CT)
+     log.info(f"[expense-log] appended {sub.reference} to {path}")
++
++
++# ============================================================================
++# Consolidated monthly report PDF
++#
++# Deliberate deviation from the source, flagged in the port spec: the Node
++# builder MERGED each claim's stored PDF and its bill files into one document
++# using pdf-lib. Doing that here would mean downloading N PDFs from OneDrive
++# plus every bill, then merging — on Vercel that is both slow (60s ceiling)
++# and fragile (one unreachable bill breaks the whole report).
++#
++# Instead the report is RENDERED in one pass from the submission rows: cover,
++# contents table, then a detail block per claim. Same information, one build,
++# no network fan-out. Bills stay linked from each claim's own PDF in OneDrive.
++# ============================================================================
++
++def _inr(n) -> str:
++    try:
++        v = float(n or 0)
++    except (TypeError, ValueError):
++        v = 0.0
++    return f"Rs. {v:,.2f}"
++
++
++def build_consolidated_pdf(report, employee, rows: list) -> tuple[bytes, int]:
++    """rows: the ExpenseSubmission objects included in this report.
++
++    Returns (pdf_bytes, page_count).
++    """
++    from reportlab.lib import colors
++    from reportlab.lib.pagesizes import A4
++    from reportlab.lib.styles import ParagraphStyle
++    from reportlab.lib.units import mm
++    from reportlab.platypus import (PageBreak, Paragraph, SimpleDocTemplate,
++                                    Spacer, Table, TableStyle)
++
++    INK = colors.HexColor("#1a2332")
++    MUTED = colors.HexColor("#6b7280")
++    BRAND = colors.HexColor("#005B96")
++
++    buf = io.BytesIO()
++    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
++                            topMargin=18 * mm, bottomMargin=16 * mm,
++                            title=f"Consolidated Report {report.period}")
++    h1 = ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=20, textColor=INK,
++                        spaceAfter=2)
++    lbl = ParagraphStyle("lbl", fontName="Helvetica-Bold", fontSize=8, textColor=MUTED,
++                         spaceAfter=2)
++    big = ParagraphStyle("big", fontName="Helvetica-Bold", fontSize=15, textColor=INK)
++    body = ParagraphStyle("body", fontName="Helvetica", fontSize=9.5, textColor=INK,
++                          leading=13)
++    sec = ParagraphStyle("sec", fontName="Helvetica-Bold", fontSize=12, textColor=BRAND,
++                         spaceBefore=6, spaceAfter=4)
++
++    total = float(report.total_amount or 0)
++    negative = total < 0
++    el = [
++        Paragraph("CONSOLIDATED REPORT", h1),
++        Paragraph(report.period or "", ParagraphStyle("p", fontName="Helvetica",
++                                                      fontSize=12, textColor=MUTED)),
++        Spacer(1, 8 * mm),
++        Paragraph("EMPLOYEE", lbl),
++        Paragraph(employee.get("name") or "-", big),
++        Paragraph(" · ".join(x for x in (employee.get("email"), employee.get("code")) if x),
++                  body),
++        Spacer(1, 6 * mm),
++        Paragraph("NET OWED BACK BY EMPLOYEE" if negative else "TOTAL PAYABLE", lbl),
++        Paragraph(_inr(abs(total)), ParagraphStyle(
++            "tot", fontName="Helvetica-Bold", fontSize=22,
++            textColor=colors.HexColor("#b91c1c") if negative else INK)),
++        Paragraph(f"{report.submission_count} claim"
++                  f"{'' if report.submission_count == 1 else 's'}", body),
++        Spacer(1, 6 * mm),
++        Paragraph("STATUS", lbl),
++        Paragraph((report.status or "").replace("_", " ").title(), big),
++        Spacer(1, 6 * mm),
++    ]
++    for label, who, when in (("Sent by HR", report.hr_approved_by, report.hr_approved_at),
++                             ("Approved by Mgmt", report.mgmt_approved_by,
++                              report.mgmt_approved_at)):
++        if who:
++            el.append(Paragraph(f"<b>{label}:</b> {who} · {when or ''}", body))
++    el.append(Spacer(1, 8 * mm))
++
++    # ---- contents ----
++    el.append(Paragraph("Contents", sec))
++    head = ["#", "Reference", "Form", "Submitted", "Status", "Amount"]
++    data = [head]
++    for i, s in enumerate(rows, 1):
++        if s.status == "settled" and s.form_type == "met_advance":
++            amt = float(s.differential_amount or 0)
++        elif s.status == "settled":
++            amt = float((s.actuals or {}).get("actual_amount") or s.total_amount or 0)
++        else:
++            amt = float(s.total_amount or 0)
++        data.append([str(i), s.reference, (s.form_type or "").replace("met_", ""),
++                     (s.submitted_at_ist or "")[:10],
++                     (s.status or "").replace("_", " "), _inr(amt)])
++    t = Table(data, colWidths=[10 * mm, 42 * mm, 26 * mm, 24 * mm, 30 * mm, 30 * mm],
++              repeatRows=1)
++    t.setStyle(TableStyle([
++        ("BACKGROUND", (0, 0), (-1, 0), BRAND),
++        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
++        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
++        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
++        ("FONTSIZE", (0, 0), (-1, -1), 8),
++        ("ALIGN", (5, 0), (5, -1), "RIGHT"),
++        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
++        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f6f8fa")]),
++        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
++    ]))
++    el.append(t)
++
++    # ---- per-claim detail ----
++    for i, s in enumerate(rows, 1):
++        el.append(PageBreak())
++        el.append(Paragraph(f"{i}. {s.reference}", sec))
++        meta = [["Form", (s.form_type or "").replace("met_", "")],
++                ["Period", s.period or "-"],
++                ["Submitted", s.submitted_at_ist or "-"],
++                ["Status", (s.status or "").replace("_", " ")],
++                ["Claimed", _inr(s.total_amount)]]
++        if s.status == "settled":
++            meta.append(["Actuals", _inr((s.actuals or {}).get("actual_amount"))])
++            if s.differential_amount is not None:
++                meta.append(["Differential", _inr(s.differential_amount)])
++        if s.reviewed_by:
++            meta.append(["Reviewed by", s.reviewed_by])
++        mt = Table(meta, colWidths=[32 * mm, 130 * mm])
++        mt.setStyle(TableStyle([
++            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
++            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
++            ("FONTSIZE", (0, 0), (-1, -1), 9),
++            ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#e5e7eb")),
++            ("VALIGN", (0, 0), (-1, -1), "TOP"),
++        ]))
++        el.append(mt)
++        el.append(Spacer(1, 4 * mm))
++        try:
++            el.extend(_payload_elements(s.form_type, s.payload or {}, 162 * mm))
++        except Exception:
++            el.append(Paragraph("(claim detail unavailable)", body))
++        if s.pdf_web_url:
++            el.append(Spacer(1, 3 * mm))
++            el.append(Paragraph(
++                f'<font color="#005B96"><a href="{s.pdf_web_url}">'
++                "Open the individual claim PDF (with bills) in OneDrive</a></font>", body))
++
++    doc.build(el)
++    return buf.getvalue(), doc.page

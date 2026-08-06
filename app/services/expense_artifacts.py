@@ -197,3 +197,153 @@ def append_expense_log(sub, form_code: str, bill_links: list[str], pdf_link: str
     wb.save(buf)
     onedrive.upload_to_path(buf.getvalue(), path, XLSX_CT)
     log.info(f"[expense-log] appended {sub.reference} to {path}")
+
+
+# ============================================================================
+# Consolidated monthly report PDF
+#
+# Deliberate deviation from the source, flagged in the port spec: the Node
+# builder MERGED each claim's stored PDF and its bill files into one document
+# using pdf-lib. Doing that here would mean downloading N PDFs from OneDrive
+# plus every bill, then merging — on Vercel that is both slow (60s ceiling)
+# and fragile (one unreachable bill breaks the whole report).
+#
+# Instead the report is RENDERED in one pass from the submission rows: cover,
+# contents table, then a detail block per claim. Same information, one build,
+# no network fan-out. Bills stay linked from each claim's own PDF in OneDrive.
+# ============================================================================
+
+def _inr(n) -> str:
+    try:
+        v = float(n or 0)
+    except (TypeError, ValueError):
+        v = 0.0
+    return f"Rs. {v:,.2f}"
+
+
+def build_consolidated_pdf(report, employee, rows: list) -> tuple[bytes, int]:
+    """rows: the ExpenseSubmission objects included in this report.
+
+    Returns (pdf_bytes, page_count).
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (PageBreak, Paragraph, SimpleDocTemplate,
+                                    Spacer, Table, TableStyle)
+
+    INK = colors.HexColor("#1a2332")
+    MUTED = colors.HexColor("#6b7280")
+    BRAND = colors.HexColor("#005B96")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
+                            topMargin=18 * mm, bottomMargin=16 * mm,
+                            title=f"Consolidated Report {report.period}")
+    h1 = ParagraphStyle("h1", fontName="Helvetica-Bold", fontSize=20, textColor=INK,
+                        spaceAfter=2)
+    lbl = ParagraphStyle("lbl", fontName="Helvetica-Bold", fontSize=8, textColor=MUTED,
+                         spaceAfter=2)
+    big = ParagraphStyle("big", fontName="Helvetica-Bold", fontSize=15, textColor=INK)
+    body = ParagraphStyle("body", fontName="Helvetica", fontSize=9.5, textColor=INK,
+                          leading=13)
+    sec = ParagraphStyle("sec", fontName="Helvetica-Bold", fontSize=12, textColor=BRAND,
+                         spaceBefore=6, spaceAfter=4)
+
+    total = float(report.total_amount or 0)
+    negative = total < 0
+    el = [
+        Paragraph("CONSOLIDATED REPORT", h1),
+        Paragraph(report.period or "", ParagraphStyle("p", fontName="Helvetica",
+                                                      fontSize=12, textColor=MUTED)),
+        Spacer(1, 8 * mm),
+        Paragraph("EMPLOYEE", lbl),
+        Paragraph(employee.get("name") or "-", big),
+        Paragraph(" · ".join(x for x in (employee.get("email"), employee.get("code")) if x),
+                  body),
+        Spacer(1, 6 * mm),
+        Paragraph("NET OWED BACK BY EMPLOYEE" if negative else "TOTAL PAYABLE", lbl),
+        Paragraph(_inr(abs(total)), ParagraphStyle(
+            "tot", fontName="Helvetica-Bold", fontSize=22,
+            textColor=colors.HexColor("#b91c1c") if negative else INK)),
+        Paragraph(f"{report.submission_count} claim"
+                  f"{'' if report.submission_count == 1 else 's'}", body),
+        Spacer(1, 6 * mm),
+        Paragraph("STATUS", lbl),
+        Paragraph((report.status or "").replace("_", " ").title(), big),
+        Spacer(1, 6 * mm),
+    ]
+    for label, who, when in (("Sent by HR", report.hr_approved_by, report.hr_approved_at),
+                             ("Approved by Mgmt", report.mgmt_approved_by,
+                              report.mgmt_approved_at)):
+        if who:
+            el.append(Paragraph(f"<b>{label}:</b> {who} · {when or ''}", body))
+    el.append(Spacer(1, 8 * mm))
+
+    # ---- contents ----
+    el.append(Paragraph("Contents", sec))
+    head = ["#", "Reference", "Form", "Submitted", "Status", "Amount"]
+    data = [head]
+    for i, s in enumerate(rows, 1):
+        if s.status == "settled" and s.form_type == "met_advance":
+            amt = float(s.differential_amount or 0)
+        elif s.status == "settled":
+            amt = float((s.actuals or {}).get("actual_amount") or s.total_amount or 0)
+        else:
+            amt = float(s.total_amount or 0)
+        data.append([str(i), s.reference, (s.form_type or "").replace("met_", ""),
+                     (s.submitted_at_ist or "")[:10],
+                     (s.status or "").replace("_", " "), _inr(amt)])
+    t = Table(data, colWidths=[10 * mm, 42 * mm, 26 * mm, 24 * mm, 30 * mm, 30 * mm],
+              repeatRows=1)
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), BRAND),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (5, 0), (5, -1), "RIGHT"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f6f8fa")]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    el.append(t)
+
+    # ---- per-claim detail ----
+    for i, s in enumerate(rows, 1):
+        el.append(PageBreak())
+        el.append(Paragraph(f"{i}. {s.reference}", sec))
+        meta = [["Form", (s.form_type or "").replace("met_", "")],
+                ["Period", s.period or "-"],
+                ["Submitted", s.submitted_at_ist or "-"],
+                ["Status", (s.status or "").replace("_", " ")],
+                ["Claimed", _inr(s.total_amount)]]
+        if s.status == "settled":
+            meta.append(["Actuals", _inr((s.actuals or {}).get("actual_amount"))])
+            if s.differential_amount is not None:
+                meta.append(["Differential", _inr(s.differential_amount)])
+        if s.reviewed_by:
+            meta.append(["Reviewed by", s.reviewed_by])
+        mt = Table(meta, colWidths=[32 * mm, 130 * mm])
+        mt.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#e5e7eb")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        el.append(mt)
+        el.append(Spacer(1, 4 * mm))
+        try:
+            el.extend(_payload_elements(s.form_type, s.payload or {}, 162 * mm))
+        except Exception:
+            el.append(Paragraph("(claim detail unavailable)", body))
+        if s.pdf_web_url:
+            el.append(Spacer(1, 3 * mm))
+            el.append(Paragraph(
+                f'<font color="#005B96"><a href="{s.pdf_web_url}">'
+                "Open the individual claim PDF (with bills) in OneDrive</a></font>", body))
+
+    doc.build(el)
+    return buf.getvalue(), doc.page

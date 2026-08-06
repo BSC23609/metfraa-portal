@@ -1731,6 +1731,32 @@ def api_admin_employees(request: Request, all: str | None = None,
 
 TERMINAL_GOOD = ("approved", "settled", "settled_offline", "archived")
 
+def _build_consolidated(db: Session, r: ExpenseConsolidatedReport) -> str | None:
+    """Render the consolidated PDF and push it to OneDrive. Fail-soft."""
+    try:
+        from ..routes.expense import _artifacts
+        art = _artifacts()
+        emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+        rows = (db.query(ExpenseSubmission)
+                .filter(ExpenseSubmission.id.in_(list(r.submission_ids or [])))
+                .order_by(ExpenseSubmission.submitted_at_ist).all())
+        pdf, pages = art.build_consolidated_pdf(
+            r, {"name": emp.name if emp else "", "email": emp.email if emp else "",
+                "code": emp.employee_code if emp else ""}, rows)
+        safe = (emp.employee_code if emp and emp.employee_code else str(r.employee_id))
+        path = (f"{art.expense_root()}/{r.period}/_Consolidated/"
+                f"{safe}_{r.period}.pdf")
+        info = _od.upload_to_path(pdf, path, "application/pdf")
+        r.pdf_web_url = (info or {}).get("webUrl") or path
+        r.pdf_page_count = pages or None
+        return r.pdf_web_url
+    except Exception as e:
+        log.error("[consolidated-pdf] build failed for report %s: %s", r.id, e,
+                  exc_info=True)
+        return None
+
+
+
 
 def _rollup_for_period(db: Session, period: str) -> list[dict]:
     """Port of listMonthlySummaryForPeriod, including the payable CASE:
@@ -1920,6 +1946,7 @@ async def api_send_for_approval(request: Request, bg: BackgroundTasks,
     r.mgmt_rejected_reason = None
     if not existing:
         db.add(r)
+    _build_consolidated(db, r)
     db.commit()
     err = None
     try:
@@ -2020,11 +2047,15 @@ def api_regenerate_pdf(report_id: int, request: Request,
         return _err(404, "Not found")
     if r.status != "pending_mgmt":
         return _err(400, f"Can only regenerate while pending_mgmt — report is {r.status}")
-    return _err(501, "PDF generation lands with the artifacts slice.")
+    url = _build_consolidated(db, r)
+    db.commit()
+    if not url:
+        return _err(502, "PDF generation failed — see server logs.")
+    return {"ok": True, "pdf_path": url, "pdf_page_count": r.pdf_page_count}
 
 
 @router.post("/api/admin/consolidated/{report_id}/resend-email")
-def api_resend_email(report_id: int, request: Request,
+def api_resend_email(report_id: int, request: Request, bg: BackgroundTasks,
                      user=Depends(get_optional_user), db: Session = Depends(get_db)):
     blocked = _admin_guard(request, user, db)
     if blocked:
@@ -2033,7 +2064,22 @@ def api_resend_email(report_id: int, request: Request,
          .filter(ExpenseConsolidatedReport.id == report_id).first())
     if not r:
         return _err(404, "Not found")
-    return _err(501, "Email delivery lands with the notifications slice.")
+    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+    name = emp.name if emp else ""
+    try:
+        if r.status == "pending_mgmt":
+            notify_consolidated_for_review(bg, r, name)
+            target = "management"
+        elif r.status == "approved":
+            notify_consolidated_to_accounts(bg, r, name)
+            target = "accounts"
+        else:
+            return _err(400, f"Nothing to resend for a report in '{r.status}'.")
+    except Exception as e:
+        return _err(502, f"Resend failed: {e}")
+    r.mgmt_emailed_at = r.mgmt_emailed_at or _ist_now()
+    db.commit()
+    return {"ok": True, "resent_to": target}
 
 
 # ============================================================================
@@ -2284,3 +2330,28 @@ async def api_smtp_test_send(request: Request, user=Depends(get_optional_user),
             "ok": False, "error": "SMTP not configured — set SMTP_USER and SMTP_PASS.",
             "code": None})
     return {"ok": True, "to": to}
+
+
+@router.get("/api/admin/consolidated/{report_id}/pdf")
+def api_consolidated_pdf(report_id: int, request: Request,
+                         user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    r = (db.query(ExpenseConsolidatedReport)
+         .filter(ExpenseConsolidatedReport.id == report_id).first())
+    if not r:
+        return _err(404, "Not found")
+    if not r.pdf_web_url:
+        return _err(404, "No PDF has been generated for this report yet.")
+    path = r.pdf_web_url
+    if path.startswith("http"):
+        # Stored as a share URL — the caller can open it directly.
+        return {"pdf_path": path}
+    data = _od.download_from_path(path)
+    if data is None:
+        return _err(404, "PDF not found in OneDrive")
+    from fastapi.responses import Response as _R
+    return _R(content=data, media_type="application/pdf",
+              headers={"Content-Disposition":
+                       f'inline; filename="consolidated-{r.period}.pdf"'})
