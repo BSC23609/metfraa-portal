@@ -410,7 +410,8 @@ class ExpenseSubmission(Base):
     payload = Column(JSON, default=dict)                                      # validated form data (source of truth)
     total_amount = Column(Float, default=0.0, nullable=False)
     # pending | approved | draft (returned for edit) | rejected |
-    # advance_approved | settlement_pending | settled | settlement_rejected
+    # advance_approved | settlement_pending | settled | settlement_rejected |
+    # advance_hr_verified | advance_mgmt_approved | settled_offline
     status = Column(String(24), default="pending", nullable=False, index=True)
 
     reviewed_by = Column(String(200), nullable=True)
@@ -424,6 +425,34 @@ class ExpenseSubmission(Base):
     settled_at_ist = Column(String(32), nullable=True)
     settlement_reviewed_by = Column(String(200), nullable=True)
     settlement_note = Column(Text, nullable=True)
+
+    # --- Travel-advance 3-stage chain (source: submissions.advance_stage) ---
+    #   'hr_review'    -> status pending
+    #   'mgmt_review'  -> status advance_hr_verified
+    #   'accounts_pay' -> status advance_mgmt_approved
+    advance_stage = Column(String(24), nullable=True, index=True)
+    advance_hr_verified_by = Column(String(200), nullable=True)
+    advance_hr_verified_at = Column(String(32), nullable=True)
+    advance_mgmt_approved_by = Column(String(200), nullable=True)
+    advance_mgmt_approved_at = Column(String(32), nullable=True)
+    advance_paid_by = Column(String(200), nullable=True)
+    advance_paid_at = Column(String(32), nullable=True)
+
+    # Settlement deadline = trip_end_date + 72h. Late settlements still go
+    # through; the flag and delta are recorded, not blocked.
+    trip_end_date = Column(String(32), nullable=True)
+    late_settlement = Column(Boolean, default=False)
+    late_hours = Column(Float, nullable=True)
+    # Computed when HR approves the settlement (actuals vs advance).
+    differential_amount = Column(Float, nullable=True)
+
+    # 1 = period lock waived for this row (set when a consolidated report
+    # is rejected and its submissions are returned to the employee).
+    deadline_bypass = Column(Boolean, default=False)
+
+    # Dashboard categorisation
+    purpose_category = Column(String(32), nullable=True, index=True)
+    purpose_other_reason = Column(Text, nullable=True)
 
     pdf_web_url = Column(Text, nullable=True)
     submitted_at_ist = Column(String(32), nullable=False)
@@ -488,3 +517,64 @@ class EmployeeAccess(Base):
     expense_access = Column(Boolean, default=True, nullable=False)
     ehs_access = Column(Boolean, default=True, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ExpensePeriodOverride(Base):
+    """A time-boxed waiver of the monthly period lock.
+
+    employee_id NULL means the override is global (applies to everyone).
+    A row is inactive once now() >= expires_at, or once revoked_at is set.
+    """
+    __tablename__ = "expense_period_overrides"
+
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    period = Column(String(7), nullable=False, index=True)      # YYYY-MM
+    expires_at = Column(String(32), nullable=False)
+    granted_by = Column(String(200), nullable=False)
+    granted_at = Column(String(32), nullable=False)
+    revoked_at = Column(String(32), nullable=True)
+    revoked_by = Column(String(200), nullable=True)
+    reason = Column(Text, nullable=True)
+
+    employee = relationship("Employee", foreign_keys=[employee_id])
+
+
+class ExpenseConsolidatedReport(Base):
+    """One consolidated monthly report per (employee, period).
+
+    Aggregates that employee's approved submissions for the month into a
+    single navigable PDF, then runs the HR -> Management -> Accounts chain:
+      draft -> pending_hr -> pending_mgmt -> approved (sent to accounts)
+      rejected at either stage returns the underlying submissions to the
+      employee as draft with deadline_bypass set.
+    """
+    __tablename__ = "expense_consolidated_reports"
+    __table_args__ = (UniqueConstraint("employee_id", "period",
+                                       name="uq_expense_consolidated_employee_period"),)
+
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    period = Column(String(7), nullable=False, index=True)
+    status = Column(String(24), nullable=False, default="draft", index=True)
+    total_amount = Column(Float, nullable=False, default=0.0)
+    submission_count = Column(Integer, nullable=False, default=0)
+    submission_ids = Column(JSON, default=list)
+    pdf_web_url = Column(Text, nullable=True)      # OneDrive path (Vercel has no disk)
+    pdf_page_count = Column(Integer, nullable=True)
+    generated_at = Column(String(32), nullable=False)
+    generated_by = Column(String(200), nullable=True)   # 'cron' or an admin email
+
+    hr_emailed_at = Column(String(32), nullable=True)
+    hr_approved_by = Column(String(200), nullable=True)
+    hr_approved_at = Column(String(32), nullable=True)
+    hr_rejected_reason = Column(Text, nullable=True)
+    mgmt_emailed_at = Column(String(32), nullable=True)
+    mgmt_approved_by = Column(String(200), nullable=True)
+    mgmt_approved_at = Column(String(32), nullable=True)
+    mgmt_rejected_reason = Column(Text, nullable=True)
+    accounts_sent_at = Column(String(32), nullable=True)
+    accounts_email_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    employee = relationship("Employee", foreign_keys=[employee_id])

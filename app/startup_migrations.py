@@ -45,6 +45,31 @@ OPTIONAL_MIGRATIONS = {
 }
 
 
+# --- Expense parity Slice 0: advance chain, period lock, consolidation ---
+EXPENSE_PARITY_MIGRATIONS = [
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_stage VARCHAR(24)",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_hr_verified_by VARCHAR(200)",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_hr_verified_at VARCHAR(32)",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_mgmt_approved_by VARCHAR(200)",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_mgmt_approved_at VARCHAR(32)",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_paid_by VARCHAR(200)",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_paid_at VARCHAR(32)",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS trip_end_date VARCHAR(32)",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS late_settlement BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS late_hours DOUBLE PRECISION",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS differential_amount DOUBLE PRECISION",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS deadline_bypass BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS purpose_category VARCHAR(32)",
+    "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS purpose_other_reason TEXT",
+    "CREATE INDEX IF NOT EXISTS ix_expense_submissions_advance_stage ON expense_submissions (advance_stage)",
+    "CREATE INDEX IF NOT EXISTS ix_expense_submissions_purpose_category ON expense_submissions (purpose_category)",
+    # Existing open advances predate the 3-stage chain; they sit at the pay step.
+    "UPDATE expense_submissions SET advance_stage = 'accounts_pay' "
+    "WHERE form_type = 'met_advance' AND status = 'advance_approved' AND advance_stage IS NULL",
+]
+STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + EXPENSE_PARITY_MIGRATIONS
+
+
 def run_startup_migrations() -> None:
     """Apply pending column additions. Runs on every startup — safe.
 
