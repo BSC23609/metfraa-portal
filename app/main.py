@@ -28,6 +28,7 @@ from .routes import cron as cron_routes
 from .routes import ehs as ehs_routes
 from .routes import ehs_ui as ehs_ui_routes
 from .routes import expense as expense_routes
+from .routes import expense_ui as expense_ui_routes
 from .routes import people as people_routes
 from .services.scheduler import start_scheduler
 from .startup_migrations import run_startup_migrations
@@ -89,6 +90,16 @@ for _sub in ("css", "js", "img"):
     else:
         logging.getLogger(__name__).error(
             "EHS static dir missing, /ehs/%s will 404: %s", _sub, _dir)
+
+# Expense parity assets — reference served these at /css /js /assets.
+_EXP_STATIC = _STATIC / "expense"
+for _sub in ("css", "js", "assets"):
+    _dir = _EXP_STATIC / _sub
+    if _dir.is_dir():
+        app.mount(f"/expense/{_sub}", StaticFiles(directory=str(_dir)), name=f"expense-{_sub}")
+    else:
+        logging.getLogger(__name__).error(
+            "Expense static dir missing, /expense/%s will 404: %s", _sub, _dir)
 templates = Jinja2Templates(directory=str(pathlib.Path(__file__).resolve().parent / "templates"))
 
 # Routers
@@ -102,6 +113,7 @@ app.include_router(site_visits_routes.router)
 app.include_router(cron_routes.router)
 app.include_router(ehs_ui_routes.router)   # parity pages + contract (must precede ehs_routes)
 app.include_router(ehs_routes.router)
+app.include_router(expense_ui_routes.router)   # parity SPA + bootstrap (precedes expense_routes)
 app.include_router(expense_routes.router)
 app.include_router(people_routes.router)
 

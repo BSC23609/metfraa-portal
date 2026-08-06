@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Expense Portal · The Bharat Steel Group</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/expense/css/app.css">
+</head>
+<body>
+
+<!-- ============== TOP BAR ============== -->
+<header class="topbar" id="topbar">
+  <div class="topbar-left">
+    <button class="topbar-back" id="backBtn" title="Go back" style="display:none;" aria-label="Go back">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </button>
+    <img src="/expense/assets/group-logo.png" alt="The Bharat Steel Group" class="logo" data-nav="landing" />
+    <div class="topbar-divider" id="tbDivider" style="display:none;"></div>
+    <img src="" alt="" class="logo company" id="tbCompanyLogo" style="display:none;" />
+  </div>
+  <div class="topbar-right">
+    <span class="topbar-tag" id="tbTag">EXPENSE PORTAL</span>
+    <div class="user-chip" id="userChip">
+      <span class="name" id="userName">…</span>
+      <span class="avatar" id="userAvatar">·</span>
+      <div class="user-menu" id="userMenu">
+        <div class="info">
+          <div class="full-name" id="umName">…</div>
+          <div class="email" id="umEmail">…</div>
+          <span class="level" id="umLevel">…</span>
+        </div>
+        <form method="POST" action="/auth/logout">
+          <button type="submit">Sign Out</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="app" id="app">
+
+<!-- ============== LANDING ============== -->
+<section class="page" id="page-landing">
+  <div class="landing-wrap">
+    <div class="landing-hero">
+      <div class="group-logo-wrap">
+        <img src="/expense/assets/group-logo.png" alt="The Bharat Steel Group" />
+      </div>
+      <div class="tagline">EXPENSE &amp; CONVEYANCE PORTAL</div>
+    </div>
+    <div class="company-grid" id="companyGrid">
+      <!-- rendered by JS, locked to user's company -->
+    </div>
+  </div>
+</section>
+
+<!-- ============== COMPANY HUB ============== -->
+<section class="page" id="page-hub">
+  <div class="container">
+    <div class="hub-header">
+      <div>
+        <div class="breadcrumb"><a data-nav="landing">Home</a></div>
+        <h2 id="hubTitle">…</h2>
+      </div>
+    </div>
+    <div class="option-grid" id="optionGrid">
+      <!-- form option cards rendered by JS -->
+    </div>
+  </div>
+</section>
+
+<!-- ============== ELIGIBILITY (POLICY VIEWER) ============== -->
+<section class="page" id="page-eligibility">
+  <div class="container">
+    <div class="form-header">
+      <div>
+        <div class="breadcrumb">
+          <a data-nav="landing">Home</a>
+          <span class="sep">·</span>
+          <a data-nav="hub">Forms</a>
+        </div>
+        <h2>Check Eligibility</h2>
+      </div>
+      <button class="back-btn" data-nav="hub">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+        Back
+      </button>
+    </div>
+    <div id="policyContent"><!-- rendered by policy-renderer.js --></div>
+  </div>
+</section>
+
+<!-- ============== FORM PAGE (used for all 6 forms) ============== -->
+<section class="page" id="page-form">
+  <div class="container">
+    <div class="form-header">
+      <div>
+        <div class="breadcrumb">
+          <a data-nav="landing">Home</a>
+          <span class="sep">·</span>
+          <a data-nav="hub">Forms</a>
+        </div>
+        <h2 id="formTitle">…</h2>
+      </div>
+      <button class="back-btn" data-nav="hub">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+        Back
+      </button>
+    </div>
+
+    <div id="entitlementBanner"></div>
+
+    <!-- Form-specific body, rendered by app.js -->
+    <div id="formBody"></div>
+
+    <!-- Uploads (rendered conditionally) -->
+    <div id="uploadSection" class="card" style="display:none;">
+      <div class="card-title">Bills &amp; Supporting Documents</div>
+      <div class="upload-zone" id="uploadZone">
+        <input type="file" id="fileInput" multiple accept="image/*,.pdf" />
+        <span class="icon">📎</span>
+        <div class="text">Drop bills here or click to browse</div>
+        <div class="hint">JPG, PNG, WEBP, HEIC, or PDF · up to 10 MB each · originals embedded in the final report</div>
+      </div>
+      <div class="upload-list" id="uploadList"></div>
+    </div>
+
+    <!-- Live summary -->
+    <div class="summary-bar" id="summaryBar">
+      <div>
+        <div class="lbl">Total Claim</div>
+        <div class="grand"><span class="cur">₹</span><span id="grandTotal">0.00</span></div>
+      </div>
+      <div class="count">
+        ENTRIES
+        <span id="entryCount">0</span>
+      </div>
+    </div>
+
+    <div class="action-bar">
+      <button class="btn btn-secondary" data-nav="hub">Cancel</button>
+      <div style="display:flex; gap:12px;">
+        <button class="btn btn-primary" id="previewBtn">Preview Report</button>
+        <button class="btn btn-submit" id="submitBtn">Submit &amp; Send to HR</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== PREVIEW ============== -->
+<section class="page" id="page-preview">
+  <div class="container">
+    <div class="report-toolbar">
+      <div>
+        <div class="breadcrumb">PREVIEW</div>
+        <h2 style="font-family:Oswald;font-size:24px;text-transform:uppercase;color:var(--bsg-ink);">Final Report Preview</h2>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-secondary" id="backToForm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+          Edit
+        </button>
+        <button class="btn btn-submit" id="submitFromPreview">Confirm &amp; Submit</button>
+      </div>
+    </div>
+    <div class="report" id="reportRender"><!-- rendered by JS --></div>
+  </div>
+</section>
+
+<!-- ============== SUCCESS ============== -->
+<section class="page" id="page-success">
+  <div class="container">
+    <div class="success-wrap">
+      <div class="success-icon">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+          <path d="M20 6L9 17l-5-5"/>
+        </svg>
+      </div>
+      <h1>Submitted</h1>
+      <p>Your report has been generated and emailed to HR. A copy is also saved in your submission history.</p>
+      <div class="recipient" id="successRecipients">…</div>
+      <div class="ref-num">Reference: <strong id="successRef">—</strong></div>
+      <div class="btn-group">
+        <a class="btn btn-secondary" id="downloadPdfBtn" download>Download PDF</a>
+        <button class="btn btn-primary" data-nav="landing">Back to Home</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== MY SUBMISSIONS ============== -->
+<section class="page" id="page-history">
+  <div class="container">
+    <div class="form-header">
+      <div>
+        <div class="breadcrumb"><a data-nav="hub">Home</a></div>
+        <h2>My Submissions</h2>
+      </div>
+      <button class="btn btn-ghost" id="historyRefreshBtn" title="Refresh">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div style="overflow-x:auto;">
+        <table class="admin-table" id="historyTable">
+          <thead>
+            <tr>
+              <th>Reference</th><th>Form</th><th>Period</th>
+              <th style="text-align:right;">Amount</th><th>Status</th><th>Submitted</th>
+              <th style="text-align:right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="historyTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== OPEN TRAVEL ADVANCES ============== -->
+<section class="page" id="page-openAdvances">
+  <div class="container">
+    <div class="form-header">
+      <div>
+        <div class="breadcrumb"><a data-nav="hub">Home</a></div>
+        <h2>Open Travel Advances</h2>
+      </div>
+      <button class="btn btn-ghost" id="openAdvRefreshBtn" title="Refresh">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        Refresh
+      </button>
+    </div>
+    <p style="color:var(--bsg-muted);font-size:13px;margin-bottom:18px;">
+      Travel advances awaiting approval or settlement. Once an advance is approved and disbursed, click <strong>Settle</strong> after travel to enter the actual amount spent and attach your bills.
+    </p>
+    <div id="openAdvList"></div>
+  </div>
+</section>
+
+<!-- ============== SETTLE ADVANCE ============== -->
+<section class="page" id="page-settleAdvance">
+  <div class="container">
+    <div class="form-header">
+      <div>
+        <div class="breadcrumb"><a data-nav="openAdvances">Open Advances</a></div>
+        <h2>Settle Travel Advance</h2>
+      </div>
+    </div>
+
+    <div class="card" id="settleAdvanceSummary"></div>
+
+    <div class="card">
+      <div class="card-title">Settlement Details</div>
+      <div class="field-grid">
+        <div class="field">
+          <label for="settleTripEnd">Trip End Date <span class="req">*</span></label>
+          <input id="settleTripEnd" type="date" />
+          <div style="font-size:11px;color:var(--bsg-muted);margin-top:4px;">
+            The day your trip actually ended. Bills should be uploaded within 72 hours of this date — beyond that, the settlement is flagged as late.
+          </div>
+        </div>
+        <div class="field">
+          <label for="settleActual">Actual Amount Spent (₹) <span class="req">*</span></label>
+          <input id="settleActual" type="number" step="0.01" min="0" placeholder="0.00" />
+        </div>
+      </div>
+      <div id="settleLateWarning" style="display:none;"></div>
+      <div class="field full">
+        <label for="settleNotes">Notes (optional)</label>
+        <textarea id="settleNotes" class="ti" rows="2" placeholder="Any remarks about the trip or expenses…"></textarea>
+      </div>
+      <div id="settleDifference" class="settle-diff"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Bills &amp; Supporting Documents</div>
+      <div class="upload-zone" id="settleUploadZone">
+        <input type="file" id="settleFileInput" multiple accept="image/*,.pdf" />
+        <span class="icon">📎</span>
+        <div class="text">Drop bills here or click to browse</div>
+        <div class="hint">JPG, PNG, WEBP, HEIC, or PDF · up to 10 MB each · at least one bill is required</div>
+      </div>
+      <div class="upload-list" id="settleUploadList"></div>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn-ghost" data-nav="openAdvances">Cancel</button>
+      <button class="btn btn-submit" id="settleSubmitBtn">Submit Settlement</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============== ADMIN PANEL ============== -->
+<section class="page" id="page-admin">
+  <div class="container">
+    <div class="form-header">
+      <div>
+        <div class="breadcrumb"><a data-nav="hub">Home</a></div>
+        <h2>Admin Panel</h2>
+      </div>
+      <button class="btn btn-ghost" id="adminRefreshBtn" title="Refresh data">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        Refresh
+      </button>
+    </div>
+
+    <div class="admin-tabs">
+      <button class="admin-tab active" data-tab="dashboard">Dashboard</button>
+      <button class="admin-tab" data-tab="pending">
+        Pending Approvals <span class="tab-badge" id="pendingBadge">0</span>
+      </button>
+      <button class="admin-tab" data-tab="submissions">All Submissions</button>
+      <button class="admin-tab" data-tab="employees">Employees</button>
+      <button class="admin-tab" data-tab="projects">Projects</button>
+      <button class="admin-tab" data-tab="consolidated">Consolidated Reports</button>
+      <button class="admin-tab" data-tab="overrides">Overrides</button>
+    </div>
+
+    <!-- TAB: Dashboard -->
+    <div class="admin-tabpane active" id="tab-dashboard">
+      <div class="dash-toolbar">
+        <div class="dash-range">
+          <label for="dashFrom">From</label>
+          <input type="date" id="dashFrom" />
+          <label for="dashTo">To</label>
+          <input type="date" id="dashTo" />
+          <select id="dashPreset" class="ti" style="max-width:170px;">
+            <option value="this_month">This Month</option>
+            <option value="last_month">Last Month</option>
+            <option value="this_fy" selected>This Financial Year</option>
+            <option value="last_fy">Last Financial Year</option>
+            <option value="ytd">Year to Date (Calendar)</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <label class="dash-toggle" style="margin-left:auto;">
+          <input type="checkbox" id="dashIncludePending" />
+          Include pending / committed
+        </label>
+        <button class="btn btn-ghost" id="dashRefreshBtn" title="Refresh">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+          Refresh
+        </button>
+      </div>
+
+      <div class="dash-tiles" id="dashTiles"></div>
+
+      <div class="dash-charts">
+        <div class="card dash-chart-card">
+          <div class="card-title">Spend by Category</div>
+          <div class="dash-chart-host"><canvas id="dashChartCategory"></canvas></div>
+        </div>
+        <div class="card dash-chart-card">
+          <div class="card-title">Spend by Project</div>
+          <div class="dash-chart-host"><canvas id="dashChartProject"></canvas></div>
+        </div>
+        <div class="card dash-chart-card dash-chart-wide">
+          <div class="card-title">Spend by Employee (top 15)</div>
+          <div class="dash-chart-host" style="height:auto;min-height:380px;"><canvas id="dashChartEmployee"></canvas></div>
+        </div>
+      </div>
+      <div id="dashEmptyMsg" style="display:none;text-align:center;color:var(--bsg-muted);padding:48px;">
+        No data in this range. Try widening the date range, or include pending submissions.
+      </div>
+    </div>
+
+    <!-- TAB: Pending Approvals (folder-style by employee) -->
+    <div class="admin-tabpane" id="tab-pending">
+      <div class="admin-toolbar">
+        <input type="text" id="pendSearch" class="admin-search" placeholder="Search by employee or reference…" />
+        <select id="pendFormFilter" class="admin-search" style="flex:0 0 200px;">
+          <option value="">All expense types</option>
+        </select>
+        <select id="pendPeriodFilter" class="admin-search" style="flex:0 0 160px;">
+          <option value="">All months</option>
+        </select>
+        <span class="admin-count" id="pendCount"></span>
+        <div style="margin-left:auto;display:flex;gap:6px;">
+          <button class="btn btn-ghost" id="pendExpandAll" type="button">Expand all</button>
+          <button class="btn btn-ghost" id="pendCollapseAll" type="button">Collapse all</button>
+        </div>
+      </div>
+      <div id="pendFolders" class="employee-folders"></div>
+    </div>
+
+    <!-- TAB: All Submissions (folder-style by employee) -->
+    <div class="admin-tabpane" id="tab-submissions">
+      <div class="admin-toolbar">
+        <input type="text" id="subSearch" class="admin-search" placeholder="Search by employee or reference…" />
+        <select id="subStatusFilter" class="admin-search" style="flex:0 0 160px;">
+          <option value="">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="draft">Needs edits</option>
+          <option value="rejected">Rejected (legacy)</option>
+        </select>
+        <select id="subFormFilter" class="admin-search" style="flex:0 0 200px;">
+          <option value="">All expense types</option>
+        </select>
+        <select id="subPeriodFilter" class="admin-search" style="flex:0 0 160px;">
+          <option value="">All months</option>
+        </select>
+        <span class="admin-count" id="subCount"></span>
+        <div style="margin-left:auto;display:flex;gap:6px;">
+          <button class="btn btn-ghost" id="subExpandAll" type="button">Expand all</button>
+          <button class="btn btn-ghost" id="subCollapseAll" type="button">Collapse all</button>
+        </div>
+      </div>
+      <div id="subFolders" class="employee-folders"></div>
+    </div>
+
+    <!-- TAB: Employees -->
+    <div class="admin-tabpane" id="tab-employees">
+      <div class="admin-toolbar">
+        <input type="text" id="empSearch" class="admin-search" placeholder="Search by name, email, designation…" />
+        <label class="admin-inactive-toggle">
+          <input type="checkbox" id="showInactive" /> Show inactive
+        </label>
+        <span class="admin-count" id="empCount"></span>
+        <button class="btn btn-submit" id="addEmpBtn" style="margin-left:auto;">+ Add Employee</button>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <div style="overflow-x:auto;">
+          <table class="admin-table" id="empTable">
+            <thead>
+              <tr>
+                <th>Name</th><th>Email</th><th>Designation</th>
+                <th>Level</th><th>Login</th><th style="text-align:right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="empTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Projects -->
+    <div class="admin-tabpane" id="tab-projects">
+      <div class="admin-toolbar">
+        <span class="admin-count" id="projCount"></span>
+        <button class="btn btn-submit" id="addProjectBtn" style="margin-left:auto;">+ Add Project</button>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <div style="overflow-x:auto;">
+          <table class="admin-table" id="projTable">
+            <thead>
+              <tr>
+                <th>Name</th><th>Code</th><th>Status</th>
+                <th>Created</th><th style="text-align:right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="projTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Consolidated Reports -->
+    <div class="admin-tabpane" id="tab-consolidated">
+      <div class="admin-toolbar">
+        <label for="conMonth" style="font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:0.05em;color:var(--bsg-muted);text-transform:uppercase;font-weight:600;">Month</label>
+        <input type="month" id="conMonth" class="admin-search" style="flex:0 0 180px;" />
+        <span class="admin-count" id="conCount"></span>
+        <div style="margin-left:auto;display:flex;gap:8px;">
+          <button class="btn btn-ghost" id="conSmtpBtn" title="Verify SMTP is working — check if emails to Arasu / Accounts can actually be sent">📧 Check email…</button>
+          <button class="btn btn-ghost" id="conReopenBtn" title="Grant a global period override so this month accepts new submissions past the deadline">🔓 Reopen this month…</button>
+          <button class="btn btn-ghost" id="conRefreshBtn">Refresh</button>
+        </div>
+      </div>
+      <div class="card" style="padding:16px 20px;margin-bottom:14px;background:#f6f8fa;">
+        <div style="font-size:12px;color:var(--bsg-muted);line-height:1.6;">
+          <strong>Monthly wrap-up.</strong> Pick a month. Each employee's row is <strong>🔒 locked</strong> until every one of their submissions for the month is approved — you have to clear them individually first (Pending Approvals tab). Once nothing is pending / draft / rejected, the row unlocks and the <strong>Send for final approval</strong> button appears. Clicking it generates a single consolidated PDF (with TOC + intra-file links + your HR sign-off on the cover) and emails it to arasu@metfraa.com (CC admin@metfraa.com). After Arasu approves in the portal, the finalized PDF goes to accounts@metfraa.com (CC admin@).
+        </div>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <div style="overflow-x:auto;">
+          <table class="admin-table" id="conTable">
+            <thead>
+              <tr>
+                <th>Employee</th>
+                <th>Submissions</th>
+                <th style="text-align:right;">Approved total</th>
+                <th>Status</th>
+                <th style="text-align:right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="conTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Period Overrides -->
+    <div class="admin-tabpane" id="tab-overrides">
+      <div class="admin-toolbar">
+        <span class="admin-count" id="ovrCount"></span>
+        <button class="btn btn-submit" id="ovrGrantBtn" style="margin-left:auto;">+ Grant Override</button>
+      </div>
+      <div class="card" style="padding:16px 20px;margin-bottom:14px;background:#f6f8fa;">
+        <div style="font-size:12px;color:var(--bsg-muted);line-height:1.6;">
+          <strong>Deadline rule:</strong> submissions for a month must be filed by the <strong>2nd of the following month</strong>. Past that, the period is locked and employees can't submit unless you grant an override here. Overrides can target a single employee for a specific month, or apply to everyone (global). They expire automatically after the number of days you pick.
+        </div>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <div style="overflow-x:auto;">
+          <table class="admin-table" id="ovrTable">
+            <thead>
+              <tr>
+                <th>Scope</th>
+                <th>Period</th>
+                <th>Expires</th>
+                <th>Granted By</th>
+                <th>Reason</th>
+                <th style="text-align:right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="ovrTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div><!-- /app -->
+
+<!-- ============== OVERRIDE GRANT MODAL ============== -->
+<div class="modal-backdrop" id="ovrModalBackdrop">
+  <div class="modal" id="ovrModal" style="max-width:500px;">
+    <h3>Grant Period Override</h3>
+    <div class="field-grid" style="margin-top:8px;">
+      <div class="field full">
+        <label>Scope <span class="req">*</span></label>
+        <select id="ovrScope">
+          <option value="employee">One employee</option>
+          <option value="global">Everyone (global)</option>
+        </select>
+      </div>
+      <div class="field full" id="ovrEmployeeField">
+        <label>Employee <span class="req">*</span></label>
+        <select id="ovrEmployee"><option value="">— Select —</option></select>
+      </div>
+      <div class="field full">
+        <label>Period <span class="req">*</span></label>
+        <input type="month" id="ovrPeriod" />
+      </div>
+      <div class="field full">
+        <label>Keep open until <span class="req">*</span></label>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+          <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="radio" name="ovrExpiryMode" value="datetime" checked /> Exact date &amp; time
+          </label>
+          <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="radio" name="ovrExpiryMode" value="days" /> N days from now
+          </label>
+        </div>
+        <div id="ovrDatetimeField">
+          <input type="datetime-local" id="ovrExpiresAt" style="width:100%;" />
+          <div style="font-size:11px;color:var(--bsg-muted);margin-top:4px;">Times are IST. The override expires the instant this datetime passes.</div>
+        </div>
+        <div id="ovrDaysField" style="display:none;">
+          <input type="number" id="ovrDays" value="7" min="1" max="30" style="width:100%;" />
+          <div style="font-size:11px;color:var(--bsg-muted);margin-top:4px;">Between 1 and 30 days.</div>
+        </div>
+      </div>
+      <div class="field full">
+        <label>Reason (optional)</label>
+        <input type="text" id="ovrReason" maxlength="500" placeholder="e.g. Employee was on leave" />
+      </div>
+    </div>
+    <div class="actions" style="margin-top:16px;">
+      <button class="btn btn-ghost" id="ovrCancel">Cancel</button>
+      <button class="btn btn-submit" id="ovrSave">Grant</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============== PROJECT ADD/EDIT MODAL ============== -->
+<div class="modal-backdrop" id="projModalBackdrop">
+  <div class="modal" id="projModal" style="max-width:460px;">
+    <h3 id="projModalTitle">Add Project</h3>
+    <div class="field-grid" style="margin-top:8px;">
+      <div class="field full">
+        <label>Project Name <span class="req">*</span></label>
+        <input type="text" id="projName" placeholder="e.g. AMNS" />
+      </div>
+      <div class="field full">
+        <label>Short Code (optional)</label>
+        <input type="text" id="projCode" placeholder="optional short tag" />
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-ghost" id="projModalCancel">Cancel</button>
+      <button class="btn btn-submit" id="projModalSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============== EMPLOYEE ADD/EDIT MODAL ============== -->
+<div class="modal-backdrop" id="empModalBackdrop">
+  <div class="modal" id="empModal" style="max-width:560px;">
+    <h3 id="empModalTitle">Add Employee</h3>
+    <div class="field-grid" style="margin-top:8px;">
+      <div class="field span-2">
+        <label>Full Name <span class="req">*</span></label>
+        <input type="text" id="empName" placeholder="e.g. Ramesh Kumar" />
+      </div>
+      <div class="field span-2">
+        <label>Email (Google login) <span class="req">*</span></label>
+        <input type="email" id="empEmail" placeholder="name@metfraa.com" />
+      </div>
+      <div class="field">
+        <label>Level <span class="req">*</span></label>
+        <select id="empLevel">
+          <option value="JUNIOR">L1 — Junior Level</option>
+          <option value="SENIOR">L2 — Senior Level</option>
+          <option value="MANAGER">L3 — Managerial Level</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Employee Code</label>
+        <input type="text" id="empCode" placeholder="MET-031" />
+      </div>
+      <div class="field span-2">
+        <label>Designation</label>
+        <input type="text" id="empDesignation" placeholder="e.g. Site Engineer" />
+      </div>
+      <div class="field span-2">
+        <label>Department</label>
+        <input type="text" id="empDepartment" placeholder="e.g. Projects" />
+      </div>
+      <div class="field span-2">
+        <label>Reporting Manager Email</label>
+        <input type="email" id="empManager" placeholder="admin@metfraa.com" />
+      </div>
+      <div class="field span-2">
+        <label>Login Method</label>
+        <select id="empAuthMethod">
+          <option value="">Auto (by email domain)</option>
+          <option value="microsoft">Microsoft (M365) SSO</option>
+          <option value="google">Google SSO</option>
+          <option value="password">Portal Password</option>
+        </select>
+        <div id="empAuthHint" style="font-size:12px;color:var(--bsg-muted);margin-top:6px;line-height:1.5;"></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-ghost" id="empModalCancel">Cancel</button>
+      <button class="btn btn-submit" id="empModalSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============== TOAST / MODAL / OVERLAY ============== -->
+<div class="toast" id="toast"></div>
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal" id="modal">
+    <h3 id="modalTitle">Confirm</h3>
+    <p id="modalBody">…</p>
+    <div class="modal-recipient" id="modalRecipient" style="display:none;"></div>
+    <div class="actions">
+      <button class="btn btn-ghost" id="modalCancel">Cancel</button>
+      <button class="btn btn-submit" id="modalConfirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============== SUBMISSION VIEWER MODAL ============== -->
+<div class="modal-backdrop" id="viewBackdrop">
+  <div class="modal modal-wide" id="viewModal">
+    <div class="view-modal-head">
+      <div>
+        <div class="view-modal-ref" id="viewRef">—</div>
+        <h3 id="viewTitle" style="margin:2px 0 0;">Submission</h3>
+      </div>
+      <span class="status-pill" id="viewStatus">—</span>
+    </div>
+    <div class="view-modal-body" id="viewBody"></div>
+    <div class="actions">
+      <button class="btn btn-ghost" id="viewClose">Close</button>
+      <button class="btn btn-submit" id="viewDownload">Download PDF</button>
+    </div>
+  </div>
+</div>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="text" id="loadingText">Working…</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="/expense/js/policy-renderer.js"></script>
+<script src="/expense/js/app.js"></script>
+</body>
+</html>
