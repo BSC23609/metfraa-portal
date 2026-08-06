@@ -156,9 +156,10 @@ from datetime import datetime as _dt, timedelta as _td
 from fastapi import File, Form, UploadFile  # noqa: E402
 from sqlalchemy import or_  # noqa: E402
 
+from fastapi import BackgroundTasks  # noqa: E402
 from ..models import (  # noqa: E402
-    ExpenseAttachment, ExpensePendingUpload, ExpensePeriodOverride,
-    ExpenseProject, ExpenseSubmission,
+    ExpenseAttachment, ExpenseConsolidatedReport, ExpensePendingUpload,
+    ExpensePeriodOverride, ExpenseProject, ExpenseSubmission,
 )
 
 IST = _td(hours=5, minutes=30)
@@ -857,3 +858,405 @@ def api_attachment(sub_id: int, att_id: int, request: Request,
     return _Resp(content=data, media_type=a.mime_type or "application/octet-stream",
                  headers={"Content-Disposition": f'inline; filename="{a.filename}"',
                           "Cache-Control": "private, max-age=3600"})
+
+
+# ============================================================================
+# Slice 4 — admin review surface
+#
+# The 12 action verbs plus the pending queue and the admin submissions list.
+# Status transitions are copied one-for-one from the source's prepared
+# statements (server/db/index.js) — including the guard each one enforces on
+# the *current* status, which is what stops a claim being paid twice.
+#
+#   Travel Advance chain:
+#     pending --approve-->        advance_hr_verified   (stage mgmt_review)
+#     --advance-mgmt-approve-->   advance_mgmt_approved (stage accounts_pay)
+#     --advance-mark-paid-->      advance_approved      (stage paid, open)
+#     --employee settles-->       settlement_pending
+#     --approve-settlement-->     settled (differential = actual - advance)
+#     --reject-settlement-->      settlement_rejected (employee may re-file)
+# ============================================================================
+
+REVIEW_STATES = ["pending", "advance_hr_verified", "advance_mgmt_approved",
+                 "settlement_pending"]
+
+
+def _admin_guard(request: Request, user, db):
+    blocked = _guard(request, user, db)
+    if blocked:
+        return blocked
+    if not _is_admin(db, user):
+        return _err(403, "Admin access required")
+    return None
+
+
+def _admin_row(s: ExpenseSubmission) -> dict:
+    d = _sub_row(s)
+    d.update({
+        "employee_name": s.employee_name,
+        "employee_email": s.employee_email,
+        "employee_level": s.employee_level,
+        "purpose_category": s.purpose_category,
+        "trip_end_date": s.trip_end_date,
+        "late_settlement": bool(s.late_settlement),
+        "late_hours": s.late_hours,
+        "actuals": s.actuals,
+        "settlement_note": s.settlement_note,
+        "advance_hr_verified_by": s.advance_hr_verified_by,
+        "advance_mgmt_approved_by": s.advance_mgmt_approved_by,
+        "advance_paid_by": s.advance_paid_by,
+        "deadline_bypass": bool(s.deadline_bypass),
+    })
+    return d
+
+
+@router.get("/api/admin/submissions")
+def api_admin_submissions(request: Request, status: str | None = None,
+                          user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    q = db.query(ExpenseSubmission)
+    if status:
+        q = q.filter(ExpenseSubmission.status == status)
+    rows = q.order_by(ExpenseSubmission.submitted_at_ist.desc()).all()
+    return {"submissions": [_admin_row(s) for s in rows]}
+
+
+@router.get("/api/admin/pending")
+def api_admin_pending(request: Request, user=Depends(get_optional_user),
+                      db: Session = Depends(get_db)):
+    """All five in-flight review states, with per-stage counts for the badges."""
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    buckets = {}
+    for st in REVIEW_STATES:
+        buckets[st] = (db.query(ExpenseSubmission)
+                       .filter(ExpenseSubmission.status == st)
+                       .order_by(ExpenseSubmission.submitted_at_ist.desc()).all())
+    ordered = [s for st in REVIEW_STATES for s in buckets[st]]
+    return {
+        "submissions": [_admin_row(s) for s in ordered],
+        "pending_count": len(buckets["pending"]),
+        "advance_hr_verified_count": len(buckets["advance_hr_verified"]),
+        "advance_mgmt_approved_count": len(buckets["advance_mgmt_approved"]),
+        "settlement_pending_count": len(buckets["settlement_pending"]),
+    }
+
+
+async def _body(request: Request) -> dict:
+    try:
+        return await request.json() or {}
+    except Exception:
+        return {}
+
+
+def _reason_of(body: dict, key: str = "reason"):
+    """Source requires 3-1000 chars on the reopen/recall/archive verbs."""
+    r = str(body.get(key) or "").strip()
+    if len(r) < 3:
+        return None, "Please give a reason (3+ chars)."
+    if len(r) > 1000:
+        return None, "Reason too long (max 1000 chars)."
+    return r, None
+
+
+def _load(db: Session, sub_id: int):
+    return db.query(ExpenseSubmission).filter(ExpenseSubmission.id == sub_id).first()
+
+
+@router.post("/api/admin/submissions/{sub_id}/approve")
+async def api_admin_approve(sub_id: int, request: Request, bg: BackgroundTasks,
+                            user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.status != "pending":
+        return _err(400, f"Cannot approve a submission in '{s.status}' status.")
+    note = (await _body(request)).get("note") or ""
+
+    if s.form_type == "met_advance":
+        # Stage 1 of the chain — HR verifies, Arasu approves next.
+        s.status = "advance_hr_verified"
+        s.advance_stage = "mgmt_review"
+        s.advance_hr_verified_by = _me_email(db, user)
+        s.advance_hr_verified_at = _ist_now()
+        s.reviewed_by = _me_email(db, user)
+        s.reviewed_at_ist = _ist_now()
+        s.review_note = note
+        db.commit()
+        return {"ok": True, "status": "advance_hr_verified",
+                "message": "Advance verified — sent for management approval."}
+
+    s.status = "approved"
+    s.reviewed_by = _me_email(db, user)
+    s.reviewed_at_ist = _ist_now()
+    s.review_note = note
+    db.commit()
+    return {"ok": True, "status": "approved"}
+
+
+def _me_email(db: Session, user) -> str:
+    return (user.email or "").lower()
+
+
+@router.post("/api/admin/submissions/{sub_id}/reject")
+async def api_admin_reject(sub_id: int, request: Request,
+                           user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    """Send back for changes — the row goes to draft, not to a dead end."""
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.status != "pending":
+        return _err(400, f"Cannot send back from '{s.status}' status.")
+    body = await _body(request)
+    changes = str(body.get("changes_required") or body.get("note") or "").strip()
+    if not changes:
+        return _err(400, "Please describe what needs to change so the employee "
+                         "knows how to fix it.")
+    if len(changes) > 2000:
+        return _err(400, "Changes-required message is too long (max 2000 chars).")
+    s.status = "draft"
+    s.changes_required = changes
+    s.returned_at_ist = _ist_now()
+    s.reviewed_by = _me_email(db, user)
+    s.reviewed_at_ist = _ist_now()
+    s.review_note = str(body.get("note") or "").strip()
+    db.commit()
+    return {"ok": True, "status": "draft"}
+
+
+@router.post("/api/admin/submissions/{sub_id}/advance-mgmt-approve")
+async def api_advance_mgmt_approve(sub_id: int, request: Request,
+                                   user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.form_type != "met_advance":
+        return _err(400, "Only Travel Advance submissions have a management-approval step.")
+    if s.status != "advance_hr_verified":
+        return _err(400, f"Cannot mgmt-approve advance from '{s.status}' status.")
+    s.status = "advance_mgmt_approved"
+    s.advance_stage = "accounts_pay"
+    s.advance_mgmt_approved_by = _me_email(db, user)
+    s.advance_mgmt_approved_at = _ist_now()
+    db.commit()
+    return {"ok": True, "status": "advance_mgmt_approved",
+            "message": "Approved — sent to Accounts for payment."}
+
+
+@router.post("/api/admin/submissions/{sub_id}/advance-mark-paid")
+async def api_advance_mark_paid(sub_id: int, request: Request,
+                                user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.form_type != "met_advance":
+        return _err(400, "Only Travel Advance submissions can be marked paid this way.")
+    if s.status != "advance_mgmt_approved":
+        return _err(400, f"Cannot mark paid from '{s.status}' status.")
+    s.status = "advance_approved"        # open advance, awaiting settlement
+    s.advance_stage = "paid"
+    s.advance_paid_by = _me_email(db, user)
+    s.advance_paid_at = _ist_now()
+    db.commit()
+    return {"ok": True, "status": "advance_approved",
+            "message": "Payment recorded — advance is now open for settlement."}
+
+
+@router.post("/api/admin/submissions/{sub_id}/approve-settlement")
+async def api_approve_settlement(sub_id: int, request: Request,
+                                 user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.form_type != "met_advance":
+        return _err(400, "Settlement approval only applies to Travel Advance submissions.")
+    if s.status != "settlement_pending":
+        return _err(400, f"Cannot approve settlement from '{s.status}' status.")
+    # Signed differential = actual - advance. The consolidated report picks
+    # up this number rather than the full actual, since the advance was paid.
+    advance_amount = float(s.total_amount or 0)
+    try:
+        actual_amount = float((s.actuals or {}).get("actual_amount") or 0)
+    except (TypeError, ValueError):
+        actual_amount = 0.0
+    s.differential_amount = round(actual_amount - advance_amount, 2)
+    s.status = "settled"
+    s.settlement_reviewed_by = _me_email(db, user)
+    s.settlement_note = str((await _body(request)).get("note") or "")
+    s.settled_at_ist = _ist_now()
+    db.commit()
+    return {"ok": True, "status": "settled",
+            "differential_amount": s.differential_amount}
+
+
+@router.post("/api/admin/submissions/{sub_id}/reject-settlement")
+async def api_reject_settlement(sub_id: int, request: Request,
+                                user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.form_type != "met_advance":
+        return _err(400, "Settlement rejection only applies to Travel Advance submissions.")
+    if s.status != "settlement_pending":
+        return _err(400, f"Cannot reject settlement from '{s.status}' status.")
+    s.status = "settlement_rejected"
+    s.settlement_reviewed_by = _me_email(db, user)
+    s.settlement_note = str((await _body(request)).get("note") or "")
+    s.settled_at_ist = _ist_now()
+    db.commit()
+    return {"ok": True, "rejected": True}
+
+
+@router.post("/api/admin/submissions/{sub_id}/settle-offline")
+async def api_settle_offline(sub_id: int, request: Request,
+                             user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    """Already paid outside the portal — close it without a payment record."""
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.status != "pending":
+        return _err(400, "Only pending submissions can be marked settled-already. "
+                         f"This one is '{s.status}'.")
+    s.status = "settled_offline"
+    s.reviewed_by = _me_email(db, user)
+    s.reviewed_at_ist = _ist_now()
+    s.review_note = str((await _body(request)).get("note") or "")
+    db.commit()
+    return {"ok": True}
+
+
+def _in_locked_consolidated(db: Session, sub_id: int):
+    """A submission inside a consolidated report that has left draft cannot be
+    reopened — the source blocks this to stop the report and the rows diverging."""
+    for r in (db.query(ExpenseConsolidatedReport)
+              .filter(ExpenseConsolidatedReport.status.in_(["pending_mgmt", "approved"]))
+              .all()):
+        if sub_id in (r.submission_ids or []):
+            return r
+    return None
+
+
+@router.post("/api/admin/submissions/{sub_id}/unapprove")
+async def api_unapprove(sub_id: int, request: Request,
+                        user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.status != "approved":
+        return _err(400, f"Only approved submissions can be reopened. This one is '{s.status}'.")
+    reason, rerr = _reason_of(await _body(request))
+    if rerr:
+        return _err(400, rerr)
+    locked = _in_locked_consolidated(db, sub_id)
+    if locked:
+        label = ("an approved consolidated report" if locked.status == "approved"
+                 else "a consolidated report awaiting management approval")
+        return _err(409, f"Cannot reopen — this submission is part of {label}. "
+                         "To make changes, ask Arasu to reject the consolidated report "
+                         "first (which returns every included submission to the employee "
+                         "as a draft), or wait for the current consolidated flow to complete.")
+    s.status = "pending"
+    s.reviewed_by = _me_email(db, user)
+    s.reviewed_at_ist = _ist_now()
+    s.review_note = reason
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/api/admin/submissions/{sub_id}/recall")
+async def api_recall(sub_id: int, request: Request,
+                     user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    """Pull a sent-back draft back into the review queue."""
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.status != "draft":
+        return _err(400, "Only sent-back (draft) submissions can be recalled. "
+                         f"This one is '{s.status}'.")
+    reason, rerr = _reason_of(await _body(request))
+    if rerr:
+        return _err(400, rerr)
+    s.status = "pending"
+    s.changes_required = None
+    s.returned_at_ist = None
+    s.reviewed_by = _me_email(db, user)
+    s.reviewed_at_ist = _ist_now()
+    s.review_note = reason
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/api/admin/submissions/{sub_id}/archive")
+async def api_archive(sub_id: int, request: Request,
+                      user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.status != "draft":
+        return _err(400, f"Only sent-back (draft) submissions can be archived. This one is "
+                         f"'{s.status}'. Send it back to draft first (or use Reopen/Recall) "
+                         "if you want to archive it.")
+    reason, rerr = _reason_of(await _body(request))
+    if rerr:
+        return _err(400, rerr)
+    s.status = "archived"
+    s.reviewed_by = _me_email(db, user)
+    s.reviewed_at_ist = _ist_now()
+    s.review_note = reason
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/api/admin/submissions/{sub_id}/unarchive")
+async def api_unarchive(sub_id: int, request: Request,
+                        user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.status != "archived":
+        return _err(400, f"Only archived submissions can be unarchived. This one is '{s.status}'.")
+    reason, rerr = _reason_of(await _body(request))
+    if rerr:
+        return _err(400, rerr)
+    s.status = "draft"
+    s.reviewed_by = _me_email(db, user)
+    s.reviewed_at_ist = _ist_now()
+    s.review_note = reason
+    db.commit()
+    return {"ok": True}
