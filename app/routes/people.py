@@ -13,6 +13,7 @@ not roles. employees.is_admin is synced to (superadmin OR kpi_admin) because
 existing KPI admin routes check it directly.
 """
 import json
+from datetime import datetime
 import logging
 import secrets
 import string
@@ -25,8 +26,10 @@ from sqlalchemy.orm import Session
 
 from ..access import get_access
 from ..database import get_db
+from .auth import DEFAULT_PASSWORD
 from ..deps import get_current_user, get_optional_user
 from ..models import (
+    PasswordResetRequest,
     EHSSubmission, Employee, EmployeeAccess, ExpenseEmployeeMeta, ExpenseSubmission,
 )
 
@@ -46,8 +49,14 @@ def _require_manager(db: Session, user: Employee):
 
 
 def _temp_password(n: int = 8) -> str:
-    alphabet = string.ascii_uppercase + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(n))
+    """The standard reset password.
+
+    Was a random 8-char string; HR asked for a single known value so it can be
+    told to the employee over the phone without a copy-paste step. Safe only
+    because must_reset_password is set alongside every use — the employee is
+    forced to choose their own on next login, and auth.py refuses to let them
+    keep this one."""
+    return DEFAULT_PASSWORD
 
 
 def _row(db: Session, e: Employee, a=None, m=None, _bulk: bool = False) -> dict:
@@ -195,9 +204,17 @@ def people_reset_password(emp_id: int, user: Employee = Depends(get_current_user
     temp = _temp_password()
     e.password_hash = bcrypt.hashpw(temp.encode(), bcrypt.gensalt()).decode()
     e.must_reset_password = True
+    closed = 0
+    for req in (db.query(PasswordResetRequest)
+                .filter(PasswordResetRequest.employee_id == e.id,
+                        PasswordResetRequest.status == "pending").all()):
+        req.status = "fulfilled"
+        req.fulfilled_at = datetime.utcnow()
+        req.fulfilled_by_code = user.employee_code
+        closed += 1
     db.commit()
-    return {"ok": True, "temp_password": temp,
-            "message": f"Temp password for {e.name}: {temp} (must change on next login)."}
+    return {"ok": True, "temp_password": temp, "closed_requests": closed,
+            "message": f"Password for {e.name} reset to {temp} (must change on next login)."}
 
 
 @router.delete("/api/{emp_id}")
@@ -220,5 +237,56 @@ def people_delete(emp_id: int, user: Employee = Depends(get_current_user), db: S
     db.query(EmployeeAccess).filter(EmployeeAccess.employee_id == emp_id).delete()
     db.query(ExpenseEmployeeMeta).filter(ExpenseEmployeeMeta.employee_id == emp_id).delete()
     db.delete(e)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- password reset requests
+#
+# Employees raise these from the login page ("Forgot password"). They were only
+# visible in /admin and by email, so an HR Admin working in /people never saw
+# them. Same data, surfaced where the roster is managed.
+
+@router.get("/api/reset-requests")
+def people_reset_requests(user: Employee = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    _require_manager(db, user)
+    rows = (db.query(PasswordResetRequest)
+            .order_by(PasswordResetRequest.requested_at.desc()).limit(200).all())
+    now = datetime.utcnow()
+    out = []
+    for r in rows:
+        emp = r.employee
+        status = r.status
+        if status == "pending" and r.expires_at and r.expires_at < now:
+            status = "expired"
+        out.append({
+            "id": r.id,
+            "employee_id": r.employee_id,
+            "employee_name": emp.name if emp else "(deleted)",
+            "employee_code": emp.employee_code if emp else "?",
+            "reason": r.reason,
+            "status": status,
+            "requested_at": r.requested_at.isoformat() if r.requested_at else None,
+            "fulfilled_at": r.fulfilled_at.isoformat() if r.fulfilled_at else None,
+            "fulfilled_by_code": r.fulfilled_by_code,
+            "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+        })
+    return {"requests": out,
+            "pending_count": sum(1 for r in out if r["status"] == "pending")}
+
+
+@router.post("/api/reset-requests/{req_id}/deny")
+def people_deny_reset_request(req_id: int, user: Employee = Depends(get_current_user),
+                              db: Session = Depends(get_db)):
+    _require_manager(db, user)
+    r = db.query(PasswordResetRequest).filter(PasswordResetRequest.id == req_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if r.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Request is already {r.status}")
+    r.status = "denied"
+    r.fulfilled_at = datetime.utcnow()
+    r.fulfilled_by_code = user.employee_code
     db.commit()
     return {"ok": True}

@@ -11,9 +11,34 @@
   </div>
 
   <input id="search" placeholder="Search name / code / email…" oninput="render()"
-         class="w-full mb-4 rounded-xl border-metfraa-gray-300 text-sm">
+         class="w-full mb-4 rounded-xl border-metfraa-gray-300 text-sm" id="searchBox">
 
-  <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 overflow-x-auto">
+  <div class="flex gap-1 mb-4 border-b border-metfraa-gray-200">
+    <button id="tabBtnRoster" onclick="showTab('roster')"
+      class="px-4 py-2 text-sm font-bold border-b-2 border-metfraa-blue text-metfraa-ink">Employees</button>
+    <button id="tabBtnResets" onclick="showTab('resets')"
+      class="px-4 py-2 text-sm font-bold border-b-2 border-transparent text-metfraa-gray-500 hover:text-metfraa-ink">
+      Password Requests
+      <span id="resetBadge" class="hidden ml-1 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[10px]">0</span>
+    </button>
+  </div>
+
+  <div id="paneResets" class="hidden bg-white rounded-xl ring-1 ring-metfraa-gray-200 overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-[11px] uppercase tracking-wider text-metfraa-gray-400 border-b border-metfraa-gray-100">
+          <th class="px-3 py-3">Employee</th>
+          <th class="px-3 py-3">Reason</th>
+          <th class="px-3 py-3">Requested</th>
+          <th class="px-3 py-3">Status</th>
+          <th class="px-3 py-3"></th>
+        </tr>
+      </thead>
+      <tbody id="resetRows" class="divide-y divide-metfraa-gray-100"></tbody>
+    </table>
+  </div>
+
+  <div id="paneRoster" class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 overflow-x-auto">
     <table class="w-full text-sm">
       <thead>
         <tr class="text-left text-[11px] uppercase tracking-wider text-metfraa-gray-400 border-b border-metfraa-gray-100">
@@ -210,4 +235,111 @@ async function del() {
 }
 load();
 </script>
+
+<script>
+// ---- Password reset requests -------------------------------------------
+// Raised by employees from the login page. Previously only visible in /admin
+// and by email, so HR working here never saw them.
+let _resets = [];
+
+function showTab(which) {
+  const roster = which === 'roster';
+  document.getElementById('paneRoster').classList.toggle('hidden', !roster);
+  document.getElementById('paneResets').classList.toggle('hidden', roster);
+  const sb = document.getElementById('searchBox');
+  if (sb) sb.classList.toggle('hidden', !roster);
+  for (const [id, on] of [['tabBtnRoster', roster], ['tabBtnResets', !roster]]) {
+    const b = document.getElementById(id);
+    b.className = 'px-4 py-2 text-sm font-bold border-b-2 ' + (on
+      ? 'border-metfraa-blue text-metfraa-ink'
+      : 'border-transparent text-metfraa-gray-500 hover:text-metfraa-ink');
+  }
+  if (!roster) loadResets();
+}
+
+function _ist(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso + (iso.endsWith('Z') ? '' : 'Z'))
+        .toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }); }
+  catch (e) { return iso; }
+}
+
+const _pill = {
+  pending:   'bg-amber-100 text-amber-800',
+  fulfilled: 'bg-green-100 text-green-800',
+  denied:    'bg-metfraa-gray-200 text-metfraa-gray-600',
+  expired:   'bg-metfraa-gray-200 text-metfraa-gray-600',
+};
+
+async function loadResets() {
+  const tb = document.getElementById('resetRows');
+  tb.innerHTML = '<tr><td colspan="5" class="px-3 py-6 text-center text-metfraa-gray-400">Loading…</td></tr>';
+  try {
+    const r = await fetch('/people/api/reset-requests');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    _resets = data.requests || [];
+    renderResets();
+    const badge = document.getElementById('resetBadge');
+    badge.textContent = data.pending_count || 0;
+    badge.classList.toggle('hidden', !data.pending_count);
+  } catch (e) {
+    tb.innerHTML = '<tr><td colspan="5" class="px-3 py-6 text-center text-red-600">Could not load requests</td></tr>';
+  }
+}
+
+function renderResets() {
+  const tb = document.getElementById('resetRows');
+  if (!_resets.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="px-3 py-8 text-center text-metfraa-gray-400">No password reset requests yet.</td></tr>';
+    return;
+  }
+  tb.innerHTML = _resets.map(r => `
+    <tr>
+      <td class="px-3 py-3">
+        <div class="font-semibold text-metfraa-ink">${_esc(r.employee_name)}</div>
+        <div class="text-xs text-metfraa-gray-500">${_esc(r.employee_code)}</div>
+      </td>
+      <td class="px-3 py-3 text-metfraa-gray-600 max-w-xs">${_esc(r.reason || '—')}</td>
+      <td class="px-3 py-3 text-xs text-metfraa-gray-500">${_ist(r.requested_at)}</td>
+      <td class="px-3 py-3">
+        <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${_pill[r.status] || _pill.denied}">${r.status}</span>
+        ${r.fulfilled_by_code ? `<div class="text-[11px] text-metfraa-gray-400 mt-1">by ${_esc(r.fulfilled_by_code)}</div>` : ''}
+      </td>
+      <td class="px-3 py-3 text-right whitespace-nowrap">
+        ${r.status === 'pending' ? `
+          <button onclick="approveReset(${r.employee_id}, '${_esc(r.employee_name)}')"
+            class="px-3 py-1 text-xs font-bold rounded-lg bg-metfraa-blue text-white hover:opacity-90">Reset password</button>
+          <button onclick="denyReset(${r.id})"
+            class="px-3 py-1 text-xs font-bold rounded-lg ring-1 ring-metfraa-gray-300 text-metfraa-gray-600 hover:bg-metfraa-gray-50">Deny</button>
+        ` : ''}
+      </td>
+    </tr>`).join('');
+}
+
+function _esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function approveReset(empId, name) {
+  if (!confirm(`Reset ${name}'s password to Metfraa@123?\n\nThey will be forced to choose a new one at next login.`)) return;
+  const r = await fetch(`/people/api/${empId}/reset-password`, { method: 'POST' });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(d.detail || 'Reset failed'); return; }
+  alert(d.message || 'Password reset.');
+  loadResets();
+}
+
+async function denyReset(reqId) {
+  if (!confirm('Deny this request? The password will not be changed.')) return;
+  const r = await fetch(`/people/api/reset-requests/${reqId}/deny`, { method: 'POST' });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
+  loadResets();
+}
+
+// Load once on page open so the badge shows without switching tabs.
+loadResets();
+</script>
+
 {% endblock %}
