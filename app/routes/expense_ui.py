@@ -1637,3 +1637,308 @@ def api_admin_employees(request: Request, all: str | None = None,
         "employee_code": e.employee_code, "designation": e.designation,
         "department": e.department, "level": levels.get(e.id, "L1"),
         "is_active": 1 if e.is_active else 0} for e in rows]}
+
+
+# ============================================================================
+# Slice 6 — consolidated monthly reports (the month-end deliverable)
+#
+#   draft --send-for-approval--> pending_mgmt --approve-mgmt--> approved
+#                                      |
+#                                      +--reject--> rejected
+#
+# HR clicking "Send for final approval" IS the HR sign-off — the report goes
+# straight to Management, no separate consolidated-level HR review step.
+#
+# Rejection returns the underlying REGULAR claims to the employee as drafts
+# with deadline_bypass set (so the closed period doesn't block the fix), but
+# leaves SETTLED ADVANCES at 'settled' with a note appended — reopening a
+# closed advance would unwind money that has already moved.
+# ============================================================================
+
+TERMINAL_GOOD = ("approved", "settled", "settled_offline", "archived")
+
+
+def _rollup_for_period(db: Session, period: str) -> list[dict]:
+    """Port of listMonthlySummaryForPeriod, including the payable CASE:
+         approved            -> +total_amount
+         settled advance     -> +differential_amount (signed)
+         settled non-advance -> +actuals.actual_amount, else total_amount
+    Total can go negative when settlement shortfalls exceed reimbursements.
+    """
+    rows = (db.query(ExpenseSubmission)
+            .filter(ExpenseSubmission.period == period).all())
+    by_emp: dict[int, dict] = {}
+    for s in rows:
+        r = by_emp.setdefault(s.employee_id, {
+            "employee_id": s.employee_id, "employee_name": s.employee_name,
+            "employee_email": s.employee_email, "employee_code": None,
+            "total": 0, "pending_count": 0, "approved_count": 0, "settled_count": 0,
+            "settled_advance_count": 0, "settled_offline_count": 0,
+            "archived_count": 0, "draft_count": 0, "rejected_count": 0,
+            "advance_hr_verified_count": 0, "advance_mgmt_approved_count": 0,
+            "advance_approved_count": 0, "approved_total": 0.0})
+        r["total"] += 1
+        key = f"{s.status}_count"
+        if key in r:
+            r[key] += 1
+        if s.status == "settled" and s.form_type == "met_advance":
+            r["settled_advance_count"] += 1
+
+        if s.status == "approved":
+            r["approved_total"] += float(s.total_amount or 0)
+        elif s.status == "settled" and s.form_type == "met_advance":
+            r["approved_total"] += float(s.differential_amount or 0)
+        elif s.status == "settled":
+            try:
+                v = (s.actuals or {}).get("actual_amount")
+            except AttributeError:
+                v = None
+            r["approved_total"] += float(v if v is not None else (s.total_amount or 0))
+
+    codes = {e.id: e.employee_code for e in db.query(Employee).all()}
+    out = []
+    for r in by_emp.values():
+        r["employee_code"] = codes.get(r["employee_id"])
+        r["approved_total"] = round(r["approved_total"], 2)
+        out.append(r)
+    out.sort(key=lambda r: (r["employee_name"] or "").lower())
+    return out
+
+
+def _report_json(r: ExpenseConsolidatedReport) -> dict:
+    return {
+        "id": r.id, "employee_id": r.employee_id, "period": r.period,
+        "status": r.status, "total_amount": r.total_amount,
+        "submission_count": r.submission_count,
+        "submission_ids": list(r.submission_ids or []),
+        "pdf_path": r.pdf_web_url, "pdf_page_count": r.pdf_page_count,
+        "generated_at": r.generated_at, "generated_by": r.generated_by,
+        "hr_emailed_at": r.hr_emailed_at, "hr_approved_by": r.hr_approved_by,
+        "hr_approved_at": r.hr_approved_at, "hr_rejected_reason": r.hr_rejected_reason,
+        "mgmt_emailed_at": r.mgmt_emailed_at, "mgmt_approved_by": r.mgmt_approved_by,
+        "mgmt_approved_at": r.mgmt_approved_at,
+        "mgmt_rejected_reason": r.mgmt_rejected_reason,
+        "accounts_sent_at": r.accounts_sent_at,
+        "accounts_email_error": r.accounts_email_error,
+    }
+
+
+@router.get("/api/admin/consolidated")
+def api_consolidated_list(request: Request, period: str | None = None,
+                          user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    q = db.query(ExpenseConsolidatedReport)
+    if period:
+        q = q.filter(ExpenseConsolidatedReport.period == period.strip())
+    rows = q.order_by(ExpenseConsolidatedReport.id.desc()).all()
+    return {"reports": [_report_json(r) for r in rows]}
+
+
+@router.get("/api/admin/consolidated/monthly-summary")
+def api_monthly_summary(request: Request, period: str = "",
+                        user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    """Per-employee rollup for the Monthly Wrap-up tab — who is ready to send
+    and who is still blocked, merged with any existing report state."""
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    period = (period or "").strip()
+    if not _re.match(r"^\d{4}-\d{2}$", period):
+        return _err(400, "period must be YYYY-MM")
+    reports = {r.employee_id: r for r in db.query(ExpenseConsolidatedReport)
+               .filter(ExpenseConsolidatedReport.period == period).all()}
+    rows = []
+    for r in _rollup_for_period(db, period):
+        cr = reports.get(r["employee_id"])
+        rows.append({**r, "consolidated_report": _report_json(cr) if cr else None})
+    return {"period": period, "rows": rows}
+
+
+@router.get("/api/admin/consolidated/{report_id}")
+def api_consolidated_get(report_id: int, request: Request,
+                         user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    r = (db.query(ExpenseConsolidatedReport)
+         .filter(ExpenseConsolidatedReport.id == report_id).first())
+    if not r:
+        return _err(404, "Not found")
+    return {"report": _report_json(r)}
+
+
+def _blockers(rollup: dict) -> list[str]:
+    """Everything that must be cleared before a month can be sent."""
+    out = []
+    if rollup["pending_count"]:
+        out.append(f"{rollup['pending_count']} pending")
+    if rollup["draft_count"]:
+        out.append(f"{rollup['draft_count']} draft")
+    if rollup["advance_hr_verified_count"]:
+        out.append(f"{rollup['advance_hr_verified_count']} advance awaiting Arasu")
+    if rollup["advance_mgmt_approved_count"]:
+        out.append(f"{rollup['advance_mgmt_approved_count']} advance awaiting Accounts payment")
+    if rollup["advance_approved_count"]:
+        out.append(f"{rollup['advance_approved_count']} advance awaiting settlement")
+    if rollup["rejected_count"]:
+        out.append(f"{rollup['rejected_count']} rejected "
+                   "(must be re-submitted & approved, or excluded)")
+    return out
+
+
+@router.post("/api/admin/consolidated/send-for-approval")
+async def api_send_for_approval(request: Request, user=Depends(get_optional_user),
+                                db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    body = await _body(request)
+    try:
+        emp_id = int(body.get("employee_id"))
+        assert emp_id > 0
+    except (TypeError, ValueError, AssertionError):
+        return _err(400, "invalid employee_id")
+    period = str(body.get("period") or "").strip()
+    if not _re.match(r"^\d{4}-\d{2}$", period):
+        return _err(400, "period must be YYYY-MM")
+
+    rollup = next((r for r in _rollup_for_period(db, period)
+                   if r["employee_id"] == emp_id), None)
+    if not rollup:
+        return _err(400, "No submissions found for that employee in that month.")
+    blk = _blockers(rollup)
+    if blk:
+        return _err(400, f"Cannot send yet — {', '.join(blk)}. "
+                         "All submissions must be approved/settled first.")
+    if (rollup["approved_count"] + rollup["settled_count"]) == 0:
+        return _err(400, "Nothing to send — this employee has no approved/settled "
+                         "submissions for that month.")
+
+    existing = (db.query(ExpenseConsolidatedReport)
+                .filter(ExpenseConsolidatedReport.employee_id == emp_id,
+                        ExpenseConsolidatedReport.period == period).first())
+    if existing:
+        if existing.status == "pending_mgmt":
+            return _err(400, 'A report has already been sent for approval. '
+                             'Use "Resend email" if Arasu didn\'t receive it.')
+        if existing.status == "approved":
+            return _err(400, "This report is already approved. Payment has been "
+                             "sent to accounts.")
+        # 'rejected' or a half-finished 'draft' may be re-sent — fall through.
+
+    included = [s for s in db.query(ExpenseSubmission)
+                .filter(ExpenseSubmission.period == period,
+                        ExpenseSubmission.employee_id == emp_id).all()
+                if s.status in ("approved", "settled")]
+    now = _ist_now()
+    r = existing or ExpenseConsolidatedReport(employee_id=emp_id, period=period)
+    r.status = "pending_mgmt"
+    r.total_amount = rollup["approved_total"]
+    r.submission_count = len(included)
+    r.submission_ids = [s.id for s in included]
+    r.generated_at = now
+    r.generated_by = _me_email(db, user)
+    r.hr_approved_by = _me_email(db, user)      # sending IS the HR sign-off
+    r.hr_approved_at = now
+    r.mgmt_emailed_at = r.mgmt_emailed_at or now
+    r.mgmt_rejected_reason = None
+    if not existing:
+        db.add(r)
+    db.commit()
+    # PDF build + Arasu's email belong to the artifacts slice.
+    return {"ok": True, "report_id": r.id, "email_ok": False, "email_error": None}
+
+
+@router.post("/api/admin/consolidated/{report_id}/approve-mgmt")
+def api_approve_mgmt(report_id: int, request: Request,
+                     user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    r = (db.query(ExpenseConsolidatedReport)
+         .filter(ExpenseConsolidatedReport.id == report_id).first())
+    if not r:
+        return _err(404, "Not found")
+    if r.status != "pending_mgmt":
+        return _err(400, f"Cannot Mgmt-approve: report is {r.status}")
+    now = _ist_now()
+    r.status = "approved"
+    r.mgmt_approved_by = _me_email(db, user)
+    r.mgmt_approved_at = now
+    r.accounts_sent_at = r.accounts_sent_at or now
+    db.commit()
+    return {"ok": True, "report_id": r.id, "status": "approved"}
+
+
+@router.post("/api/admin/consolidated/{report_id}/reject")
+async def api_reject_consolidated(report_id: int, request: Request,
+                                  user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    r = (db.query(ExpenseConsolidatedReport)
+         .filter(ExpenseConsolidatedReport.id == report_id).first())
+    if not r:
+        return _err(404, "Not found")
+    if r.status != "pending_mgmt":
+        return _err(400, f"Cannot reject: report is {r.status}")
+    note = str((await _body(request)).get("note") or "").strip()
+    if len(note) < 3:
+        return _err(400, "Rejection note is required (3+ chars).")
+    if len(note) > 2000:
+        return _err(400, "Rejection note is too long (max 2000 chars).")
+
+    stamp = (_dt.utcnow() + IST).strftime("%Y-%m-%d")
+    attribution = f"[Consolidated report rejected by management: {note}]"
+    returned_regular, touched_advances = 0, 0
+    for sid in (r.submission_ids or []):
+        s = db.query(ExpenseSubmission).filter(ExpenseSubmission.id == sid).first()
+        if not s:
+            continue
+        if s.status == "settled" and s.form_type == "met_advance":
+            # Money already moved — annotate, don't reopen.
+            s.settlement_note = ((s.settlement_note or "") +
+                                 f"\n[Consolidated rejected on {stamp}: {note[:200]}]")
+            touched_advances += 1
+        else:
+            s.status = "draft"
+            s.deadline_bypass = True      # the period is closed; let them fix it
+            s.changes_required = attribution
+            s.returned_at_ist = _ist_now()
+            returned_regular += 1
+
+    r.status = "rejected"
+    r.mgmt_rejected_reason = note
+    db.commit()
+    return {"ok": True, "returned_submissions": returned_regular,
+            "advances_flagged": touched_advances}
+
+
+@router.post("/api/admin/consolidated/{report_id}/regenerate-pdf")
+def api_regenerate_pdf(report_id: int, request: Request,
+                       user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    r = (db.query(ExpenseConsolidatedReport)
+         .filter(ExpenseConsolidatedReport.id == report_id).first())
+    if not r:
+        return _err(404, "Not found")
+    if r.status != "pending_mgmt":
+        return _err(400, f"Can only regenerate while pending_mgmt — report is {r.status}")
+    return _err(501, "PDF generation lands with the artifacts slice.")
+
+
+@router.post("/api/admin/consolidated/{report_id}/resend-email")
+def api_resend_email(report_id: int, request: Request,
+                     user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    r = (db.query(ExpenseConsolidatedReport)
+         .filter(ExpenseConsolidatedReport.id == report_id).first())
+    if not r:
+        return _err(404, "Not found")
+    return _err(501, "Email delivery lands with the notifications slice.")
