@@ -1682,6 +1682,25 @@ body::after {
 }
 .admin-tab:hover { color: var(--bsg-ink); }
 .admin-tab.active { color: var(--bsg-blue-dark); border-bottom-color: var(--bsg-blue); }
+/* Employees moved to the portal's central roster at /people. Styled like a
+   tab but deliberately NOT .admin-tab — the tab switcher binds a click
+   handler to every .admin-tab and would fire switchTab(undefined). */
+.admin-tab-link {
+  border-bottom: 3px solid transparent;
+  padding: 12px 20px;
+  font-family: 'Oswald', sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bsg-muted);
+  text-decoration: none;
+  cursor: pointer;
+  margin-bottom: -2px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+}
+.admin-tab-link:hover { color: var(--bsg-ink); }
 .tab-badge {
   background: var(--bsg-danger);
   color: white;

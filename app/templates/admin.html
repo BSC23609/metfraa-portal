@@ -43,11 +43,10 @@
               class="px-4 py-2.5 text-sm font-semibold border-b-2">
         Overview
       </button>
-      <button @click="tab='employees'; loadEmployees()"
-              :class="tab==='employees' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
-              class="px-4 py-2.5 text-sm font-semibold border-b-2">
-        Employees
-      </button>
+      <a href="/people"
+         class="px-4 py-2.5 text-sm font-semibold border-b-2 border-transparent text-metfraa-gray-500 hover:text-metfraa-ink">
+        Employees &#8599;
+      </a>
       <button @click="tab='kpis'; loadEmployees()"
               :class="tab==='kpis' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">
@@ -419,6 +418,8 @@
   </div>
 
   <!-- =============== TAB: EMPLOYEES =============== -->
+  <!-- Employee management moved to /people (centralised roster + access).
+       Pane kept only as a safety net; no tab sets tab='employees' any more. -->
   <div x-show="tab==='employees'" x-cloak>
     <div class="flex items-center justify-between mb-4">
       <div>

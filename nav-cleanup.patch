@@ -1,0 +1,154 @@
+diff --git a/app/static/expense/app.html b/app/static/expense/app.html
+index b49bb8b..cc5056e 100644
+--- a/app/static/expense/app.html
++++ b/app/static/expense/app.html
+@@ -315,7 +315,7 @@
+         Pending Approvals <span class="tab-badge" id="pendingBadge">0</span>
+       </button>
+       <button class="admin-tab" data-tab="submissions">All Submissions</button>
+-      <button class="admin-tab" data-tab="employees">Employees</button>
++      <a class="admin-tab-link" href="/people" title="Employees are managed centrally in the portal">Employees &#8599;</a>
+       <button class="admin-tab" data-tab="projects">Projects</button>
+       <button class="admin-tab" data-tab="consolidated">Consolidated Reports</button>
+       <button class="admin-tab" data-tab="overrides">Overrides</button>
+diff --git a/app/static/expense/css/app.css b/app/static/expense/css/app.css
+index 5a23d05..8f938f9 100644
+--- a/app/static/expense/css/app.css
++++ b/app/static/expense/css/app.css
+@@ -1682,6 +1682,25 @@ body::after {
+ }
+ .admin-tab:hover { color: var(--bsg-ink); }
+ .admin-tab.active { color: var(--bsg-blue-dark); border-bottom-color: var(--bsg-blue); }
++/* Employees moved to the portal's central roster at /people. Styled like a
++   tab but deliberately NOT .admin-tab — the tab switcher binds a click
++   handler to every .admin-tab and would fire switchTab(undefined). */
++.admin-tab-link {
++  border-bottom: 3px solid transparent;
++  padding: 12px 20px;
++  font-family: 'Oswald', sans-serif;
++  font-size: 14px;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++  color: var(--bsg-muted);
++  text-decoration: none;
++  cursor: pointer;
++  margin-bottom: -2px;
++  transition: all 0.2s ease;
++  display: flex;
++  align-items: center;
++}
++.admin-tab-link:hover { color: var(--bsg-ink); }
+ .tab-badge {
+   background: var(--bsg-danger);
+   color: white;
+diff --git a/app/templates/admin.html b/app/templates/admin.html
+index 5802c63..9e9222e 100644
+--- a/app/templates/admin.html
++++ b/app/templates/admin.html
+@@ -43,11 +43,10 @@
+               class="px-4 py-2.5 text-sm font-semibold border-b-2">
+         Overview
+       </button>
+-      <button @click="tab='employees'; loadEmployees()"
+-              :class="tab==='employees' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+-              class="px-4 py-2.5 text-sm font-semibold border-b-2">
+-        Employees
+-      </button>
++      <a href="/people"
++         class="px-4 py-2.5 text-sm font-semibold border-b-2 border-transparent text-metfraa-gray-500 hover:text-metfraa-ink">
++        Employees &#8599;
++      </a>
+       <button @click="tab='kpis'; loadEmployees()"
+               :class="tab==='kpis' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+               class="px-4 py-2.5 text-sm font-semibold border-b-2">
+@@ -419,6 +418,8 @@
+   </div>
+ 
+   <!-- =============== TAB: EMPLOYEES =============== -->
++  <!-- Employee management moved to /people (centralised roster + access).
++       Pane kept only as a safety net; no tab sets tab='employees' any more. -->
+   <div x-show="tab==='employees'" x-cloak>
+     <div class="flex items-center justify-between mb-4">
+       <div>
+diff --git a/app/templates/dashboard.html b/app/templates/dashboard.html
+index 6300d2c..a02906f 100644
+--- a/app/templates/dashboard.html
++++ b/app/templates/dashboard.html
+@@ -64,24 +64,6 @@
+       <div class="mt-4 text-xs font-semibold text-metfraa-blue group-hover:underline">Open →</div>
+     </a>
+ 
+-    <!-- Site Visits -->
+-    <a href="/site-visits/" class="card-hover block bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-6 group">
+-      <div class="flex items-start justify-between mb-4">
+-        <div class="w-11 h-11 rounded-lg bg-metfraa-blue/10 flex items-center justify-center text-metfraa-blue text-2xl">
+-          🚗
+-        </div>
+-        <span class="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-metfraa-gray-100 text-metfraa-gray-600"
+-              x-show="siteVisitsCount !== null"
+-              x-text="siteVisitsCount + (siteVisitsCount === 1 ? ' visit' : ' visits')"></span>
+-      </div>
+-      <h2 class="display text-lg font-bold text-metfraa-black group-hover:text-metfraa-blue">Site Visits</h2>
+-      <p class="text-sm text-metfraa-gray-500 mt-1">
+-        BD / Sales team — record customer visits with photos,
+-        discussion notes and follow-ups. Auto-emails VP.
+-      </p>
+-      <div class="mt-4 text-xs font-semibold text-metfraa-blue group-hover:underline">Open →</div>
+-    </a>
+-
+     {% if user.is_admin %}
+     <!-- Admin Panel (only if admin) -->
+     <a href="/admin" class="card-hover block bg-gradient-to-br from-metfraa-black to-metfraa-ink text-white rounded-xl shadow-sm p-6 group relative overflow-hidden">
+@@ -105,20 +87,6 @@
+     </a>
+     {% endif %}
+ 
+-    <!-- Change password -->
+-    <a href="/auth/change-password" class="card-hover block bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-6 group">
+-      <div class="flex items-start justify-between mb-4">
+-        <div class="w-11 h-11 rounded-lg bg-metfraa-gray-100 flex items-center justify-center text-metfraa-gray-600 text-2xl">
+-          🔑
+-        </div>
+-      </div>
+-      <h2 class="display text-lg font-bold text-metfraa-black group-hover:text-metfraa-blue">Change Password</h2>
+-      <p class="text-sm text-metfraa-gray-500 mt-1">
+-        Update your login password. Recommended if you're still on
+-        the default one you got on day one.
+-      </p>
+-      <div class="mt-4 text-xs font-semibold text-metfraa-blue group-hover:underline">Open →</div>
+-    </a>
+ 
+   </div>
+ 
+@@ -135,14 +103,12 @@ function homeApp() {
+   return {
+     dailyStatus: 'loading',  // submitted | pending | locked | loading
+     monthlyWindowOpen: false,
+-    siteVisitsCount: null,
+     pendingBadge: 0,
+ 
+     async init() {
+       await Promise.all([
+         this.checkDailyStatus(),
+         this.checkMonthlyWindow(),
+-        this.checkSiteVisits(),
+         {% if user.is_admin %}this.checkAdminPending(),{% endif %}
+       ]);
+     },
+@@ -171,16 +137,6 @@ function homeApp() {
+       this.monthlyWindowOpen = (day >= daysInMonth - 4) || (day <= 3);
+     },
+ 
+-    async checkSiteVisits() {
+-      try {
+-        const r = await fetch('/site-visits/api/list');
+-        if (!r.ok) { this.siteVisitsCount = null; return; }
+-        const data = await r.json();
+-        this.siteVisitsCount = Array.isArray(data) ? data.length : null;
+-      } catch (e) {
+-        this.siteVisitsCount = null;
+-      }
+-    },
+ 
+     {% if user.is_admin %}
+     async checkAdminPending() {
