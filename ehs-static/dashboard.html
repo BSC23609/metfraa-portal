@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EHS Forms — Metfraa</title>
+  <link rel="icon" type="image/png" href="/ehs/img/logo.png">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/ehs/css/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <img src="/ehs/img/logo.png?v=2" alt="Metfraa" class="app-header__logo">
+      <div>
+        <h1 class="app-header__title">EHS Portal</h1>
+        <div class="app-header__sub">Environment · Health · Safety</div>
+      </div>
+      <div class="app-header__spacer"></div>
+      <div id="user-pill"></div>
+      <a id="approvals-link" href="/ehs/approvals" class="app-header__btn app-header__btn--approver" style="display:none">
+        Approvals <span id="approvals-badge" class="badge" style="display:none;">0</span>
+      </a>
+      <a id="my-pending-link" href="/ehs/submissions?status=pending" class="app-header__btn app-header__btn--my-pending" style="display:none">
+        My Pending <span id="my-pending-badge" class="badge badge--info">0</span>
+      </a>
+      <a href="/ehs/submissions" class="app-header__btn">My Submissions</a>
+      <a id="admin-link" href="/ehs/admin-dashboard" class="app-header__btn app-header__btn--admin" style="display:none">Admin</a>
+      <a id="charts-link" href="/ehs/admin-charts" class="app-header__btn app-header__btn--admin" style="display:none">Charts</a>
+      <a id="settings-link" href="/ehs/admin-settings" class="app-header__btn app-header__btn--admin" style="display:none">Settings</a>
+      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+      <a href="/auth/logout" class="app-header__btn">Logout</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <h2 class="page-title">Select a Form</h2>
+    <p class="page-subtitle">Pick the form you want to fill. Submissions go for approval before final saving.</p>
+
+    <div id="status-strip"></div>
+
+    <section class="dash-section" id="general-section">
+      <div class="dash-section-header">
+        <h3 class="dash-section-title">General EHS Records</h3>
+        <span class="dash-section-count" id="general-count"></span>
+      </div>
+      <div class="tile-grid" id="general-grid"></div>
+    </section>
+
+    <section class="dash-section" id="equipment-section">
+      <div class="dash-section-header">
+        <h3 class="dash-section-title">Equipment Inspection Checklists</h3>
+        <span class="dash-section-count" id="equipment-count"></span>
+      </div>
+      <div class="tile-grid" id="equipment-grid"></div>
+    </section>
+  </main>
+
+  <script src="/ehs/js/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings — Metfraa EHS</title>
+  <link rel="icon" type="image/png" href="/ehs/img/logo.png">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/ehs/css/app.css">
+  <link rel="stylesheet" href="/ehs/css/admin-dashboard.css">
+  <link rel="stylesheet" href="/ehs/css/admin-settings.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <a href="/ehs/" style="display:flex;align-items:center;gap:14px;text-decoration:none;color:inherit;">
+        <img src="/ehs/img/logo.png?v=2" alt="Metfraa" class="app-header__logo">
+        <div>
+          <h1 class="app-header__title">EHS Portal</h1>
+          <div class="app-header__sub">Settings</div>
+        </div>
+      </a>
+      <div class="app-header__spacer"></div>
+      <div id="user-pill"></div>
+      <a href="/ehs/" class="app-header__btn">All Forms</a>
+      <a href="/ehs/admin-dashboard" class="app-header__btn">Dashboard</a>
+      <a href="/ehs/admin-charts" class="app-header__btn">Charts</a>
+      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+      <a href="/auth/logout" class="app-header__btn">Logout</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="page-head">
+      <div>
+        <h2 class="page-title">Project Settings</h2>
+        <p class="page-subtitle">Manage the projects shown in form dropdowns. Deactivated projects stay in the chart history but won't appear in new submissions.</p>
+      </div>
+      <button id="add-btn" class="btn-submit" type="button">+ Add Project</button>
+    </div>
+
+    <div id="settings-mount">
+      <div class="loading">Loading projects…</div>
+    </div>
+  </main>
+
+  <!-- Add / Edit project modal -->
+  <div id="project-modal" class="modal" style="display:none;">
+    <div class="modal__backdrop" data-modal-close></div>
+    <div class="modal__panel">
+      <div class="modal__head">
+        <h3 id="modal-title">Add Project</h3>
+        <button type="button" class="modal__close" data-modal-close>×</button>
+      </div>
+      <div class="modal__body">
+        <div class="filter-field">
+          <label>Project Name</label>
+          <input type="text" id="proj-name" placeholder="e.g. AMNS Site - Oragadam">
+        </div>
+        <div class="filter-field">
+          <label>Aliases <span style="color:#888;font-weight:400;font-size:11px;">(old free-text names that should map to this project, one per line)</span></label>
+          <textarea id="proj-aliases" rows="5" placeholder="e.g.&#10;AMNS&#10;AMNS site&#10;TEST5"></textarea>
+        </div>
+        <div class="filter-field">
+          <label>
+            <input type="checkbox" id="proj-active" checked>
+            Active <span style="color:#888;font-weight:400;font-size:11px;">(shows in form dropdowns)</span>
+          </label>
+        </div>
+        <div id="modal-error" class="modal-error" style="display:none;"></div>
+      </div>
+      <div class="modal__foot">
+        <button type="button" class="btn-secondary" data-modal-close>Cancel</button>
+        <button type="button" id="modal-save" class="btn-submit">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/ehs/js/admin-settings.js"></script>
+</body>
+</html>

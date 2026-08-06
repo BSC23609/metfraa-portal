@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review Submission — Metfraa EHS</title>
+  <link rel="icon" type="image/png" href="/ehs/img/logo.png">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/ehs/css/app.css">
+  <link rel="stylesheet" href="/ehs/css/approval-review.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <a href="/ehs/approvals" style="display:flex;align-items:center;gap:14px;text-decoration:none;color:inherit;">
+        <img src="/ehs/img/logo.png?v=2" alt="Metfraa" class="app-header__logo">
+        <div>
+          <h1 class="app-header__title">EHS Portal</h1>
+          <div class="app-header__sub">Review &amp; Approve</div>
+        </div>
+      </a>
+      <div class="app-header__spacer"></div>
+      <div id="user-pill"></div>
+      <a href="/ehs/approvals" class="app-header__btn">← Back to list</a>
+      <a href="/dashboard" class="app-header__btn app-header__btn--home">&larr; Main Dashboard</a>
+      <a href="/auth/logout" class="app-header__btn">Logout</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="mount">
+      <div class="loading">Loading submission…</div>
+    </div>
+  </main>
+
+  <!-- Reject modal -->
+  <div class="reject-modal" id="reject-modal" style="display:none;">
+    <div class="reject-modal__overlay" id="reject-modal-overlay"></div>
+    <div class="reject-modal__panel">
+      <h3>Reject Submission</h3>
+      <p>Provide a reason. The user will see this when they view their submission status.</p>
+      <textarea id="reject-reason" rows="4" placeholder="e.g., Photos are unclear; please re-take and resubmit."></textarea>
+      <div class="reject-modal__actions">
+        <button class="btn-secondary" id="reject-cancel" type="button">Cancel</button>
+        <button class="btn-reject-confirm" id="reject-confirm" type="button">Confirm Rejection</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="loader" id="loader">
+    <div class="loader__spinner"></div>
+    <div class="loader__text" id="loader-text">Processing…</div>
+  </div>
+
+  <script src="/ehs/js/approval-review.js"></script>
+</body>
+</html>
