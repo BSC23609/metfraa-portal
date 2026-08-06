@@ -468,6 +468,13 @@ import string as _string  # noqa: E402
 from ..expense.policy import FORM_META  # noqa: E402
 from ..expense.validators import validate as _validate  # noqa: E402
 from ..services import onedrive as _od  # noqa: E402
+from ..services.portal_notify import (  # noqa: E402
+    notify_advance_stage, notify_consolidated_for_review,
+    notify_consolidated_rejected, notify_consolidated_to_accounts,
+    notify_expense_decision, notify_payment_marked,
+)
+
+log = __import__("logging").getLogger(__name__)
 
 DTR = "met_dtr"
 
@@ -880,6 +887,52 @@ def api_attachment(sub_id: int, att_id: int, request: Request,
 REVIEW_STATES = ["pending", "advance_hr_verified", "advance_mgmt_approved",
                  "settlement_pending"]
 
+# ============================================================================
+# Slice 7 — side effects: PDF artifacts + email notifications
+#
+# The status transitions in slices 4-6 were deliberately silent. This wires
+# in what the source fires alongside them:
+#   approve (regular)   -> claim PDF to OneDrive + master-log row + employee email
+#   advance chain       -> Management / Accounts / employee emails per stage
+#   settlement decided  -> settled PDF + log + employee email
+#   payment marked      -> employee email, error recorded but never blocking
+#   consolidated        -> Arasu on send, Accounts on approve, employee on reject
+#
+# Every side effect is fail-soft: a Graph or SMTP outage must not roll back a
+# status the reviewer has already committed to.
+# ============================================================================
+
+def _artifact_for(db: Session, sub: ExpenseSubmission) -> str | None:
+    """Generate the claim PDF, push it to OneDrive, append the master-log row.
+
+    Returns the OneDrive web URL, or None if anything failed (logged, never raised).
+    """
+    try:
+        from ..routes.expense import _artifacts
+        art = _artifacts()
+        meta = FORM_META.get(sub.form_type) or {}
+        title = meta.get("title", sub.form_type)
+        pdf = art.generate_expense_pdf(sub, title)
+        folder = art.submission_folder(sub)
+        path = f"{folder}/{sub.reference}.pdf"
+        info = _od.upload_to_path(pdf, path, "application/pdf")
+        sub.pdf_web_url = (info or {}).get("webUrl") or path
+        bills = [a.web_url or a.onedrive_path for a in
+                 db.query(ExpenseAttachment)
+                 .filter(ExpenseAttachment.submission_id == sub.id).all()]
+        try:
+            art.append_expense_log(sub, meta.get("code", ""), bills, sub.pdf_web_url)
+        except Exception as e:
+            log.warning("[expense-artifacts] master log append failed for %s: %s",
+                        sub.reference, e)
+        return sub.pdf_web_url
+    except Exception as e:
+        log.error("[expense-artifacts] PDF/OneDrive failed for %s: %s",
+                  sub.reference, e, exc_info=True)
+        return None
+
+
+
 
 def _admin_guard(request: Request, user, db):
     blocked = _guard(request, user, db)
@@ -989,6 +1042,7 @@ async def api_admin_approve(sub_id: int, request: Request, bg: BackgroundTasks,
         s.reviewed_at_ist = _ist_now()
         s.review_note = note
         db.commit()
+        notify_advance_stage(bg, s, "hr_verified")
         return {"ok": True, "status": "advance_hr_verified",
                 "message": "Advance verified — sent for management approval."}
 
@@ -996,8 +1050,10 @@ async def api_admin_approve(sub_id: int, request: Request, bg: BackgroundTasks,
     s.reviewed_by = _me_email(db, user)
     s.reviewed_at_ist = _ist_now()
     s.review_note = note
+    pdf_url = _artifact_for(db, s)
     db.commit()
-    return {"ok": True, "status": "approved"}
+    notify_expense_decision(bg, s, (FORM_META.get(s.form_type) or {}).get("title", s.form_type))
+    return {"ok": True, "status": "approved", "pdf_url": pdf_url}
 
 
 def _me_email(db: Session, user) -> str:
@@ -1005,7 +1061,7 @@ def _me_email(db: Session, user) -> str:
 
 
 @router.post("/api/admin/submissions/{sub_id}/reject")
-async def api_admin_reject(sub_id: int, request: Request,
+async def api_admin_reject(sub_id: int, request: Request, bg: BackgroundTasks,
                            user=Depends(get_optional_user), db: Session = Depends(get_db)):
     """Send back for changes — the row goes to draft, not to a dead end."""
     blocked = _admin_guard(request, user, db)
@@ -1030,11 +1086,12 @@ async def api_admin_reject(sub_id: int, request: Request,
     s.reviewed_at_ist = _ist_now()
     s.review_note = str(body.get("note") or "").strip()
     db.commit()
+    notify_expense_decision(bg, s, (FORM_META.get(s.form_type) or {}).get("title", s.form_type))
     return {"ok": True, "status": "draft"}
 
 
 @router.post("/api/admin/submissions/{sub_id}/advance-mgmt-approve")
-async def api_advance_mgmt_approve(sub_id: int, request: Request,
+async def api_advance_mgmt_approve(sub_id: int, request: Request, bg: BackgroundTasks,
                                    user=Depends(get_optional_user), db: Session = Depends(get_db)):
     blocked = _admin_guard(request, user, db)
     if blocked:
@@ -1051,12 +1108,13 @@ async def api_advance_mgmt_approve(sub_id: int, request: Request,
     s.advance_mgmt_approved_by = _me_email(db, user)
     s.advance_mgmt_approved_at = _ist_now()
     db.commit()
+    notify_advance_stage(bg, s, "mgmt_approved")
     return {"ok": True, "status": "advance_mgmt_approved",
             "message": "Approved — sent to Accounts for payment."}
 
 
 @router.post("/api/admin/submissions/{sub_id}/advance-mark-paid")
-async def api_advance_mark_paid(sub_id: int, request: Request,
+async def api_advance_mark_paid(sub_id: int, request: Request, bg: BackgroundTasks,
                                 user=Depends(get_optional_user), db: Session = Depends(get_db)):
     blocked = _admin_guard(request, user, db)
     if blocked:
@@ -1073,12 +1131,13 @@ async def api_advance_mark_paid(sub_id: int, request: Request,
     s.advance_paid_by = _me_email(db, user)
     s.advance_paid_at = _ist_now()
     db.commit()
+    notify_advance_stage(bg, s, "paid")
     return {"ok": True, "status": "advance_approved",
             "message": "Payment recorded — advance is now open for settlement."}
 
 
 @router.post("/api/admin/submissions/{sub_id}/approve-settlement")
-async def api_approve_settlement(sub_id: int, request: Request,
+async def api_approve_settlement(sub_id: int, request: Request, bg: BackgroundTasks,
                                  user=Depends(get_optional_user), db: Session = Depends(get_db)):
     blocked = _admin_guard(request, user, db)
     if blocked:
@@ -1102,13 +1161,15 @@ async def api_approve_settlement(sub_id: int, request: Request,
     s.settlement_reviewed_by = _me_email(db, user)
     s.settlement_note = str((await _body(request)).get("note") or "")
     s.settled_at_ist = _ist_now()
+    pdf_url = _artifact_for(db, s)
     db.commit()
+    notify_expense_decision(bg, s, (FORM_META.get(s.form_type) or {}).get("title", s.form_type))
     return {"ok": True, "status": "settled",
-            "differential_amount": s.differential_amount}
+            "differential_amount": s.differential_amount, "pdf_url": pdf_url}
 
 
 @router.post("/api/admin/submissions/{sub_id}/reject-settlement")
-async def api_reject_settlement(sub_id: int, request: Request,
+async def api_reject_settlement(sub_id: int, request: Request, bg: BackgroundTasks,
                                 user=Depends(get_optional_user), db: Session = Depends(get_db)):
     blocked = _admin_guard(request, user, db)
     if blocked:
@@ -1125,6 +1186,7 @@ async def api_reject_settlement(sub_id: int, request: Request,
     s.settlement_note = str((await _body(request)).get("note") or "")
     s.settled_at_ist = _ist_now()
     db.commit()
+    notify_expense_decision(bg, s, (FORM_META.get(s.form_type) or {}).get("title", s.form_type))
     return {"ok": True, "rejected": True}
 
 
@@ -1351,8 +1413,8 @@ def api_payments(request: Request, year: int | None = None, month: int | None = 
 
 
 @router.post("/api/admin/payments/mark")
-async def api_payments_mark(request: Request, user=Depends(get_optional_user),
-                            db: Session = Depends(get_db)):
+async def api_payments_mark(request: Request, bg: BackgroundTasks,
+                            user=Depends(get_optional_user), db: Session = Depends(get_db)):
     blocked = _admin_guard(request, user, db)
     if blocked:
         return blocked
@@ -1382,13 +1444,25 @@ async def api_payments_mark(request: Request, user=Depends(get_optional_user),
         row.paid_by = _me_email(db, user)
         row.paid_at_ist = _ist_now()
     else:
-        db.add(ExpenseMonthlyPayment(
+        row = ExpenseMonthlyPayment(
             employee_id=emp_id, year=y, month=mo, amount_paid=amount,
-            paid_by=_me_email(db, user), paid_at_ist=_ist_now()))
+            paid_by=_me_email(db, user), paid_at_ist=_ist_now())
+        db.add(row)
+    db.flush()          # so the email bookkeeping below can stamp this row
+    emp = db.query(Employee).filter(Employee.id == emp_id).first()
+    err = None
+    try:
+        notify_payment_marked(bg, emp.email if emp else None,
+                              emp.name if emp else "", y, mo, amount)
+        row.email_sent_at = _ist_now()
+        row.email_error = None
+    except Exception as e:            # payment stands even if the email fails
+        err = str(e)[:480]
+        log.warning("[payments] confirmation email failed: %s", e)
+        row.email_error = err
     db.commit()
-    # Email is fired by the notification slice; payment stands regardless.
     return {"ok": True, "employee_id": emp_id, "year": y, "month": mo,
-            "amount_paid": amount, "email_sent": False, "email_error": None}
+            "amount_paid": amount, "email_sent": err is None, "email_error": err}
 
 
 @router.post("/api/admin/payments/unmark")
@@ -1789,8 +1863,8 @@ def _blockers(rollup: dict) -> list[str]:
 
 
 @router.post("/api/admin/consolidated/send-for-approval")
-async def api_send_for_approval(request: Request, user=Depends(get_optional_user),
-                                db: Session = Depends(get_db)):
+async def api_send_for_approval(request: Request, bg: BackgroundTasks,
+                                user=Depends(get_optional_user), db: Session = Depends(get_db)):
     blocked = _admin_guard(request, user, db)
     if blocked:
         return blocked
@@ -1847,12 +1921,17 @@ async def api_send_for_approval(request: Request, user=Depends(get_optional_user
     if not existing:
         db.add(r)
     db.commit()
-    # PDF build + Arasu's email belong to the artifacts slice.
-    return {"ok": True, "report_id": r.id, "email_ok": False, "email_error": None}
+    err = None
+    try:
+        notify_consolidated_for_review(bg, r, rollup["employee_name"])
+    except Exception as e:
+        err = str(e)[:480]
+        log.warning("[consolidated] review email failed: %s", e)
+    return {"ok": True, "report_id": r.id, "email_ok": err is None, "email_error": err}
 
 
 @router.post("/api/admin/consolidated/{report_id}/approve-mgmt")
-def api_approve_mgmt(report_id: int, request: Request,
+def api_approve_mgmt(report_id: int, request: Request, bg: BackgroundTasks,
                      user=Depends(get_optional_user), db: Session = Depends(get_db)):
     blocked = _admin_guard(request, user, db)
     if blocked:
@@ -1869,11 +1948,18 @@ def api_approve_mgmt(report_id: int, request: Request,
     r.mgmt_approved_at = now
     r.accounts_sent_at = r.accounts_sent_at or now
     db.commit()
+    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+    try:
+        notify_consolidated_to_accounts(bg, r, emp.name if emp else "")
+    except Exception as e:
+        r.accounts_email_error = str(e)[:480]
+        db.commit()
+        log.warning("[consolidated] accounts email failed: %s", e)
     return {"ok": True, "report_id": r.id, "status": "approved"}
 
 
 @router.post("/api/admin/consolidated/{report_id}/reject")
-async def api_reject_consolidated(report_id: int, request: Request,
+async def api_reject_consolidated(report_id: int, request: Request, bg: BackgroundTasks,
                                   user=Depends(get_optional_user), db: Session = Depends(get_db)):
     blocked = _admin_guard(request, user, db)
     if blocked:
@@ -1912,6 +1998,12 @@ async def api_reject_consolidated(report_id: int, request: Request,
     r.status = "rejected"
     r.mgmt_rejected_reason = note
     db.commit()
+    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+    try:
+        notify_consolidated_rejected(bg, r, emp.email if emp else None,
+                                     emp.name if emp else "", note, returned_regular)
+    except Exception as e:
+        log.warning("[consolidated] rejection email failed: %s", e)
     return {"ok": True, "returned_submissions": returned_regular,
             "advances_flagged": touched_advances}
 

@@ -99,3 +99,109 @@ def notify_ehs_decision(bg, sub) -> None:
                       + ([f"<i>Reason: {sub.reject_reason}</i>"] if sub.reject_reason else [])
                       + ([f"PDF: <a href='{sub.pdf_web_url}'>open report</a>"] if sub.pdf_web_url else []),
                       f"{BASE()}/ehs/submissions", "View submissions"))
+
+
+# ---- Expense parity: advance chain, payments, consolidated reports -------
+# Recipients mirror the source's env names and defaults so an existing
+# deployment's settings carry over unchanged.
+
+def _hr_email() -> str:
+    return os.getenv("CONSOLIDATED_HR_EMAIL", os.getenv("EXPENSE_HR_EMAIL", "admin@metfraa.com"))
+
+
+def _mgmt_email() -> str:
+    return os.getenv("CONSOLIDATED_MGMT_EMAIL", "arasu@metfraa.com")
+
+
+def _accounts_email() -> str:
+    return os.getenv("CONSOLIDATED_ACCOUNTS_EMAIL", "accounts@metfraa.com")
+
+
+def notify_advance_stage(bg, sub, stage: str) -> None:
+    """Each advance stage notifies whoever acts next.
+
+    hr_verified -> Management (Arasu) must approve
+    mgmt_approved -> Accounts must pay
+    paid -> the employee, who can now settle
+    """
+    amount = f"₹{(sub.total_amount or 0):,.2f}"
+    common = [f"<b>{sub.employee_name}</b> — Travel Advance",
+              f"Reference: {sub.reference} · Period: {sub.period or '—'}",
+              f"Amount: {amount}"]
+    if stage == "hr_verified":
+        bg.add_task(_send, _mgmt_email(),
+                    f"[Advance] Awaiting your approval — {sub.reference} ({amount})",
+                    _card("Travel Advance needs management approval",
+                          common + ["HR has verified this advance."],
+                          f"{BASE()}/expense/", "Open Expense Portal"))
+    elif stage == "mgmt_approved":
+        bg.add_task(_send, _accounts_email(),
+                    f"[Advance] Approved for payment — {sub.reference} ({amount})",
+                    _card("Travel Advance approved — please pay",
+                          common + ["Management has approved this advance."],
+                          f"{BASE()}/expense/", "Open Expense Portal"))
+    elif stage == "paid" and sub.employee_email:
+        bg.add_task(_send, sub.employee_email,
+                    f"[Advance] Payment released — {sub.reference} ({amount})",
+                    _card("Your travel advance has been paid",
+                          common + ["Settle it with actuals and bills after your trip."],
+                          f"{BASE()}/expense/", "File settlement"))
+
+
+def notify_payment_marked(bg, employee_email: str, employee_name: str,
+                          year: int, month: int, amount: float) -> None:
+    if not employee_email:
+        return
+    bg.add_task(_send, employee_email,
+                f"[Expense] Reimbursement paid — {year}-{month:02d} (₹{amount:,.2f})",
+                _card("Your monthly reimbursement has been paid",
+                      [f"Hi {employee_name},",
+                       f"Period: {year}-{month:02d}",
+                       f"Amount paid: <b>₹{amount:,.2f}</b>"],
+                      f"{BASE()}/expense/", "View claims"))
+
+
+def notify_consolidated_for_review(bg, report, employee_name: str) -> None:
+    bg.add_task(_send, _mgmt_email(),
+                f"[Monthly Wrap-up] {employee_name} — {report.period} "
+                f"(₹{(report.total_amount or 0):,.2f})",
+                _card("Consolidated report awaiting your approval",
+                      [f"Employee: <b>{employee_name}</b>",
+                       f"Period: {report.period}",
+                       f"Claims: {report.submission_count}",
+                       f"Total payable: <b>₹{(report.total_amount or 0):,.2f}</b>",
+                       f"Sent by: {report.hr_approved_by or '—'}"],
+                      f"{BASE()}/expense/", "Review report"))
+
+
+def notify_consolidated_to_accounts(bg, report, employee_name: str) -> None:
+    bg.add_task(_send, _accounts_email(),
+                f"[Approved] {employee_name} — {report.period} "
+                f"(₹{(report.total_amount or 0):,.2f})",
+                _card("Consolidated report approved — ready for payment",
+                      [f"Employee: <b>{employee_name}</b>",
+                       f"Period: {report.period}",
+                       f"Claims: {report.submission_count}",
+                       f"Total payable: <b>₹{(report.total_amount or 0):,.2f}</b>",
+                       f"Approved by: {report.mgmt_approved_by or '—'}"],
+                      f"{BASE()}/expense/", "Open Expense Portal"))
+    bg.add_task(_send, _hr_email(),
+                f"[Approved · copy] {employee_name} — {report.period}",
+                _card("Consolidated report approved",
+                      [f"{employee_name} · {report.period} — sent to accounts."],
+                      f"{BASE()}/expense/", "Open Expense Portal"))
+
+
+def notify_consolidated_rejected(bg, report, employee_email: str,
+                                 employee_name: str, note: str, returned: int) -> None:
+    for to, title in ((employee_email, "Your monthly claims were returned"),
+                      (_hr_email(), f"Consolidated report rejected — {employee_name}")):
+        if not to:
+            continue
+        bg.add_task(_send, to,
+                    f"[Returned] {employee_name} — {report.period}",
+                    _card(title,
+                          [f"Period: {report.period}",
+                           f"Reason: {note}",
+                           f"{returned} claim(s) returned for editing."],
+                          f"{BASE()}/expense/", "Open Expense Portal"))
