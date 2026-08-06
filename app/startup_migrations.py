@@ -68,6 +68,8 @@ EXPENSE_PARITY_MIGRATIONS = [
     "WHERE form_type = 'met_advance' AND status = 'advance_approved' AND advance_stage IS NULL",
 ]
 EXPENSE_PARITY_MIGRATIONS += [
+    "ALTER TABLE expense_monthly_payments ADD COLUMN IF NOT EXISTS email_sent_at VARCHAR(32)",
+    "ALTER TABLE expense_monthly_payments ADD COLUMN IF NOT EXISTS email_error TEXT",
     "CREATE INDEX IF NOT EXISTS ix_expense_pending_uploads_token "
     "ON expense_pending_uploads (upload_token)",
 ]

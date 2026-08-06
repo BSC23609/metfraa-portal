@@ -493,6 +493,10 @@ class ExpenseMonthlyPayment(Base):
     amount_paid = Column(Float, nullable=False)
     paid_by = Column(String(200), nullable=False)
     paid_at_ist = Column(String(32), nullable=False)
+    # Payment is recorded even if the confirmation email fails — the error
+    # is kept here rather than blocking the money workflow.
+    email_sent_at = Column(String(32), nullable=True)
+    email_error = Column(Text, nullable=True)
 
     __table_args__ = (UniqueConstraint("employee_id", "year", "month", name="uq_emp_month_payment"),)
 
