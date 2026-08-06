@@ -7,7 +7,7 @@
   <link rel="icon" href="/static/favicon.ico">
   <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/favicon-64.png">
   <link rel="manifest" href="/manifest.json">
-  <meta name="theme-color" content="#0a1628">
+  <meta name="theme-color" content="#0d1421">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -19,7 +19,7 @@
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Oswald:wght@400;500;600;700&family=Bebas+Neue&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 
   <!-- Chart.js with fallback (loads from cdnjs first; jsdelivr fallback) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
@@ -37,29 +37,39 @@
         extend: {
           colors: {
             metfraa: {
-              black: '#0A0A0A',
-              ink: '#1A1A1A',
-              blue: '#3B82F6',
-              'blue-dark': '#2563EB',
-              'blue-light': '#DBEAFE',
+              // Bharat Steel Group design system — same values EHS and
+              // Expense use, mapped onto the existing metfraa-* class names
+              // so no page markup needs rewriting.
+              black: '#0d1421',   // --bsg-ink
+              ink: '#1a2332',     // --bsg-charcoal / --bsg-text
+              blue: '#1F7CCB',    // --bsg-blue
+              'blue-dark': '#155a96',
+              'blue-light': '#e3eefa',
+              steel: '#2a3548',
+              accent: '#f59e0b',
               gray: {
-                50:  '#FAFAFA',
-                100: '#F3F4F6',
-                200: '#E5E7EB',
-                300: '#D1D5DB',
-                400: '#9CA3AF',
-                500: '#6B7280',
-                600: '#4B5563',
-                700: '#374151',
-                800: '#1F2937',
-                900: '#111827',
+                50:  '#f4f6f9',   // --bsg-page
+                100: '#eef2f7',   // --bsg-soft
+                200: '#d6dde6',   // --bsg-line
+                300: '#bcc6d4',
+                400: '#8e9aad',
+                500: '#6b7689',   // --bsg-muted
+                600: '#4d5769',
+                700: '#39424f',
+                800: '#252d3a',
+                900: '#141b26',
               },
             }
           },
           fontFamily: {
-            'sans': ['Manrope', 'system-ui', 'sans-serif'],
-            'display': ['"Space Grotesk"', 'Manrope', 'sans-serif'],
+            'sans': ['Inter', 'system-ui', 'sans-serif'],
+            'display': ['Oswald', 'Inter', 'sans-serif'],
             'mono': ['"JetBrains Mono"', 'monospace'],
+          },
+          boxShadow: {
+            'sm':  '0 1px 2px rgba(13,20,33,0.05)',
+            'md':  '0 4px 16px rgba(13,20,33,0.08), 0 1px 3px rgba(13,20,33,0.06)',
+            'lg':  '0 20px 50px -10px rgba(13,20,33,0.18), 0 4px 12px rgba(13,20,33,0.08)',
           }
         }
       }
@@ -68,12 +78,54 @@
 
   <style>
     body {
-      font-family: 'Manrope', system-ui, sans-serif;
+      font-family: 'Inter', system-ui, sans-serif;
       -webkit-font-smoothing: antialiased;
       letter-spacing: -0.005em;
     }
-    .display { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.02em; }
+
+    /* Section headings read as Oswald uppercase, matching the Expense portal.
+       Page <h1>s use Bebas Neue like the EHS header. */
+    .display {
+      font-family: 'Oswald', sans-serif;
+      letter-spacing: 0.01em;
+      text-transform: uppercase;
+    }
+    h1.display, .display-xl {
+      font-family: 'Bebas Neue', 'Oswald', sans-serif;
+      letter-spacing: 0.02em;
+    }
     .mono { font-family: 'JetBrains Mono', monospace; }
+
+    /* Small uppercase mono label — the recurring motif in both portals. */
+    .lbl, .field-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #6b7689;
+      font-weight: 600;
+    }
+
+    /* Industrial steel-grid page texture (from the Expense design system). */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image:
+        linear-gradient(rgba(26,35,50,0.028) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(26,35,50,0.028) 1px, transparent 1px);
+      background-size: 56px 56px;
+    }
+    body > * { position: relative; z-index: 1; }
+
+    /* Cards pick up the softer, deeper shadow the other portals use. */
+    .card-hover { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+    .card-hover:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 20px 50px -10px rgba(13,20,33,0.18), 0 4px 12px rgba(13,20,33,0.08);
+    }
 
     /* Hide elements with x-cloak until Alpine processes them */
     [x-cloak] { display: none !important; }
@@ -91,9 +143,6 @@
     ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
 
     button, a, input, select, textarea { transition: all 0.15s ease; }
-
-    .card-hover { transition: transform 0.2s ease, box-shadow 0.2s ease; }
-    .card-hover:hover { transform: translateY(-1px); box-shadow: 0 8px 24px -8px rgba(0,0,0,0.15); }
 
     @keyframes shimmer { 0% { background-position: -1000px 0; } 100% { background-position: 1000px 0; } }
     .shimmer {
@@ -129,7 +178,7 @@
                class="h-9 w-auto"
                onerror="this.outerHTML='<div class=&quot;flex items-baseline gap-1.5&quot;><div class=&quot;font-display font-bold text-white text-xl tracking-tight&quot;>METFRAA</div><div class=&quot;text-metfraa-blue text-[10px] uppercase tracking-widest&quot;>Steel</div></div>'" />
           <span class="text-metfraa-gray-400 text-xs hidden sm:block">|</span>
-          <span class="text-metfraa-gray-300 text-sm font-medium hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/people') %}Employees{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
+          <span class="mono text-[10px] uppercase tracking-[0.18em] text-metfraa-gray-400 border border-white/15 rounded px-2 py-1 hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/people') %}Employees{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
         </a>
 
         <nav class="flex items-center gap-1">

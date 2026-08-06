@@ -12,29 +12,52 @@
       theme: {
         extend: {
           colors: {
-            'metfraa-black': '#000',
-            'metfraa-ink': '#111827',
-            'metfraa-blue': '#1E3A8A',
-            'metfraa-blue-dark': '#152A66',
-            'metfraa-gray-50': '#F9FAFB',
-            'metfraa-gray-100': '#F3F4F6',
-            'metfraa-gray-200': '#E5E7EB',
-            'metfraa-gray-300': '#D1D5DB',
-            'metfraa-gray-400': '#9CA3AF',
-            'metfraa-gray-500': '#6B7280',
-            'metfraa-gray-600': '#4B5563',
-            'metfraa-gray-700': '#374151',
+            // Bharat Steel Group design system — same values as base.html,
+            // EHS and Expense.
+            'metfraa-black': '#0d1421',
+            'metfraa-ink': '#1a2332',
+            'metfraa-blue': '#1F7CCB',
+            'metfraa-blue-dark': '#155a96',
+            'metfraa-gray-50': '#f4f6f9',
+            'metfraa-gray-100': '#eef2f7',
+            'metfraa-gray-200': '#d6dde6',
+            'metfraa-gray-300': '#bcc6d4',
+            'metfraa-gray-400': '#8e9aad',
+            'metfraa-gray-500': '#6b7689',
+            'metfraa-gray-600': '#4d5769',
+            'metfraa-gray-700': '#39424f',
           },
           fontFamily: {
-            'display': ['Inter', 'system-ui', 'sans-serif'],
-            'mono': ['ui-monospace', 'monospace'],
+            'sans': ['Inter', 'system-ui', 'sans-serif'],
+            'display': ['Oswald', 'Inter', 'sans-serif'],
+            'mono': ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
           }
         }
       }
     }
   </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Oswald:wght@400;500;600;700&family=Bebas+Neue&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
     [x-cloak] { display: none !important; }
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .display { font-family: 'Oswald', sans-serif; text-transform: uppercase; letter-spacing: 0.01em; }
+    .display-xl { font-family: 'Bebas Neue', 'Oswald', sans-serif; letter-spacing: 0.02em; }
+    .mono, .lbl { font-family: 'JetBrains Mono', monospace; }
+    .lbl {
+      font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+      color: #6b7689; font-weight: 600;
+    }
+    /* Industrial steel-grid page texture, as in the other portals. */
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image:
+        linear-gradient(rgba(26,35,50,0.028) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(26,35,50,0.028) 1px, transparent 1px);
+      background-size: 56px 56px;
+    }
+    body > * { position: relative; z-index: 1; }
   </style>
 </head>
 <body class="min-h-screen bg-metfraa-gray-50">
