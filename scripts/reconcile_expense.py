@@ -33,7 +33,14 @@ import sqlite3
 import sys
 from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Repo ROOT, not scripts/ — `app` lives one level up from this file.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+if not os.getenv("DATABASE_URL"):
+    sys.exit("ERROR: DATABASE_URL is not set.\n"
+             "  Set it to your Neon connection string first, e.g.\n"
+             '    set DATABASE_URL=postgresql://USER:PASS@HOST/DB?sslmode=require\n'
+             "  Copy it from Vercel > Settings > Environment Variables.")
 
 # How far along the workflow each status sits. Used to refuse accidental
 # downgrades: never move a portal row backwards from a later stage.
