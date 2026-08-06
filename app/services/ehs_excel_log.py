@@ -8,8 +8,6 @@ import io
 import logging
 import os
 
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Alignment, Font, PatternFill
 
 from . import onedrive
 
@@ -40,6 +38,8 @@ def _headers_for(form: dict) -> list[str]:
 
 
 def append_to_master_log(form: dict, sub, file_links: dict, pdf_link: str | None) -> None:
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
     """sub: EHSSubmission ORM object. file_links: {"fields": {key: [url]}, "checklist": {idx: [url]}}."""
     log_path = f"{ehs_root()}/{form['folder']}/_MasterLog.xlsx"
 

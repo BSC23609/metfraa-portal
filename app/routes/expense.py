@@ -40,9 +40,11 @@ from ..models import (
 )
 from ..services import onedrive
 from ..services.portal_notify import notify_expense_decision, notify_expense_submitted
-from ..services.expense_artifacts import (
-    append_expense_log, expense_root, generate_expense_pdf, submission_folder,
-)
+def _artifacts():
+    """Lazy accessor — reportlab + openpyxl cost ~0.9s to import and are only
+    needed when a PDF or master-log row is actually produced."""
+    from ..services import expense_artifacts as _a
+    return _a
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/expense", tags=["expense"])
@@ -238,7 +240,7 @@ async def expense_submit(form_type: str, request: Request, bg: BackgroundTasks, 
         db.flush()
 
     # Upload bills to OneDrive
-    folder = f"{submission_folder(sub)}/Bills"
+    folder = f"{_artifacts().submission_folder(sub)}/Bills"
     try:
         for key, data, mime, fname in bills:
             data, mime = _compress(data, mime)
@@ -268,7 +270,7 @@ async def expense_submit(form_type: str, request: Request, bg: BackgroundTasks, 
 
 @router.get("/api/bill")
 def expense_bill_proxy(path: str, user: Employee = Depends(get_current_user)):
-    root = expense_root()
+    root = _artifacts().expense_root()
     clean = path.strip("/")
     if not clean.startswith(root + "/") or ".." in clean:
         raise HTTPException(status_code=400, detail="Invalid path")
@@ -304,15 +306,15 @@ async def expense_approve(reference: str, request: Request, bg: BackgroundTasks,
     meta = FORM_META.get(sub.form_type, {})
     pdf_link = None
     try:
-        pdf_bytes = generate_expense_pdf(sub, meta.get("title", sub.form_type))
-        info = onedrive.upload_to_path(pdf_bytes, f"{submission_folder(sub)}/{sub.reference}.pdf", "application/pdf")
+        pdf_bytes = _artifacts().generate_expense_pdf(sub, meta.get("title", sub.form_type))
+        info = onedrive.upload_to_path(pdf_bytes, f"{_artifacts().submission_folder(sub)}/{sub.reference}.pdf", "application/pdf")
         pdf_link = info.get("webUrl")
         sub.pdf_web_url = pdf_link
     except Exception as e:
         log.error(f"[expense-approve] PDF failed: {e}", exc_info=True)
     try:
         bill_links = [a.web_url for a in sub.attachments if a.web_url]
-        append_expense_log(sub, meta.get("code", "X"), bill_links, pdf_link)
+        _artifacts().append_expense_log(sub, meta.get("code", "X"), bill_links, pdf_link)
     except Exception as e:
         log.error(f"[expense-approve] log failed: {e}", exc_info=True)
 
@@ -379,7 +381,7 @@ async def expense_settle(reference: str, request: Request, bg: BackgroundTasks,
         raise HTTPException(status_code=400, detail="Add at least one actual expense")
 
     # bills for the settlement
-    folder = f"{submission_folder(sub)}/Settlement"
+    folder = f"{_artifacts().submission_folder(sub)}/Settlement"
     try:
         for key, value in form_data.multi_items():
             if key.startswith("bill:") and hasattr(value, "read"):
@@ -431,13 +433,13 @@ async def expense_settle_decide(reference: str, request: Request, bg: Background
         sub.settlement_note = note or None
         meta = FORM_META.get(sub.form_type, {})
         try:
-            pdf = generate_expense_pdf(sub, meta.get("title", "Travel Advance") + " (Settled)")
-            info = onedrive.upload_to_path(pdf, f"{submission_folder(sub)}/{sub.reference}_settled.pdf", "application/pdf")
+            pdf = _artifacts().generate_expense_pdf(sub, meta.get("title", "Travel Advance") + " (Settled)")
+            info = onedrive.upload_to_path(pdf, f"{_artifacts().submission_folder(sub)}/{sub.reference}_settled.pdf", "application/pdf")
             sub.pdf_web_url = info.get("webUrl")
         except Exception as e:
             log.error(f"[settle-decide] PDF failed: {e}")
         try:
-            append_expense_log(sub, meta.get("code", "ADV"),
+            _artifacts().append_expense_log(sub, meta.get("code", "ADV"),
                                [a.web_url for a in sub.attachments if a.web_url], sub.pdf_web_url)
         except Exception as e:
             log.error(f"[settle-decide] log failed: {e}")

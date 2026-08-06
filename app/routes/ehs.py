@@ -48,7 +48,7 @@ from ..ehs.forms import is_approver as _legacy_approver
 from ..models import EHSProject, EHSSubmission, Employee
 from ..services import onedrive
 from ..services.ehs_excel_log import append_to_master_log, ehs_root
-from ..services.ehs_pdf import generate_ehs_pdf
+# reportlab is heavy; imported inside the approve handler that uses it.
 from ..services.portal_notify import notify_ehs_decision, notify_ehs_submitted
 
 log = logging.getLogger(__name__)
@@ -315,6 +315,7 @@ async def ehs_approve(sub_id: str, request: Request, bg: BackgroundTasks, user: 
     # ---- Generate + upload PDF
     pdf_link = None
     try:
+        from ..services.ehs_pdf import generate_ehs_pdf
         pdf_bytes = generate_ehs_pdf(form, sub, photo_buffers)
         safe_title = form["title"].replace(" ", "-").replace("/", "-")
         pdf_name = f"{sub.submission_id}_{safe_title}.pdf"

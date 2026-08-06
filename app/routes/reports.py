@@ -12,8 +12,8 @@ import io
 from ..database import get_db
 from ..models import Employee, MonthlyReport, MonthlyKPIActual, AuditLog
 from ..deps import get_current_user, require_admin
-from ..services.pdf_report import generate_monthly_pdf, report_filename
-from ..services.excel_master import build_master_workbook
+# Heavy (matplotlib + reportlab + openpyxl ~1.2s): imported inside the handlers
+# that need them, so a cold start doesn't pay for them on every request.
 from ..services import onedrive
 from ..config import get_settings
 
@@ -105,6 +105,7 @@ def _do_generate(db, employee, year, month, generated_by, skip_submission_check=
 
     # Generate PDF
     try:
+        from ..services.pdf_report import generate_monthly_pdf, report_filename
         pdf_bytes = generate_monthly_pdf(db, employee.id, year, month, generated_by=generated_by)
     except Exception as e:
         raise HTTPException(500, f"PDF generation failed: {e}")
@@ -169,6 +170,7 @@ def download_pdf(
     if not user.is_admin and user.id != employee_id:
         raise HTTPException(403, "Forbidden")
 
+    from ..services.pdf_report import generate_monthly_pdf, report_filename
     pdf_bytes = generate_monthly_pdf(db, employee_id, year, month,
                                      generated_by=user.email or user.employee_code)
     fname = report_filename(target, year, month)
@@ -185,6 +187,7 @@ def sync_master_excel(
     db: Session = Depends(get_db),
 ):
     """Build the master Excel and upload to OneDrive."""
+    from ..services.excel_master import build_master_workbook
     xlsx_bytes = build_master_workbook(db)
     fname = "Metfraa_KPI_Master.xlsx"
     onedrive_path = settings.onedrive_folder
@@ -218,6 +221,7 @@ def download_master_excel(
     db: Session = Depends(get_db),
 ):
     """Download the master Excel directly."""
+    from ..services.excel_master import build_master_workbook
     xlsx_bytes = build_master_workbook(db)
     return StreamingResponse(
         io.BytesIO(xlsx_bytes),
