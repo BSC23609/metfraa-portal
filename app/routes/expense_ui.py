@@ -14,7 +14,7 @@ the reference SPA's api() helper reads err.error.
 import os
 import pathlib
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -502,7 +502,10 @@ def _prepare_raw(form_type: str, raw: dict) -> dict:
     """DTR validator requires has_bill per entry; the multipart route derives
     it from the uploaded files, the SPA signals it via bill_pending_id."""
     if form_type == DTR:
-        for e in (raw.get("entries") or []):
+        entries = raw.get("entries")
+        if entries is not None and not isinstance(entries, list):
+            raise ValueError("entries must be a list")
+        for e in (entries or []):
             if isinstance(e, dict):
                 e["has_bill"] = e.get("bill_pending_id") is not None
     return raw
@@ -589,153 +592,180 @@ def _check_project(db: Session, project_id):
     return None
 
 
+def _fail(where: str, form_type: str, user, exc: Exception):
+    """Log the full traceback with enough context to find the row, and hand the
+    user something they can quote back to us."""
+    import traceback
+    import uuid
+    ref = uuid.uuid4().hex[:8]
+    log.error("[expense-%s] ref=%s form=%s user=%s\n%s", where, ref, form_type,
+              getattr(user, "employee_code", "?"), traceback.format_exc())
+    return _err(500, "Something went wrong saving this claim. Nothing was saved — "
+                     f"please try again. If it keeps happening quote reference {ref}.",
+                ref=ref)
+
+
 @router.post("/api/submissions")
 async def api_submission_create(request: Request, user=Depends(get_optional_user),
                                 db: Session = Depends(get_db)):
-    blocked = _guard(request, user, db)
-    if blocked:
-        return blocked
-    body = await request.json()
-    form_type = (body or {}).get("form_type")
-    if not form_type:
-        return _err(400, "form_type required")
-    meta = FORM_META.get(form_type)
-    if not meta:
-        return _err(400, "Unknown form type")
-
-    raw = _prepare_raw(form_type, (body or {}).get("payload") or {})
-    ok, payload_or_err, total = _validate(form_type, raw, _level_of(db, user))
-    if not ok:
-        return _err(400, payload_or_err)
-    payload = payload_or_err
-
-    token = ((body or {}).get("upload_token") or "").strip()
-    pending = _pending_for(db, token, user.id)
-    specs, perr = _resolve_attachments(form_type, raw, pending)
-    if perr:
-        return _err(400, perr)
-
-    period = payload.get("period")
-    lock = check_period(db, period, user.id)
-    if not lock.get("allowed"):
-        return JSONResponse(status_code=423, content={
-            "error": lock.get("message"), "deadline": lock.get("deadline"),
-            "period_locked": True})
-
-    m = _meta_from_payload(payload, raw)
-    proj_err = _check_project(db, m["project_id"])
-    if proj_err:
-        return _err(400, proj_err)
-
-    sub = ExpenseSubmission(
-        reference=_reference(meta["code"]), employee_id=user.id,
-        employee_name=user.name, employee_email=user.email,
-        employee_level=_level_of(db, user), form_type=form_type, period=period,
-        payload=payload, total_amount=total, status="pending",
-        purpose_category=m["purpose_category"],
-        purpose_other_reason=m["purpose_other_reason"],
-        submitted_at_ist=_ist_now())
-    db.add(sub)
-    db.flush()
-
     try:
-        _store_attachments(db, sub, specs)
+        blocked = _guard(request, user, db)
+        if blocked:
+            return blocked
+        body = await request.json()
+        form_type = (body or {}).get("form_type")
+        if not form_type:
+            return _err(400, "form_type required")
+        meta = FORM_META.get(form_type)
+        if not meta:
+            return _err(400, "Unknown form type")
+
+        raw = _prepare_raw(form_type, (body or {}).get("payload") or {})
+        ok, payload_or_err, total = _validate(form_type, raw, _level_of(db, user))
+        if not ok:
+            return _err(400, payload_or_err)
+        payload = payload_or_err
+
+        token = ((body or {}).get("upload_token") or "").strip()
+        pending = _pending_for(db, token, user.id)
+        specs, perr = _resolve_attachments(form_type, raw, pending)
+        if perr:
+            return _err(400, perr)
+
+        period = payload.get("period")
+        lock = check_period(db, period, user.id)
+        if not lock.get("allowed"):
+            return JSONResponse(status_code=423, content={
+                "error": lock.get("message"), "deadline": lock.get("deadline"),
+                "period_locked": True})
+
+        m = _meta_from_payload(payload, raw)
+        proj_err = _check_project(db, m["project_id"])
+        if proj_err:
+            return _err(400, proj_err)
+
+        sub = ExpenseSubmission(
+            reference=_reference(meta["code"]), employee_id=user.id,
+            employee_name=user.name, employee_email=user.email,
+            employee_level=_level_of(db, user), form_type=form_type, period=period,
+            payload=payload, total_amount=total, status="pending",
+            purpose_category=m["purpose_category"],
+            purpose_other_reason=m["purpose_other_reason"],
+            submitted_at_ist=_ist_now())
+        db.add(sub)
+        db.flush()
+
+        try:
+            _store_attachments(db, sub, specs)
+        except Exception as e:
+            db.rollback()
+            return _err(502, f"Bill upload to OneDrive failed — please retry ({e})")
+
+        for p in pending:
+            db.delete(p)
+        db.commit()
+
+        return {"ok": True, "submission": {
+            "id": sub.id, "reference": sub.reference, "total": total,
+            "status": "pending", "od_synced": True, "pdf_url": None,
+            "message": "Submitted for approval. You will be notified once an admin reviews it."}}
+    except ValueError as e:
+        return _err(400, str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
-        return _err(502, f"Bill upload to OneDrive failed — please retry ({e})")
-
-    for p in pending:
-        db.delete(p)
-    db.commit()
-
-    return {"ok": True, "submission": {
-        "id": sub.id, "reference": sub.reference, "total": total,
-        "status": "pending", "od_synced": True, "pdf_url": None,
-        "message": "Submitted for approval. You will be notified once an admin reviews it."}}
-
+        return _fail("create", form_type if "form_type" in locals() else "?", user, e)
 
 @router.patch("/api/submissions/{sub_id}")
 async def api_submission_edit(sub_id: int, request: Request,
                               user=Depends(get_optional_user), db: Session = Depends(get_db)):
-    blocked = _guard(request, user, db)
-    if blocked:
-        return blocked
-    sub = db.query(ExpenseSubmission).filter(ExpenseSubmission.id == sub_id).first()
-    if not sub:
-        return _err(404, "Submission not found.")
-    if sub.employee_id != user.id:
-        return _err(403, "You can only edit your own submissions.")
-    if sub.status != "draft":
-        return _err(400, "This submission is already awaiting review and cannot be edited."
-                    if sub.status == "pending"
-                    else f"Submissions in status '{sub.status}' cannot be edited.")
-
-    body = await request.json()
-    form_type = (body or {}).get("form_type")
-    if not form_type:
-        return _err(400, "form_type required")
-    if form_type != sub.form_type:
-        return _err(400, "Cannot change the form type on a resubmit.")
-    meta = FORM_META.get(form_type)
-    if not meta:
-        return _err(400, "Unknown form type")
-
-    raw = _prepare_raw(form_type, (body or {}).get("payload") or {})
-    ok, payload_or_err, total = _validate(form_type, raw, _level_of(db, user))
-    if not ok:
-        return _err(400, payload_or_err)
-    payload = payload_or_err
-
-    token = ((body or {}).get("upload_token") or "").strip()
-    pending = _pending_for(db, token, user.id)
-    specs, perr = _resolve_attachments(form_type, raw, pending)
-    if perr:
-        return _err(400, perr)
-
-    period = payload.get("period")
-    lock = check_period(db, period, user.id, deadline_bypass=bool(sub.deadline_bypass))
-    if not lock.get("allowed"):
-        return JSONResponse(status_code=423, content={
-            "error": lock.get("message"), "deadline": lock.get("deadline"),
-            "period_locked": True})
-
-    m = _meta_from_payload(payload, raw)
-    proj_err = _check_project(db, m["project_id"])
-    if proj_err:
-        return _err(400, proj_err)
-
-    # Attachments are replaced wholesale — the edit screen re-presents the
-    # existing ones via clone-attachments, so `pending` is the full new set.
-    for a in db.query(ExpenseAttachment).filter(
-            ExpenseAttachment.submission_id == sub.id).all():
-        db.delete(a)
-    db.flush()
-
-    sub.payload = payload
-    sub.total_amount = total
-    sub.period = period
-    sub.status = "pending"
-    sub.purpose_category = m["purpose_category"]
-    sub.purpose_other_reason = m["purpose_other_reason"]
-    sub.changes_required = None
-    sub.returned_at_ist = None
-    sub.submitted_at_ist = _ist_now()
-
     try:
-        _store_attachments(db, sub, specs)
+        blocked = _guard(request, user, db)
+        if blocked:
+            return blocked
+        sub = db.query(ExpenseSubmission).filter(ExpenseSubmission.id == sub_id).first()
+        if not sub:
+            return _err(404, "Submission not found.")
+        if sub.employee_id != user.id:
+            return _err(403, "You can only edit your own submissions.")
+        if sub.status != "draft":
+            return _err(400, "This submission is already awaiting review and cannot be edited."
+                        if sub.status == "pending"
+                        else f"Submissions in status '{sub.status}' cannot be edited.")
+
+        body = await request.json()
+        form_type = (body or {}).get("form_type")
+        if not form_type:
+            return _err(400, "form_type required")
+        if form_type != sub.form_type:
+            return _err(400, "Cannot change the form type on a resubmit.")
+        meta = FORM_META.get(form_type)
+        if not meta:
+            return _err(400, "Unknown form type")
+
+        raw = _prepare_raw(form_type, (body or {}).get("payload") or {})
+        ok, payload_or_err, total = _validate(form_type, raw, _level_of(db, user))
+        if not ok:
+            return _err(400, payload_or_err)
+        payload = payload_or_err
+
+        token = ((body or {}).get("upload_token") or "").strip()
+        pending = _pending_for(db, token, user.id)
+        specs, perr = _resolve_attachments(form_type, raw, pending)
+        if perr:
+            return _err(400, perr)
+
+        period = payload.get("period")
+        lock = check_period(db, period, user.id, deadline_bypass=bool(sub.deadline_bypass))
+        if not lock.get("allowed"):
+            return JSONResponse(status_code=423, content={
+                "error": lock.get("message"), "deadline": lock.get("deadline"),
+                "period_locked": True})
+
+        m = _meta_from_payload(payload, raw)
+        proj_err = _check_project(db, m["project_id"])
+        if proj_err:
+            return _err(400, proj_err)
+
+        # Attachments are replaced wholesale — the edit screen re-presents the
+        # existing ones via clone-attachments, so `pending` is the full new set.
+        for a in db.query(ExpenseAttachment).filter(
+                ExpenseAttachment.submission_id == sub.id).all():
+            db.delete(a)
+        db.flush()
+
+        sub.payload = payload
+        sub.total_amount = total
+        sub.period = period
+        sub.status = "pending"
+        sub.purpose_category = m["purpose_category"]
+        sub.purpose_other_reason = m["purpose_other_reason"]
+        sub.changes_required = None
+        sub.returned_at_ist = None
+        sub.submitted_at_ist = _ist_now()
+
+        try:
+            _store_attachments(db, sub, specs)
+        except Exception as e:
+            db.rollback()
+            return _err(502, f"Bill upload to OneDrive failed — please retry ({e})")
+
+        for p in pending:
+            db.delete(p)
+        db.commit()
+
+        return {"ok": True, "submission": {
+            "id": sub.id, "reference": sub.reference, "total": total,
+            "status": "pending", "od_synced": True, "pdf_url": None,
+            "message": "Resubmitted for approval."}}
+    except ValueError as e:
+        return _err(400, str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
-        return _err(502, f"Bill upload to OneDrive failed — please retry ({e})")
-
-    for p in pending:
-        db.delete(p)
-    db.commit()
-
-    return {"ok": True, "submission": {
-        "id": sub.id, "reference": sub.reference, "total": total,
-        "status": "pending", "od_synced": True, "pdf_url": None,
-        "message": "Resubmitted for approval."}}
-
+        return _fail("edit", form_type if "form_type" in locals() else "?", user, e)
 
 @router.post("/api/submissions/{sub_id}/clone-attachments")
 async def api_clone_attachments(sub_id: int, request: Request,
