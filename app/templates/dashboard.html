@@ -22,9 +22,7 @@
     <!-- Daily Task Report -->
     <a href="/task-reports/" class="card-hover block bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-6 group">
       <div class="flex items-start justify-between mb-4">
-        <div class="w-11 h-11 rounded-lg bg-metfraa-blue/10 flex items-center justify-center text-metfraa-blue text-2xl">
-          📋
-        </div>
+        <div class="icon-tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2.8h6V4"/><path d="M9 10h6M9 14h6M9 18h3"/></svg></div>
         <span class="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded"
               :class="{
                 'bg-emerald-100 text-emerald-800': dailyStatus === 'submitted',
@@ -49,9 +47,7 @@
     <!-- Monthly KPI -->
     <a href="/monthly-kpi/" class="card-hover block bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-6 group">
       <div class="flex items-start justify-between mb-4">
-        <div class="w-11 h-11 rounded-lg bg-metfraa-blue/10 flex items-center justify-center text-metfraa-blue text-2xl">
-          📊
-        </div>
+        <div class="icon-tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="4" width="3" height="14"/></svg></div>
         <span class="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded"
               :class="monthlyWindowOpen ? 'bg-blue-100 text-blue-800' : 'bg-metfraa-gray-100 text-metfraa-gray-500'"
               x-text="monthlyWindowOpen ? '● Window open' : 'Not yet'"></span>
@@ -70,9 +66,7 @@
       <div class="absolute top-0 right-0 w-32 h-32 bg-metfraa-blue/20 rounded-full blur-3xl"></div>
       <div class="relative">
         <div class="flex items-start justify-between mb-4">
-          <div class="w-11 h-11 rounded-lg bg-metfraa-blue/20 flex items-center justify-center text-metfraa-blue text-2xl">
-            ⚙️
-          </div>
+          <div class="icon-tile icon-tile--invert"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1"/></svg></div>
           <span class="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-metfraa-blue/20 text-metfraa-blue"
                 x-show="pendingBadge > 0"
                 x-text="pendingBadge + ' pending'"></span>

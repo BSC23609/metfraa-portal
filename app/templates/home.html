@@ -40,11 +40,7 @@
     {% if access.kpi_access or access.can_admin_kpi %}<!-- KPI -->
     <a href="/dashboard"
        class="tile card-hover group relative bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-6 flex flex-col min-h-[220px] overflow-hidden">
-      <div class="w-11 h-11 rounded-md bg-metfraa-blue/10 flex items-center justify-center mb-4">
-        <svg class="w-6 h-6 text-metfraa-blue" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.5V21h4.5v-7.5H3zM9.75 8.25V21h4.5V8.25h-4.5zM16.5 3v18H21V3h-4.5z"/>
-        </svg>
-      </div>
+      <div class="icon-tile mb-4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="4" width="3" height="14"/></svg></div>
       <div class="display text-lg font-semibold text-metfraa-ink tracking-wide">KPI Tracker</div>
       <p class="text-sm text-metfraa-gray-500 mt-1 flex-1">
         Daily tasks, monthly KPIs, site visits & dashboards.
@@ -92,12 +88,7 @@
     <!-- SITE VISITS -->
     <a href="/site-visits/"
        class="tile card-hover group relative bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-6 flex flex-col min-h-[220px] overflow-hidden">
-      <div class="w-12 h-12 rounded-xl bg-metfraa-blue/10 flex items-center justify-center mb-4">
-        <svg class="w-6 h-6 text-metfraa-blue" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z"/>
-          <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z"/>
-        </svg>
-      </div>
+      <div class="icon-tile mb-4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg></div>
       <h2 class="display text-lg font-semibold text-metfraa-ink tracking-wide">Site Visits</h2>
       <p class="text-sm text-metfraa-gray-500 mt-1 flex-1">
         Visit reports with photos, PDFs & OneDrive archive.
@@ -111,11 +102,7 @@
     {% endif %}{% if access.expense_access or access.can_admin_expense %}<!-- EXPENSE -->
     <a href="/expense/"
        class="tile card-hover group relative bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-6 flex flex-col min-h-[220px] overflow-hidden">
-      <div class="w-11 h-11 rounded-xl bg-emerald-500/10 flex items-center justify-center mb-4">
-        <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z"/>
-        </svg>
-      </div>
+      <div class="icon-tile mb-4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 10h19"/><path d="M6 15h4"/></svg></div>
       <div class="display text-lg font-semibold text-metfraa-ink tracking-wide">Expense</div>
       <p class="text-sm text-metfraa-gray-500 mt-1 flex-1">
         Travel, cab, accommodation & advance claims with bill uploads.
@@ -143,11 +130,7 @@
     {% endif %}{% if access.ehs_access or access.can_admin_ehs %}<!-- EHS -->
     <a href="/ehs/"
        class="tile card-hover group relative bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-6 flex flex-col min-h-[220px] overflow-hidden">
-      <div class="w-11 h-11 rounded-xl bg-amber-500/10 flex items-center justify-center mb-4">
-        <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>
-        </svg>
-      </div>
+      <div class="icon-tile mb-4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 3v6c0 4.4-3 7.9-7 9-4-1.1-7-4.6-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></div>
       <div class="display text-lg font-semibold text-metfraa-ink tracking-wide">EHS</div>
       <p class="text-sm text-metfraa-gray-500 mt-1 flex-1">
         Safety inspections, incident reports & toolbox talks.
@@ -178,11 +161,9 @@
   {% if access.can_manage_employees %}
   <a href="/people" class="tile card-hover mt-5 flex items-center justify-between bg-white rounded-lg ring-1 ring-metfraa-gray-200 px-6 py-4 overflow-hidden">
     <div class="flex items-center gap-3">
-      <div class="w-9 h-9 rounded-lg bg-purple-500/10 flex items-center justify-center">
-        <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg>
-      </div>
+      <div class="icon-tile" style="width:40px;height:40px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M17 5.5a3 3 0 0 1 0 5.8M18.5 20c0-2.3-.8-4-2-5.2"/></svg></div>
       <div>
-        <div class="font-display font-bold text-metfraa-ink text-sm">Employees & Access</div>
+        <div class="display text-sm font-semibold text-metfraa-ink tracking-wide">Employees & Access</div>
         <div class="text-xs text-metfraa-gray-500">Add, edit, roles, module access, passwords</div>
       </div>
     </div>

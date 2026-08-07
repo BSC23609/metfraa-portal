@@ -120,6 +120,33 @@
     }
     body > * { position: relative; z-index: 1; }
 
+    /* Icon tiles — the Expense module's treatment: dark steel gradient chip
+       with a white line icon, turning blue and tilting on hover. Replaces the
+       pastel chips and emoji that made these pages look unlike the portals. */
+    .icon-tile {
+      width: 52px;
+      height: 52px;
+      border-radius: 4px;
+      background: linear-gradient(135deg, #0d1421, #1a2332);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.3s ease;
+    }
+    .icon-tile svg { width: 26px; height: 26px; }
+    .group:hover .icon-tile,
+    .tile:hover .icon-tile {
+      background: linear-gradient(135deg, #1F7CCB, #155a96);
+      transform: rotate(-3deg);
+    }
+    /* On the dark Admin card the chip needs to lift off the background. */
+    .icon-tile--invert { background: rgba(255,255,255,0.10); }
+    .group:hover .icon-tile--invert {
+      background: linear-gradient(135deg, #1F7CCB, #155a96);
+    }
+
     /* Cards pick up the softer, deeper shadow the other portals use. */
     .card-hover { transition: transform 0.2s ease, box-shadow 0.2s ease; }
     .card-hover:hover {
