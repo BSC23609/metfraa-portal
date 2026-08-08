@@ -48,6 +48,22 @@ def _guard(request: Request, user, db):
     return None
 
 
+def _as_int(v):
+    """Coerce a payload id to int, or None if it isn't one.
+
+    The SPA's <select> elements yield STRINGS, and an unchosen dropdown yields
+    "". SQLite silently tolerates `WHERE int_col = ''`; Postgres raises
+    InvalidTextRepresentation and the whole request 500s. Every payload id that
+    reaches an integer column must come through here.
+    """
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_admin(db: Session, user: Employee) -> bool:
     acc = get_access(db, user)
     return bool(acc.can_admin_expense or acc.superadmin)
@@ -396,7 +412,7 @@ def api_submission_detail(sub_id: int, request: Request,
         return _err(403, "Forbidden")
 
     project = None
-    pid = (s.payload or {}).get("project_id")
+    pid = _as_int((s.payload or {}).get("project_id"))
     if pid:
         p = db.query(ExpenseProject).filter(ExpenseProject.id == pid).first()
         if p:
@@ -408,7 +424,7 @@ def api_submission_detail(sub_id: int, request: Request,
     if s.form_type == "met_dtr":
         dtr_lookup = {}
         for e in (s.payload or {}).get("entries", []) or []:
-            epid = (e or {}).get("project_id")
+            epid = _as_int((e or {}).get("project_id"))
             if epid and epid not in dtr_lookup:
                 p = db.query(ExpenseProject).filter(ExpenseProject.id == epid).first()
                 if p:
@@ -578,14 +594,15 @@ def _meta_from_payload(payload: dict, raw: dict | None = None) -> dict:
 
     return {"purpose_category": pick("purpose_category"),
             "purpose_other_reason": pick("purpose_other_reason"),
-            "project_id": pick("project_id"),
+            "project_id": _as_int(pick("project_id")),
             "client_name": pick("client_name")}
 
 
 def _check_project(db: Session, project_id):
     """Defence in depth — the SPA filters to active projects, the API must not trust it."""
+    project_id = _as_int(project_id)
     if project_id is None:
-        return None
+        return None          # nothing selected — not an error
     p = db.query(ExpenseProject).filter(ExpenseProject.id == project_id).first()
     if not p or not p.is_active:
         return "Selected project is not valid. Please pick from the active list."
@@ -2250,7 +2267,7 @@ def api_admin_dashboard(request: Request, from_: str | None = None, to: str | No
                 if fare <= 0:
                     continue
                 credited += fare
-                pid = (e or {}).get("project_id")
+                pid = _as_int((e or {}).get("project_id"))
                 ecli = (e or {}).get("client_name")
                 if pid:
                     add_proj(pid, _project_label(projects.get(pid)) or f"Project #{pid}", fare)
@@ -2261,7 +2278,7 @@ def api_admin_dashboard(request: Request, from_: str | None = None, to: str | No
             if credited <= 0:
                 add_proj("_unspecified", "No Project", amount)
         else:
-            pid = payload.get("project_id")
+            pid = _as_int(payload.get("project_id"))
             if pid:
                 add_proj(pid, _project_label(projects.get(pid)) or f"Project #{pid}", amount)
             elif client:
