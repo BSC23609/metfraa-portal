@@ -2,9 +2,15 @@
 // Approval review page — renders an editable form for one pending submission
 // ============================================================================
 
-const pathParts = location.pathname.split('/').filter(Boolean); // ['approvals', formId, subId]
-const formId = pathParts[1];
-const subId = pathParts[2];
+// The reference app served this at /approvals/{formId}/{subId}, so it read
+// fixed indexes 1 and 2. Inside the portal the path is
+// /ehs/approvals/{formId}/{subId}, which shifted everything by one and made
+// formId read as the literal 'approvals'. Anchor on the segment instead of
+// counting from the left, so it works at any mount point.
+const pathParts = location.pathname.split('/').filter(Boolean);
+const _i = pathParts.indexOf('approvals');
+const formId = pathParts[_i + 1];
+const subId = pathParts[_i + 2];
 
 let me = null;
 let form = null;
