@@ -254,9 +254,14 @@ async def ehs_approve(sub_id: str, request: Request, bg: BackgroundTasks, user: 
     if sub.status != "pending":
         raise HTTPException(status_code=409, detail=f"Already {sub.status}")
 
-    form = FORMS_BY_ID.get(sub.form_id)
-    if not form:
-        raise HTTPException(status_code=500, detail=f"Form config missing for {sub.form_id}")
+    # Resolve by id, then by code — migrated rows can carry a form_id that no
+    # longer matches a registry key, and a reviewer must still be able to act.
+    from .ehs_ui import _resolve_form
+    form = _resolve_form(sub)
+    if form.get("_unregistered"):
+        raise HTTPException(status_code=500,
+                            detail=f"Form config missing for {sub.form_id} — "
+                                   "cannot generate the PDF or master-log row.")
 
     body = {}
     try:

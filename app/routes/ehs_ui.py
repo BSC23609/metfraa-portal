@@ -17,6 +17,7 @@ own session is the auth layer, exactly as the restore spec requires.
 Error bodies are {"error": "..."} (not FastAPI's default {"detail": ...})
 because the reference JS reads err.error.
 """
+import logging
 import os
 import re
 import pathlib
@@ -32,6 +33,7 @@ from ..ehs.forms import ALL_FORMS, FORMS_BY_ID, INSPECTORS
 from ..models import EHSProject, EHSSubmission, Employee
 
 router = APIRouter(prefix="/ehs", tags=["ehs-ui"])
+log = logging.getLogger(__name__)
 
 # Resolved from this file, not the process CWD — serverless runtimes do not
 # guarantee CWD is the repo root.
@@ -441,20 +443,57 @@ def api_approvals(request: Request, user=Depends(get_optional_user), db: Session
     return {"count": len(rows), "rows": rows}
 
 
+
+def _resolve_form(sub) -> dict:
+    """Find a form definition for a submission.
+
+    The URL's formId used to be trusted and looked up directly in
+    FORMS_BY_ID; anything not in the registry produced a dead "Unknown form"
+    page. Historic/migrated rows can carry a form_id that no longer matches a
+    registry key, so resolve from the SUBMISSION (id, then code), and if it
+    is genuinely unrecognised synthesise a definition from the row's own
+    stored fields so a reviewer can still read and action it.
+    """
+    f = FORMS_BY_ID.get(sub.form_id)
+    if f:
+        return f
+    code = (sub.form_code or "").strip().upper()
+    if code:
+        f = next((x for x in _ALL if (x.get("code") or "").upper() == code), None)
+        if f:
+            return f
+    slug = (sub.form_id or "").strip().lower().replace("_", "-")
+    f = FORMS_BY_ID.get(slug)
+    if f:
+        return f
+    # Last resort — render whatever the row actually stored.
+    log.warning("[ehs] unrecognised form_id=%r code=%r on %s; rendering from stored fields",
+                sub.form_id, sub.form_code, sub.submission_id)
+    return {
+        "id": sub.form_id or "unknown",
+        "code": sub.form_code or "",
+        "title": sub.form_title or "Submission",
+        "category": "general",
+        "fields": [{"key": k, "label": k.replace("_", " ").title(), "type": "text"}
+                   for k in (sub.fields or {}).keys()],
+        "checklist": None,
+        "_unregistered": True,
+    }
+
+
 @router.get("/api/approvals/{form_id}/{sub_id}")
 def api_approval_detail(form_id: str, sub_id: str, request: Request,
                         user=Depends(get_optional_user), db: Session = Depends(get_db)):
     blocked = _approver_guard(request, user, db)
     if blocked:
         return blocked
-    form = FORMS_BY_ID.get(form_id)
-    if not form:
-        return _err(404, "Unknown form")
     s = db.query(EHSSubmission).filter(
-        EHSSubmission.submission_id == sub_id,
-        EHSSubmission.form_id == form_id).first()
-    if not s or s.status != "pending":
-        return _err(404, "Pending submission not found (may have been already handled)")
+        EHSSubmission.submission_id == sub_id).first()
+    if not s:
+        return _err(404, "Submission not found")
+    if s.status != "pending":
+        return _err(404, f"This submission is already {s.status} — nothing left to review.")
+    form = _resolve_form(s)
     return {
         "form": {"id": form["id"], "code": form["code"], "title": form["title"],
                  "category": form["category"], "fields": form["fields"],
@@ -494,11 +533,8 @@ async def _decide(kind: str, form_id: str, sub_id: str, request: Request,
     blocked = _approver_guard(request, user, db)
     if blocked:
         return blocked
-    if form_id not in FORMS_BY_ID:
-        return _err(404, "Unknown form")
     s = db.query(EHSSubmission).filter(
-        EHSSubmission.submission_id == sub_id,
-        EHSSubmission.form_id == form_id).first()
+        EHSSubmission.submission_id == sub_id).first()
     if not s:
         return _err(404, "Pending submission not found")
     if s.status != "pending":
