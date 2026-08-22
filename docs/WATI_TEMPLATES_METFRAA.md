@@ -147,3 +147,35 @@ name, override just that one:
 
 Until WATI is configured the module still works — email notifications go out and
 sends are logged as `skipped` rather than failing.
+
+---
+
+## Scheduling the overdue check
+
+`/cron/gatepass-overdue` is **not** in `vercel.json`. Vercel Hobby allows only
+one cron run per day, and a daily check is useless for a pass due back at 3pm.
+BSC also found Vercel's scheduler fired unreliably, so an external pinger is the
+better answer regardless of plan.
+
+**Set it up on [cron-job.org](https://cron-job.org):**
+
+| Field | Value |
+|---|---|
+| URL | `https://app.metfraa.com/cron/gatepass-overdue` |
+| Schedule | every 15 minutes |
+| Request method | GET |
+| Header | `Authorization: Bearer <your CRON_SECRET>` |
+
+Add the header under **Advanced → Headers**. The value must match the
+`CRON_SECRET` environment variable in Vercel exactly, or the endpoint returns
+401.
+
+Calling it often is safe. Each recipient has its own stamp, and a stamp is only
+set once a channel actually delivered — so extra runs do nothing, and a send
+that failed is retried on the next run rather than being lost.
+
+**To check it's working:** open the cron-job.org execution history. A healthy
+run returns 200 with a body like
+`{"ok":true,"checked":3,"approver":1,"hr":1,"requester":1,"whatsapp":true}`.
+A 401 means the header doesn't match; a 503 means `CRON_SECRET` isn't set in
+Vercel.

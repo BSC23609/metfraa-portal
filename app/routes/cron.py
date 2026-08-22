@@ -69,9 +69,15 @@ def cron_daily_task_report(request: Request):
 def cron_gatepass_overdue(request: Request, db: Session = Depends(get_db)):
     """Nudge on gatepasses that were never returned.
 
-    Runs often (BSC learned that a once-a-day check is useless for a pass due
-    back at 3pm). Each recipient has its own stamp, so a send that fails
-    retries next run instead of being lost.
+    NOT in vercel.json: Hobby plans allow only ONE cron run per day, and a
+    daily check is useless for a pass due back at 3pm. This is driven by an
+    external pinger (cron-job.org) every 15-30 minutes, sending
+    `Authorization: Bearer $CRON_SECRET`. BSC reached the same conclusion for
+    a second reason — Vercel's scheduler fired unreliably.
+
+    Safe to call as often as you like: each recipient has its own stamp and a
+    stamp is only set once a channel actually delivered, so extra runs are
+    no-ops and failed sends retry.
     """
     _authorize(request)
     if not _enabled():
