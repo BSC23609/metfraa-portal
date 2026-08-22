@@ -22,13 +22,15 @@ class Access:
     kpi_admin: bool = False
     expense_admin: bool = False
     ehs_admin: bool = False
+    gatepass_admin: bool = False
     kpi_access: bool = True
     expense_access: bool = True
     ehs_access: bool = True
 
     @property
     def any_admin(self) -> bool:
-        return self.superadmin or self.hr_admin or self.kpi_admin or self.expense_admin or self.ehs_admin
+        return (self.superadmin or self.hr_admin or self.kpi_admin
+                or self.expense_admin or self.ehs_admin or self.gatepass_admin)
 
     @property
     def can_manage_employees(self) -> bool:
@@ -46,6 +48,12 @@ class Access:
     def can_admin_kpi(self) -> bool:
         return self.superadmin or self.kpi_admin
 
+    @property
+    def can_admin_gatepass(self) -> bool:
+        # HR keeps it because chasing unreturned passes is an HR job; the
+        # dedicated flag lets someone run gatepass WITHOUT the rest of HR.
+        return self.superadmin or self.hr_admin or self.gatepass_admin
+
 
 def get_access(db: Session, user: Employee) -> Access:
     row = db.query(EmployeeAccess).filter(EmployeeAccess.employee_id == user.id).first()
@@ -58,6 +66,7 @@ def get_access(db: Session, user: Employee) -> Access:
         kpi_admin=row.kpi_admin,
         expense_admin=row.expense_admin,
         ehs_admin=row.ehs_admin,
+        gatepass_admin=row.gatepass_admin,
         kpi_access=row.kpi_access,
         expense_access=row.expense_access,
         ehs_access=row.ehs_access,

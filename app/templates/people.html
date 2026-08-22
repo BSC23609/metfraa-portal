@@ -105,6 +105,7 @@
           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-kpi_admin"> KPI Admin</label>
           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-expense_admin"> Expense Admin</label>
           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-ehs_admin"> EHS Admin</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-gatepass_admin"> Gatepass Admin</label>
         </div>
       </div>
 
@@ -125,7 +126,7 @@
 </style>
 <script>
 let EMPS = [], editing = null;
-const ROLE_KEYS = ["is_superadmin","is_hr_admin","kpi_admin","expense_admin","ehs_admin"];
+const ROLE_KEYS = ["is_superadmin","is_hr_admin","kpi_admin","expense_admin","ehs_admin","gatepass_admin"];
 const ACCESS_KEYS = ["kpi_access","expense_access","ehs_access"];
 
 async function load() {
@@ -169,6 +170,7 @@ function render() {
         ${e.kpi_admin?badge('KPI-A','bg-metfraa-blue/10 text-metfraa-blue'):''}
         ${e.expense_admin?badge('EXP-A','bg-emerald-50 text-emerald-700'):''}
         ${e.ehs_admin?badge('EHS-A','bg-amber-50 text-amber-700'):''}
+        ${e.gatepass_admin?badge('GATE-A','bg-sky-50 text-sky-700'):''}
       </td>
       <td class="px-3 py-3 text-xs font-bold">${e.expense_level}</td>
       <td class="px-3 py-3 text-xs">${e.is_active?'Active':'Inactive'}</td>

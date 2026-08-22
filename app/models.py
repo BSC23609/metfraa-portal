@@ -517,6 +517,7 @@ class EmployeeAccess(Base):
     kpi_admin = Column(Boolean, default=False, nullable=False)
     expense_admin = Column(Boolean, default=False, nullable=False)
     ehs_admin = Column(Boolean, default=False, nullable=False)
+    gatepass_admin = Column(Boolean, default=False, nullable=False)
     kpi_access = Column(Boolean, default=True, nullable=False)
     expense_access = Column(Boolean, default=True, nullable=False)
     ehs_access = Column(Boolean, default=True, nullable=False)

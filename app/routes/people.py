@@ -38,7 +38,8 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/people", tags=["people"])
 templates = Jinja2Templates(directory="app/templates")
 
-ROLE_FIELDS = ["is_superadmin", "is_hr_admin", "kpi_admin", "expense_admin", "ehs_admin"]
+ROLE_FIELDS = ["is_superadmin", "is_hr_admin", "kpi_admin", "expense_admin",
+               "ehs_admin", "gatepass_admin"]
 ACCESS_FIELDS = ["kpi_access", "expense_access", "ehs_access"]
 
 

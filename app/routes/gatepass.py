@@ -192,8 +192,7 @@ def _row(o: OutpassRequest, db: Session) -> dict:
 
 
 def _is_admin(db: Session, user: Employee) -> bool:
-    a = get_access(db, user)
-    return bool(a.superadmin or a.hr_admin)
+    return bool(get_access(db, user).can_admin_gatepass)
 
 
 # ------------------------------------------------------------------ pages

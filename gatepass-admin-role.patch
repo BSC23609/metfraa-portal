@@ -1,0 +1,124 @@
+diff --git a/app/access.py b/app/access.py
+index 25b49b9..ded1aed 100644
+--- a/app/access.py
++++ b/app/access.py
+@@ -22,13 +22,15 @@ class Access:
+     kpi_admin: bool = False
+     expense_admin: bool = False
+     ehs_admin: bool = False
++    gatepass_admin: bool = False
+     kpi_access: bool = True
+     expense_access: bool = True
+     ehs_access: bool = True
+ 
+     @property
+     def any_admin(self) -> bool:
+-        return self.superadmin or self.hr_admin or self.kpi_admin or self.expense_admin or self.ehs_admin
++        return (self.superadmin or self.hr_admin or self.kpi_admin
++                or self.expense_admin or self.ehs_admin or self.gatepass_admin)
+ 
+     @property
+     def can_manage_employees(self) -> bool:
+@@ -46,6 +48,12 @@ class Access:
+     def can_admin_kpi(self) -> bool:
+         return self.superadmin or self.kpi_admin
+ 
++    @property
++    def can_admin_gatepass(self) -> bool:
++        # HR keeps it because chasing unreturned passes is an HR job; the
++        # dedicated flag lets someone run gatepass WITHOUT the rest of HR.
++        return self.superadmin or self.hr_admin or self.gatepass_admin
++
+ 
+ def get_access(db: Session, user: Employee) -> Access:
+     row = db.query(EmployeeAccess).filter(EmployeeAccess.employee_id == user.id).first()
+@@ -58,6 +66,7 @@ def get_access(db: Session, user: Employee) -> Access:
+         kpi_admin=row.kpi_admin,
+         expense_admin=row.expense_admin,
+         ehs_admin=row.ehs_admin,
++        gatepass_admin=row.gatepass_admin,
+         kpi_access=row.kpi_access,
+         expense_access=row.expense_access,
+         ehs_access=row.ehs_access,
+diff --git a/app/models.py b/app/models.py
+index 67599ca..b8acf40 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -517,6 +517,7 @@ class EmployeeAccess(Base):
+     kpi_admin = Column(Boolean, default=False, nullable=False)
+     expense_admin = Column(Boolean, default=False, nullable=False)
+     ehs_admin = Column(Boolean, default=False, nullable=False)
++    gatepass_admin = Column(Boolean, default=False, nullable=False)
+     kpi_access = Column(Boolean, default=True, nullable=False)
+     expense_access = Column(Boolean, default=True, nullable=False)
+     ehs_access = Column(Boolean, default=True, nullable=False)
+diff --git a/app/routes/gatepass.py b/app/routes/gatepass.py
+index e381616..60b07b7 100644
+--- a/app/routes/gatepass.py
++++ b/app/routes/gatepass.py
+@@ -192,8 +192,7 @@ def _row(o: OutpassRequest, db: Session) -> dict:
+ 
+ 
+ def _is_admin(db: Session, user: Employee) -> bool:
+-    a = get_access(db, user)
+-    return bool(a.superadmin or a.hr_admin)
++    return bool(get_access(db, user).can_admin_gatepass)
+ 
+ 
+ # ------------------------------------------------------------------ pages
+diff --git a/app/routes/people.py b/app/routes/people.py
+index 24de54b..1a994c5 100644
+--- a/app/routes/people.py
++++ b/app/routes/people.py
+@@ -38,7 +38,8 @@ log = logging.getLogger(__name__)
+ router = APIRouter(prefix="/people", tags=["people"])
+ templates = Jinja2Templates(directory="app/templates")
+ 
+-ROLE_FIELDS = ["is_superadmin", "is_hr_admin", "kpi_admin", "expense_admin", "ehs_admin"]
++ROLE_FIELDS = ["is_superadmin", "is_hr_admin", "kpi_admin", "expense_admin",
++               "ehs_admin", "gatepass_admin"]
+ ACCESS_FIELDS = ["kpi_access", "expense_access", "ehs_access"]
+ 
+ 
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index 1927816..659e54d 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -82,6 +82,8 @@ MISC_MIGRATIONS = [
+ ]
+ 
+ GATEPASS_MIGRATIONS = [
++    "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS gatepass_admin "
++    "BOOLEAN NOT NULL DEFAULT FALSE",
+     "CREATE INDEX IF NOT EXISTS idx_gp_emp_approver "
+     "ON gatepass_employee_approvers (approver_emp_id)",
+     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS action_token VARCHAR(64)",
+diff --git a/app/templates/people.html b/app/templates/people.html
+index 5649452..a13c565 100644
+--- a/app/templates/people.html
++++ b/app/templates/people.html
+@@ -105,6 +105,7 @@
+           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-kpi_admin"> KPI Admin</label>
+           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-expense_admin"> Expense Admin</label>
+           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-ehs_admin"> EHS Admin</label>
++          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-gatepass_admin"> Gatepass Admin</label>
+         </div>
+       </div>
+ 
+@@ -125,7 +126,7 @@
+ </style>
+ <script>
+ let EMPS = [], editing = null;
+-const ROLE_KEYS = ["is_superadmin","is_hr_admin","kpi_admin","expense_admin","ehs_admin"];
++const ROLE_KEYS = ["is_superadmin","is_hr_admin","kpi_admin","expense_admin","ehs_admin","gatepass_admin"];
+ const ACCESS_KEYS = ["kpi_access","expense_access","ehs_access"];
+ 
+ async function load() {
+@@ -169,6 +170,7 @@ function render() {
+         ${e.kpi_admin?badge('KPI-A','bg-metfraa-blue/10 text-metfraa-blue'):''}
+         ${e.expense_admin?badge('EXP-A','bg-emerald-50 text-emerald-700'):''}
+         ${e.ehs_admin?badge('EHS-A','bg-amber-50 text-amber-700'):''}
++        ${e.gatepass_admin?badge('GATE-A','bg-sky-50 text-sky-700'):''}
+       </td>
+       <td class="px-3 py-3 text-xs font-bold">${e.expense_level}</td>
+       <td class="px-3 py-3 text-xs">${e.is_active?'Active':'Inactive'}</td>
