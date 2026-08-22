@@ -1,0 +1,1472 @@
+diff --git a/app/main.py b/app/main.py
+index 8c2a318..0b382a0 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -25,6 +25,7 @@ from .routes import task_reports as task_reports_routes
+ from .routes import monthly_kpi as monthly_kpi_routes
+ from .routes import site_visits as site_visits_routes
+ from .routes import cron as cron_routes
++from .routes import gatepass as gatepass_routes
+ from .routes import ehs as ehs_routes
+ from .routes import ehs_ui as ehs_ui_routes
+ from .routes import expense as expense_routes
+@@ -111,6 +112,7 @@ app.include_router(task_reports_routes.router)
+ app.include_router(monthly_kpi_routes.router)
+ app.include_router(site_visits_routes.router)
+ app.include_router(cron_routes.router)
++app.include_router(gatepass_routes.router)
+ app.include_router(ehs_ui_routes.router)   # parity pages + contract (must precede ehs_routes)
+ app.include_router(ehs_routes.router)
+ app.include_router(expense_ui_routes.router)   # parity SPA + bootstrap (precedes expense_routes)
+diff --git a/app/models.py b/app/models.py
+index 4831987..1f9320f 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -605,3 +605,89 @@ class ExpensePendingUpload(Base):
+     created_at = Column(DateTime, default=datetime.utcnow)
+ 
+     employee = relationship("Employee", foreign_keys=[employee_id])
++
++
++# ===================== Outpass / Gatepass =====================
++# Ported from the BSC Tickets Portal for Metfraa. Two differences from BSC,
++# both deliberate:
++#   * notifications are EMAIL (the portal's SMTP), not WATI WhatsApp
++#   * routing uses a per-department approver table, seeded from employees.department
++
++class DeptApprover(Base):
++    """Who approves outpasses for a department.
++
++    leave_cover_emp_id is used when the requester ticks "my manager is on
++    leave", so a request never stalls because one person is away.
++    """
++    __tablename__ = "gatepass_dept_approvers"
++
++    department = Column(String(255), primary_key=True)
++    head_emp_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
++    leave_cover_emp_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
++    active = Column(Boolean, default=True)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    head = relationship("Employee", foreign_keys=[head_emp_id])
++    leave_cover = relationship("Employee", foreign_keys=[leave_cover_emp_id])
++
++
++class OutpassRequest(Base):
++    """An outpass (leaving, no return expected today) or gatepass (out and back).
++
++    Only a gatepass gets expected_back_at and therefore only a gatepass can go
++    overdue. Times are stored as IST display strings plus resolved timestamps,
++    matching BSC so the two systems stay legible side by side.
++    """
++    __tablename__ = "outpass_requests"
++
++    id = Column(Integer, primary_key=True)
++    ref_no = Column(String(64), unique=True, nullable=False, index=True)
++    type = Column(String(16), nullable=False, default="outpass")   # outpass | gatepass
++    on_duty = Column(Boolean, default=False)        # official work vs personal
++    req_date = Column(Date, nullable=False)
++    requester_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
++    purpose = Column(Text, nullable=False)
++    out_time = Column(String(16))                    # 'HH:MM' as entered
++    in_time = Column(String(16))                     # gatepass only
++
++    approver_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
++    approver_label = Column(String(255))
++    manager_on_leave = Column(Boolean, default=False)
++
++    status = Column(String(16), nullable=False, default="pending", index=True)
++    actioned_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
++    actioned_by_name = Column(String(255))
++    actioned_at_ist = Column(String(32))
++    reject_reason = Column(Text)
++
++    # Return tracking (gatepass only)
++    expected_back_at = Column(DateTime, nullable=True, index=True)
++    returned_at = Column(DateTime, nullable=True, index=True)
++    returned_by_name = Column(String(255))
++
++    # Independent alert stamps — each retries until it actually sends, which is
++    # the fix BSC needed when one failing send blocked the others.
++    overdue_alert_at = Column(DateTime, nullable=True)   # approver told
++    hr_alert_at = Column(DateTime, nullable=True)        # HR told
++    requester_reminder_at = Column(DateTime, nullable=True)
++
++    created_at = Column(DateTime, default=datetime.utcnow)
++
++    requester = relationship("Employee", foreign_keys=[requester_id])
++    approver = relationship("Employee", foreign_keys=[approver_id])
++
++
++class WaLog(Base):
++    """Every WATI send attempt, successful or not.
++
++    BSC ran for weeks believing HR alerts were going out; this table is how
++    the silence was finally proved and diagnosed. Cheap to write, invaluable.
++    """
++    __tablename__ = "wa_log"
++
++    id = Column(Integer, primary_key=True)
++    phone = Column(String(32))
++    template = Column(String(64))
++    result = Column(String(24), index=True)   # sent|declined|http_error|error|no_phone|skipped
++    detail = Column(Text)
++    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+diff --git a/app/routes/cron.py b/app/routes/cron.py
+index adc536a..d09fc0e 100644
+--- a/app/routes/cron.py
++++ b/app/routes/cron.py
+@@ -13,7 +13,10 @@ Two guards:
+ import logging
+ import os
+ 
+-from fastapi import APIRouter, HTTPException, Request
++from fastapi import APIRouter, Depends, HTTPException, Request
++from sqlalchemy.orm import Session
++
++from ..database import get_db
+ 
+ log = logging.getLogger(__name__)
+ 
+@@ -60,3 +63,18 @@ def cron_daily_task_report(request: Request):
+ 
+     _daily_task_report_job()
+     return {"status": "ok", "job": "daily_task_report"}
++
++
++@router.get("/gatepass-overdue")
++def cron_gatepass_overdue(request: Request, db: Session = Depends(get_db)):
++    """Nudge on gatepasses that were never returned.
++
++    Runs often (BSC learned that a once-a-day check is useless for a pass due
++    back at 3pm). Each recipient has its own stamp, so a send that fails
++    retries next run instead of being lost.
++    """
++    _authorize(request)
++    if not _enabled():
++        return {"ok": True, "skipped": "cron disabled"}
++    from .gatepass import run_overdue_check
++    return {"ok": True, **run_overdue_check(db)}
+diff --git a/app/routes/gatepass.py b/app/routes/gatepass.py
+new file mode 100644
+index 0000000..f333028
+--- /dev/null
++++ b/app/routes/gatepass.py
+@@ -0,0 +1,531 @@
++"""Outpass / Gatepass — ported from the BSC Tickets Portal for Metfraa.
++
++    Outpass  — leaving for the day, no return expected.
++    Gatepass — out and back; declares an in-time, so it can go overdue.
++
++Flow: employee raises a request -> routed to their department's approver
++(or its leave cover) -> approved or sent back -> for a gatepass, the employee
++records their return -> if they don't, a cron nudges approver, HR and
++requester on independent stamps.
++
++Two deliberate differences from BSC: notifications go by EMAIL through the
++portal's SMTP rather than WATI WhatsApp, and there is no PDF/OneDrive step
++(BSC needs a printable pass at a manned gate; that can be added later).
++"""
++import logging
++import os
++import re
++from datetime import date, datetime, timedelta
++
++from fastapi import APIRouter, Depends, HTTPException, Request
++from fastapi.responses import HTMLResponse
++from fastapi.templating import Jinja2Templates
++from sqlalchemy import or_
++from sqlalchemy.orm import Session
++
++from ..access import get_access
++from ..database import get_db
++from ..deps import get_current_user
++from ..models import DeptApprover, Employee, OutpassRequest
++
++router = APIRouter(prefix="/gatepass", tags=["gatepass"])
++log = logging.getLogger(__name__)
++templates = Jinja2Templates(directory="app/templates")
++
++IST = timedelta(hours=5, minutes=30)
++
++# A gatepass this far past its declared in-time counts as overdue.
++OVERDUE_GRACE_MIN = 30
++# Passes longer than this are treated as multi-day (site trips, logistics) and
++# excluded from HR alerts — BSC added this after logistics staff were flagged
++# every night for legitimately long trips.
++MULTI_DAY_HOURS = 16
++
++
++def _now_ist() -> datetime:
++    return datetime.utcnow() + IST
++
++
++def _ist_str(dt: datetime | None = None) -> str:
++    return (dt or _now_ist()).strftime("%Y-%m-%d %H:%M:%S")
++
++
++def _next_ref(db: Session) -> str:
++    """OGP/MET/YYMMDD/NNNN — mirrors BSC's scheme with a MET segment.
++
++    Uses MAX(suffix) rather than COUNT so deleting a pass never causes a
++    number to be reused.
++    """
++    d = _now_ist().strftime("%y%m%d")
++    prefix = f"OGP/MET/{d}/"
++    rows = (db.query(OutpassRequest.ref_no)
++            .filter(OutpassRequest.ref_no.like(f"{prefix}%")).all())
++    mx = 0
++    for (r,) in rows:
++        try:
++            mx = max(mx, int(r.rsplit("/", 1)[1]))
++        except (ValueError, IndexError):
++            continue
++    return f"{prefix}{mx + 1:04d}"
++
++
++def _resolve_approver(db: Session, user: Employee, on_leave: bool):
++    """Department head, or the leave cover when the requester flags it.
++
++    Falls back to any expense/superadmin so a request never dead-ends because
++    a department has no head configured yet.
++    """
++    dept = (user.department or "").strip()
++    row = None
++    if dept:
++        row = (db.query(DeptApprover)
++               .filter(DeptApprover.department.ilike(dept),
++                       DeptApprover.active == True).first())  # noqa: E712
++    if row:
++        emp_id = row.leave_cover_emp_id if (on_leave and row.leave_cover_emp_id) else row.head_emp_id
++        if emp_id and emp_id != user.id:
++            emp = db.query(Employee).filter(Employee.id == emp_id,
++                                            Employee.is_active == True).first()  # noqa: E712
++            if emp:
++                return emp, (row.department or dept)
++    # Fallback: a superadmin. Better a slightly wrong approver than a stuck request.
++    for e in db.query(Employee).filter(Employee.is_active == True).all():  # noqa: E712
++        if e.id == user.id:
++            continue
++        if get_access(db, e).superadmin:
++            return e, "Admin (no department head configured)"
++    return None, None
++
++
++def _valid_time(v: str | None) -> bool:
++    """HH:MM with a real clock value. A bare regex accepts 25:99, which then
++    silently produces no expected_back_at and a gatepass that can never go
++    overdue — so the range check matters, not just the shape."""
++    if not v or not re.match(r"^\d{1,2}:\d{2}$", v.strip()):
++        return False
++    hh, mm = (int(x) for x in v.strip().split(":"))
++    return 0 <= hh <= 23 and 0 <= mm <= 59
++
++
++def _expected_back(req_date, in_time: str | None) -> datetime | None:
++    """Resolve a gatepass's declared in-time into a real UTC instant."""
++    if not _valid_time(in_time):
++        return None
++    hh, mm = (int(x) for x in in_time.strip().split(":"))
++    d = req_date if isinstance(req_date, date) else _now_ist().date()
++    return datetime(d.year, d.month, d.day, hh, mm) - IST   # IST wall clock -> UTC
++
++
++def _pass_span(o: OutpassRequest) -> timedelta | None:
++    """How long the pass is declared for, from out-time to in-time.
++
++    Derived from BOTH stored strings rather than mixing the stored
++    expected_back_at with a recomputed out-time — those can diverge (an admin
++    edit, a legacy row) and then the span is meaningless. If in-time is
++    earlier than out-time the pass runs past midnight, so add a day.
++    """
++    if not o.out_time or not o.in_time:
++        return None
++    out = _expected_back(o.req_date, o.out_time)
++    back = _expected_back(o.req_date, o.in_time)
++    if not out or not back:
++        return None
++    if back <= out:
++        back += timedelta(days=1)
++    return back - out
++
++
++def _is_multi_day(o: OutpassRequest) -> bool:
++    """Long site/logistics trips shouldn't pester HR every evening — BSC added
++    this after logistics staff were flagged nightly for legitimate trips."""
++    span = _pass_span(o)
++    return bool(span and span >= timedelta(hours=MULTI_DAY_HOURS))
++
++
++def _row(o: OutpassRequest, db: Session) -> dict:
++    overdue = bool(
++        o.type == "gatepass" and o.status == "approved" and not o.returned_at
++        and o.expected_back_at
++        and datetime.utcnow() > o.expected_back_at + timedelta(minutes=OVERDUE_GRACE_MIN))
++    return {
++        "id": o.id, "ref_no": o.ref_no, "type": o.type, "on_duty": bool(o.on_duty),
++        "req_date": o.req_date.isoformat() if o.req_date else None,
++        "purpose": o.purpose, "out_time": o.out_time, "in_time": o.in_time,
++        "status": o.status,
++        "requester_name": o.requester.name if o.requester else "",
++        "requester_code": o.requester.employee_code if o.requester else "",
++        "department": o.requester.department if o.requester else "",
++        "approver_name": o.approver.name if o.approver else "",
++        "approver_label": o.approver_label,
++        "manager_on_leave": bool(o.manager_on_leave),
++        "actioned_by_name": o.actioned_by_name,
++        "actioned_at": o.actioned_at_ist,
++        "reject_reason": o.reject_reason,
++        "expected_back_at": (o.expected_back_at + IST).strftime("%Y-%m-%d %H:%M")
++                            if o.expected_back_at else None,
++        "returned_at": (o.returned_at + IST).strftime("%Y-%m-%d %H:%M")
++                       if o.returned_at else None,
++        "returned_by_name": o.returned_by_name,
++        "overdue": overdue and not _is_multi_day(o),
++        "multi_day": _is_multi_day(o),
++    }
++
++
++def _is_admin(db: Session, user: Employee) -> bool:
++    a = get_access(db, user)
++    return bool(a.superadmin or a.hr_admin)
++
++
++# ------------------------------------------------------------------ pages
++
++@router.get("/", response_class=HTMLResponse)
++def page(request: Request, user: Employee = Depends(get_current_user),
++         db: Session = Depends(get_db)):
++    pending_for_me = (db.query(OutpassRequest)
++                      .filter(OutpassRequest.approver_id == user.id,
++                              OutpassRequest.status == "pending").count())
++    return templates.TemplateResponse(request, "gatepass.html", {
++        "user": user, "is_admin": _is_admin(db, user),
++        "pending_for_me": pending_for_me,
++    })
++
++
++# ------------------------------------------------------------------- APIs
++
++@router.get("/api/mine")
++def api_mine(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    rows = (db.query(OutpassRequest)
++            .filter(OutpassRequest.requester_id == user.id)
++            .order_by(OutpassRequest.id.desc()).limit(100).all())
++    approver, label = _resolve_approver(db, user, False)
++    return {"requests": [_row(o, db) for o in rows],
++            "my_approver": approver.name if approver else None,
++            "my_approver_label": label}
++
++
++@router.post("/api/request")
++async def api_request(request: Request, user: Employee = Depends(get_current_user),
++                      db: Session = Depends(get_db)):
++    b = await request.json()
++    typ = (b.get("type") or "").strip()
++    if typ not in ("outpass", "gatepass"):
++        raise HTTPException(status_code=400, detail="Choose Outpass or Gatepass")
++    purpose = (b.get("purpose") or "").strip()
++    if not purpose:
++        raise HTTPException(status_code=400, detail="Purpose is required")
++    if len(purpose) > 2000:
++        raise HTTPException(status_code=400, detail="Purpose is too long")
++    out_time = (b.get("out_time") or "").strip()
++    if not _valid_time(out_time):
++        raise HTTPException(status_code=400, detail="Out-time is required (HH:MM)")
++    in_time = (b.get("in_time") or "").strip()
++    if typ == "gatepass" and not _valid_time(in_time):
++        raise HTTPException(status_code=400, detail="In-time is required for a gatepass (HH:MM)")
++
++    raw_date = (b.get("req_date") or "").strip()
++    try:
++        req_date = (datetime.strptime(raw_date, "%Y-%m-%d").date() if raw_date
++                    else _now_ist().date())
++    except ValueError:
++        raise HTTPException(status_code=400, detail="Invalid date")
++
++    on_leave = bool(b.get("manager_on_leave"))
++    approver, label = _resolve_approver(db, user, on_leave)
++    if not approver:
++        raise HTTPException(status_code=400,
++                            detail="No approver is configured for your department. "
++                                   "Please contact HR.")
++
++    o = OutpassRequest(
++        ref_no=_next_ref(db), type=typ, on_duty=bool(b.get("on_duty")),
++        req_date=req_date, requester_id=user.id, purpose=purpose,
++        out_time=out_time, in_time=in_time if typ == "gatepass" else None,
++        approver_id=approver.id, approver_label=label,
++        manager_on_leave=on_leave, status="pending")
++    db.add(o)
++    db.commit()
++
++    # Notify on both channels. WhatsApp is what people actually read; email is
++    # the durable record. Neither failing may lose the request.
++    from ..services import wati
++    from ..services.portal_notify import notify_gatepass_requested
++    for fn in (lambda: notify_gatepass_requested(approver, o, user),
++               lambda: wati.outpass_request(approver, o, db)):
++        try:
++            fn()
++        except Exception:
++            log.warning("[gatepass] notify failed on %s", o.ref_no, exc_info=True)
++    return {"ok": True, "ref_no": o.ref_no, "approver": approver.name,
++            "whatsapp": wati.configured()}
++
++
++@router.get("/api/approvals")
++def api_approvals(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    q = db.query(OutpassRequest)
++    if _is_admin(db, user):
++        q = q.filter(or_(OutpassRequest.status == "pending",
++                         OutpassRequest.approver_id == user.id))
++    else:
++        q = q.filter(OutpassRequest.approver_id == user.id)
++    rows = q.order_by(OutpassRequest.id.desc()).limit(200).all()
++    return {"requests": [_row(o, db) for o in rows],
++            "pending": sum(1 for o in rows if o.status == "pending")}
++
++
++def _load_for_action(db: Session, user: Employee, rid: int) -> OutpassRequest:
++    o = db.query(OutpassRequest).filter(OutpassRequest.id == rid).first()
++    if not o:
++        raise HTTPException(status_code=404, detail="Request not found")
++    if o.approver_id != user.id and not _is_admin(db, user):
++        raise HTTPException(status_code=403, detail="This request isn't routed to you")
++    if o.status != "pending":
++        raise HTTPException(status_code=409, detail=f"Already {o.status}")
++    return o
++
++
++@router.post("/api/{rid}/approve")
++def api_approve(rid: int, user: Employee = Depends(get_current_user),
++                db: Session = Depends(get_db)):
++    o = _load_for_action(db, user, rid)
++    o.status = "approved"
++    o.actioned_by_id = user.id
++    o.actioned_by_name = user.name
++    o.actioned_at_ist = _ist_str()
++    if o.type == "gatepass":
++        o.expected_back_at = _expected_back(o.req_date, o.in_time)
++    db.commit()
++    from ..services import wati
++    from ..services.portal_notify import notify_gatepass_decided
++    for fn in (lambda: notify_gatepass_decided(o, db),
++               lambda: wati.outpass_approved(o, db)):
++        try:
++            fn()
++        except Exception:
++            log.warning("[gatepass] notify failed on %s", o.ref_no, exc_info=True)
++    return {"ok": True, "status": "approved"}
++
++
++@router.post("/api/{rid}/reject")
++async def api_reject(rid: int, request: Request,
++                     user: Employee = Depends(get_current_user),
++                     db: Session = Depends(get_db)):
++    o = _load_for_action(db, user, rid)
++    reason = ((await request.json()).get("reason") or "").strip()
++    if len(reason) < 3:
++        raise HTTPException(status_code=400,
++                            detail="Please give a reason so the employee knows why")
++    o.status = "rejected"
++    o.actioned_by_id = user.id
++    o.actioned_by_name = user.name
++    o.actioned_at_ist = _ist_str()
++    o.reject_reason = reason[:2000]
++    db.commit()
++    from ..services import wati
++    from ..services.portal_notify import notify_gatepass_decided
++    for fn in (lambda: notify_gatepass_decided(o, db),
++               lambda: wati.outpass_rejected(o, db)):
++        try:
++            fn()
++        except Exception:
++            log.warning("[gatepass] notify failed on %s", o.ref_no, exc_info=True)
++    return {"ok": True, "status": "rejected"}
++
++
++@router.post("/api/{rid}/return")
++def api_return(rid: int, user: Employee = Depends(get_current_user),
++               db: Session = Depends(get_db)):
++    """Record the actual return. The requester or an admin may do this."""
++    o = db.query(OutpassRequest).filter(OutpassRequest.id == rid).first()
++    if not o:
++        raise HTTPException(status_code=404, detail="Request not found")
++    if o.requester_id != user.id and not _is_admin(db, user):
++        raise HTTPException(status_code=403, detail="Not your gatepass")
++    if o.type != "gatepass":
++        raise HTTPException(status_code=400, detail="Only a gatepass has a return")
++    if o.status != "approved":
++        raise HTTPException(status_code=400,
++                            detail=f"Cannot record a return on a {o.status} request")
++    if o.returned_at:
++        raise HTTPException(status_code=409, detail="Return already recorded")
++    o.returned_at = datetime.utcnow()
++    o.returned_by_name = user.name
++    db.commit()
++    return {"ok": True,
++            "returned_at": (o.returned_at + IST).strftime("%Y-%m-%d %H:%M")}
++
++
++# --------------------------------------------------------------- admin API
++
++@router.get("/api/admin/all")
++def api_admin_all(user: Employee = Depends(get_current_user),
++                  db: Session = Depends(get_db), status: str | None = None):
++    if not _is_admin(db, user):
++        raise HTTPException(status_code=403, detail="Admin only")
++    q = db.query(OutpassRequest)
++    if status == "open":
++        q = q.filter(OutpassRequest.type == "gatepass",
++                     OutpassRequest.status == "approved",
++                     OutpassRequest.returned_at.is_(None))
++    elif status:
++        q = q.filter(OutpassRequest.status == status)
++    rows = q.order_by(OutpassRequest.id.desc()).limit(500).all()
++    return {"requests": [_row(o, db) for o in rows]}
++
++
++@router.get("/api/admin/approvers")
++def api_admin_approvers(user: Employee = Depends(get_current_user),
++                        db: Session = Depends(get_db)):
++    if not _is_admin(db, user):
++        raise HTTPException(status_code=403, detail="Admin only")
++    depts = sorted({(e.department or "").strip()
++                    for e in db.query(Employee).filter(Employee.is_active == True).all()  # noqa: E712
++                    if (e.department or "").strip()})
++    rows = {r.department.lower(): r for r in db.query(DeptApprover).all()}
++    out = []
++    for d in depts:
++        r = rows.get(d.lower())
++        out.append({
++            "department": d,
++            "head_emp_id": r.head_emp_id if r else None,
++            "head_name": r.head.name if r and r.head else None,
++            "leave_cover_emp_id": r.leave_cover_emp_id if r else None,
++            "leave_cover_name": r.leave_cover.name if r and r.leave_cover else None,
++            "active": bool(r.active) if r else False,
++        })
++    people = [{"id": e.id, "name": e.name, "employee_code": e.employee_code,
++               "department": e.department}
++              for e in db.query(Employee).filter(Employee.is_active == True)  # noqa: E712
++              .order_by(Employee.name).all()]
++    return {"departments": out, "employees": people}
++
++
++@router.post("/api/admin/approvers")
++async def api_set_approver(request: Request, user: Employee = Depends(get_current_user),
++                           db: Session = Depends(get_db)):
++    if not _is_admin(db, user):
++        raise HTTPException(status_code=403, detail="Admin only")
++    b = await request.json()
++    dept = (b.get("department") or "").strip()
++    if not dept:
++        raise HTTPException(status_code=400, detail="Department is required")
++
++    def _emp(v):
++        if v in (None, "", 0):
++            return None
++        try:
++            eid = int(v)
++        except (TypeError, ValueError):
++            raise HTTPException(status_code=400, detail="Invalid employee")
++        if not db.query(Employee).filter(Employee.id == eid).first():
++            raise HTTPException(status_code=400, detail="Employee not found")
++        return eid
++
++    head = _emp(b.get("head_emp_id"))
++    cover = _emp(b.get("leave_cover_emp_id"))
++    row = (db.query(DeptApprover)
++           .filter(DeptApprover.department.ilike(dept)).first())
++    if not row:
++        row = DeptApprover(department=dept)
++        db.add(row)
++    row.head_emp_id = head
++    row.leave_cover_emp_id = cover
++    row.active = bool(b.get("active", True))
++    db.commit()
++    return {"ok": True}
++
++
++# ------------------------------------------------------------ overdue watch
++
++def run_overdue_check(db: Session) -> dict:
++    """Nudge approver, HR and requester about gatepasses that never came back.
++
++    Each recipient has its own stamp so a failing send for one doesn't block
++    the others, and a stamp is only set when a channel actually DELIVERED —
++    otherwise the next run retries. Setting the stamp on attempt is precisely
++    how BSC lost every HR alert for weeks.
++    """
++    from ..services import wati
++    from ..services.portal_notify import (notify_gatepass_overdue,
++                                          notify_gatepass_return_reminder)
++    cutoff = datetime.utcnow() - timedelta(minutes=OVERDUE_GRACE_MIN)
++    rows = (db.query(OutpassRequest)
++            .filter(OutpassRequest.type == "gatepass",
++                    OutpassRequest.status == "approved",
++                    OutpassRequest.returned_at.is_(None),
++                    OutpassRequest.expected_back_at.isnot(None),
++                    OutpassRequest.expected_back_at < cutoff).all())
++    sent = {"approver": 0, "hr": 0, "requester": 0, "checked": len(rows),
++            "multi_day_skipped": 0, "whatsapp": wati.configured()}
++
++    def _deliver(email_fn, wa_fn) -> bool:
++        """True if EITHER channel got through."""
++        ok = False
++        for fn in (email_fn, wa_fn):
++            try:
++                ok = bool(fn()) or ok
++            except Exception:
++                log.warning("[gatepass] overdue notify failed", exc_info=True)
++        return ok
++
++    hr_name = os.getenv("GATEPASS_HR_NAME", "HR")
++    hr_phone = os.getenv("GATEPASS_HR_PHONE", "")
++
++    for o in rows:
++        late = int((datetime.utcnow() - o.expected_back_at).total_seconds() // 60)
++        multi = _is_multi_day(o)
++
++        if not o.requester_reminder_at and o.requester:
++            if _deliver(lambda: (notify_gatepass_return_reminder(o), True)[1],
++                        lambda: wati.gatepass_return_reminder(o, late, db)):
++                o.requester_reminder_at = datetime.utcnow()
++                sent["requester"] += 1
++
++        if multi:
++            sent["multi_day_skipped"] += 1
++            db.commit()
++            continue
++
++        if not o.overdue_alert_at and o.approver:
++            ap = o.approver
++            if _deliver(lambda: (notify_gatepass_overdue(o, ap.email, "approver"), True)[1],
++                        lambda: wati.outpass_overdue(ap.name, ap.phone, o, late, db)):
++                o.overdue_alert_at = datetime.utcnow()
++                sent["approver"] += 1
++
++        if not o.hr_alert_at:
++            if _deliver(lambda: (notify_gatepass_overdue(o, None, "hr"), True)[1],
++                        lambda: wati.outpass_overdue(hr_name, hr_phone, o, late, db)
++                                 if hr_phone else False):
++                o.hr_alert_at = datetime.utcnow()
++                sent["hr"] += 1
++        db.commit()
++    db.commit()
++    return sent
++
++
++@router.get("/api/admin/wa-log")
++def api_wa_log(user: Employee = Depends(get_current_user), db: Session = Depends(get_db),
++               limit: int = 100):
++    """Recent WhatsApp send attempts.
++
++    Exists because BSC spent weeks believing alerts were going out. If HR says
++    they got nothing, look here first — 'declined' or 'no_phone' rows tell you
++    immediately whether it was WATI, the template, or a missing number.
++    """
++    if not _is_admin(db, user):
++        raise HTTPException(status_code=403, detail="Admin only")
++    from ..models import WaLog
++    from ..services import wati as _w
++    rows = (db.query(WaLog).order_by(WaLog.id.desc()).limit(min(limit, 500)).all())
++    counts = {}
++    for r in rows:
++        counts[r.result] = counts.get(r.result, 0) + 1
++    return {
++        "configured": _w.configured(),
++        "hr_phone_set": bool(os.getenv("GATEPASS_HR_PHONE")),
++        "counts": counts,
++        "rows": [{"id": r.id, "phone": r.phone, "template": r.template,
++                  "result": r.result, "detail": r.detail,
++                  "at": (r.created_at + IST).strftime("%Y-%m-%d %H:%M")
++                        if r.created_at else None} for r in rows],
++    }
+diff --git a/app/services/portal_notify.py b/app/services/portal_notify.py
+index 2084356..328a57e 100644
+--- a/app/services/portal_notify.py
++++ b/app/services/portal_notify.py
+@@ -205,3 +205,76 @@ def notify_consolidated_rejected(bg, report, employee_email: str,
+                            f"Reason: {note}",
+                            f"{returned} claim(s) returned for editing."],
+                           f"{BASE()}/expense/", "Open Expense Portal"))
++
++
++# ---- Outpass / Gatepass ---------------------------------------------------
++# BSC sends these over WATI WhatsApp; the Metfraa portal has no WhatsApp
++# provider, so they go by email through the same SMTP path as everything else.
++
++def _pass_lines(o, extra: list[str] | None = None) -> list[str]:
++    label = "Gatepass" if o.type == "gatepass" else "Outpass"
++    req = o.requester
++    lines = [
++        f"<b>{label}</b> · {o.ref_no}",
++        f"Employee: {req.name if req else '—'}"
++        + (f" ({req.employee_code})" if req and req.employee_code else ""),
++        f"Department: {(req.department if req else None) or '—'}",
++        f"Date: {o.req_date.strftime('%d %b %Y') if o.req_date else '—'}",
++        f"Out: {o.out_time or '—'}" + (f" · Expected back: {o.in_time}"
++                                       if o.type == "gatepass" and o.in_time else ""),
++        f"Purpose: {o.purpose or '—'}",
++    ]
++    if o.on_duty:
++        lines.append("Marked <b>on duty</b> (official work).")
++    if o.manager_on_leave:
++        lines.append("Requester flagged their manager as on leave.")
++    return lines + (extra or [])
++
++
++def notify_gatepass_requested(approver, o, requester) -> None:
++    if not getattr(approver, "email", None):
++        return
++    _send(approver.email,
++          f"[Gatepass] Approval needed — {requester.name} ({o.ref_no})",
++          _card("A pass request needs your approval", _pass_lines(o),
++                f"{BASE()}/gatepass/", "Review request"))
++
++
++def notify_gatepass_decided(o, db=None) -> None:
++    req = o.requester
++    if not req or not req.email:
++        return
++    approved = o.status == "approved"
++    extra = ([f"Approved by: {o.actioned_by_name or '—'}"] if approved
++             else [f"Reason: {o.reject_reason or '—'}"])
++    if approved and o.type == "gatepass":
++        extra.append("Remember to record your return in the portal when you get back.")
++    _send(req.email,
++          f"[Gatepass] {'Approved' if approved else 'Not approved'} — {o.ref_no}",
++          _card("Your pass was approved" if approved else "Your pass was not approved",
++                _pass_lines(o, extra), f"{BASE()}/gatepass/", "Open Gatepass"))
++
++
++def notify_gatepass_return_reminder(o) -> None:
++    req = o.requester
++    if not req or not req.email:
++        return
++    _send(req.email,
++          f"[Gatepass] Please record your return — {o.ref_no}",
++          _card("Your gatepass is still showing as open",
++                _pass_lines(o, ["If you're back, please record your return in the "
++                                "portal so it doesn't show as overdue."]),
++                f"{BASE()}/gatepass/", "Record my return"))
++
++
++def notify_gatepass_overdue(o, to: str | None, who: str) -> None:
++    """who: 'approver' or 'hr'. HR falls back to the configured HR address."""
++    target = to or _hr_email()
++    if not target:
++        return
++    _send(target,
++          f"[Gatepass OVERDUE] {o.requester.name if o.requester else ''} — {o.ref_no}",
++          _card("A gatepass has not been returned",
++                _pass_lines(o, ["This pass is past its declared in-time and no "
++                                "return has been recorded."]),
++                f"{BASE()}/gatepass/", "Open Gatepass"))
+diff --git a/app/services/wati.py b/app/services/wati.py
+new file mode 100644
+index 0000000..760a081
+--- /dev/null
++++ b/app/services/wati.py
+@@ -0,0 +1,200 @@
++"""WATI (WhatsApp Business API) client — ported from the BSC Tickets Portal.
++
++Every guard in here exists because BSC hit the failure in production:
++
++  * WATI returns HTTP 200 even when it refuses to send (template not found,
++    parameter mismatch, number not on WhatsApp). The real outcome is in the
++    JSON body's `result` / `validWhatsAppNumber`, so a 200 is NOT success.
++  * A blank template parameter makes WATI reject the whole message with
++    "cannot have blank text" — every value falls back to '-'.
++  * WATI rejects params containing newlines, tabs or runs of spaces.
++  * An unbounded request can hang for minutes; on Vercel that burns the whole
++    function budget and surfaces as a 504 on the cron. Hard timeout, always.
++  * Every attempt is logged so a silent failure is visible afterwards, which
++    is how BSC eventually found HR had never received a single alert.
++
++Templates must be created in WATI as CATEGORY = UTILITY, or Meta's marketing
++frequency cap will quietly throttle them. The outpass template names below are
++the ones already approved for BSC; set WATI_*_TPL env vars to point at
++Metfraa's own if they differ.
++"""
++import logging
++import os
++import re
++from datetime import datetime
++
++import httpx
++
++log = logging.getLogger(__name__)
++
++
++def _base() -> str:
++    return (os.getenv("WATI_BASE_URL") or "").rstrip("/")
++
++
++def _token() -> str:
++    return os.getenv("WATI_TOKEN") or ""
++
++
++def configured() -> bool:
++    return bool(_base() and _token())
++
++
++TPL = {
++    "request": lambda: os.getenv("WATI_OUTPASS_REQUEST_TPL", "outpass_request2"),
++    "approved": lambda: os.getenv("WATI_OUTPASS_APPROVED_TPL", "outpass_approved2"),
++    "rejected": lambda: os.getenv("WATI_OUTPASS_REJECTED_TPL", "outpass_rejected2"),
++    "overdue": lambda: os.getenv("WATI_OVERDUE_TPL", "outpass_overdue"),
++    "return_reminder": lambda: os.getenv("WATI_RETURN_REMINDER_TPL",
++                                         "gatepass_return_reminder"),
++}
++
++
++def normalize_phone(raw) -> str:
++    """Indian mobiles arrive in every shape; WATI wants digits with country code."""
++    p = re.sub(r"\D", "", str(raw or ""))
++    if not p:
++        return ""
++    if len(p) == 10:
++        return "91" + p
++    if len(p) == 11 and p.startswith("0"):
++        return "91" + p[1:]
++    return p
++
++
++def clean_param(v) -> str:
++    """WATI rejects newlines, tabs and long space runs inside parameters."""
++    return re.sub(r"\s+", " ", str("" if v is None else v)).strip()
++
++
++def _log_attempt(db, phone: str, template: str, result: str, detail: str = "") -> None:
++    """Best-effort audit row. Logging must never break or slow a send."""
++    try:
++        from ..models import WaLog
++        db.add(WaLog(phone=str(phone or "")[:32], template=str(template or "")[:64],
++                     result=result, detail=str(detail or "")[:500],
++                     created_at=datetime.utcnow()))
++        db.commit()
++    except Exception:
++        try:
++            db.rollback()
++        except Exception:
++            pass
++
++
++def send_template(phone, template_name: str, params: dict, db=None) -> bool:
++    """Send one WATI template. Returns True only if WATI actually accepted it."""
++    original = phone
++    phone = normalize_phone(phone)
++    if not phone:
++        log.warning("[wati] no phone for %s", template_name)
++        if db is not None:
++            _log_attempt(db, original, template_name, "no_phone", "empty/invalid number")
++        return False
++
++    # Blank values make WATI reject the entire message — always substitute.
++    parameters = [{"name": k, "value": clean_param(v) or "-"} for k, v in params.items()]
++
++    if not configured():
++        log.info("[wati] (not configured) would send %s to %s: %s",
++                 template_name, phone, params)
++        if db is not None:
++            _log_attempt(db, phone, template_name, "skipped", "WATI not configured")
++        return False
++
++    tok = _token()
++    headers = {"Authorization": tok if tok.startswith("Bearer") else f"Bearer {tok}",
++               "Content-Type": "application/json"}
++    url = f"{_base()}/api/v1/sendTemplateMessage"
++    timeout = float(os.getenv("WATI_TIMEOUT_MS", "8000")) / 1000.0
++    try:
++        with httpx.Client(timeout=timeout) as client:
++            r = client.post(url, headers=headers,
++                            params={"whatsappNumber": phone},
++                            json={"template_name": template_name,
++                                  "broadcast_name": template_name,
++                                  "parameters": parameters})
++        text = r.text or ""
++        if r.status_code >= 400:
++            log.warning("[wati] %s -> %s %s", template_name, r.status_code, text[:300])
++            if db is not None:
++                _log_attempt(db, phone, template_name, "http_error",
++                             f"{r.status_code} {text[:300]}")
++            return False
++        # A 200 is not success — WATI reports refusal inside the body.
++        try:
++            body = r.json()
++        except Exception:
++            body = None
++        if body and (body.get("result") in (False, "false")
++                     or body.get("validWhatsAppNumber") is False):
++            log.warning("[wati] %s -> declined: %s", template_name, text[:300])
++            if db is not None:
++                _log_attempt(db, phone, template_name, "declined", text[:300])
++            return False
++        if db is not None:
++            _log_attempt(db, phone, template_name, "sent", "")
++        return True
++    except httpx.TimeoutException:
++        log.warning("[wati] %s -> timed out", template_name)
++        if db is not None:
++            _log_attempt(db, phone, template_name, "error", "timed out")
++        return False
++    except Exception as e:
++        log.warning("[wati] send failed: %s", e)
++        if db is not None:
++            _log_attempt(db, phone, template_name, "error", str(e)[:300])
++        return False
++
++
++# ---------------------------------------------------------------- wrappers
++# Parameter NAMES must match the template variables in WATI exactly.
++
++def _type_label(o) -> str:
++    return "Gatepass" if o.type == "gatepass" else "Outpass"
++
++
++def outpass_request(approver, o, db=None) -> bool:
++    return send_template(approver.phone, TPL["request"](), {
++        "name": approver.name, "ref": o.ref_no,
++        "requester": o.requester.name if o.requester else "-",
++        "type": _type_label(o), "purpose": o.purpose or "-",
++        "date": o.req_date.strftime("%d %b %Y") if o.req_date else "-",
++        "out_time": o.out_time or "-",
++    }, db)
++
++
++def outpass_approved(o, db=None) -> bool:
++    req = o.requester
++    return send_template(req.phone if req else None, TPL["approved"](), {
++        "name": req.name if req else "-", "ref": o.ref_no, "type": _type_label(o),
++        "approver": o.actioned_by_name or "-",
++    }, db)
++
++
++def outpass_rejected(o, db=None) -> bool:
++    req = o.requester
++    return send_template(req.phone if req else None, TPL["rejected"](), {
++        "name": req.name if req else "-", "ref": o.ref_no, "type": _type_label(o),
++        "approver": o.actioned_by_name or "-", "reason": o.reject_reason or "-",
++    }, db)
++
++
++def outpass_overdue(to_name: str, to_phone, o, overdue_min: int, db=None) -> bool:
++    return send_template(to_phone, TPL["overdue"](), {
++        "name": to_name or "Sir",
++        "employee": o.requester.name if o.requester else "-",
++        "ref": o.ref_no, "out_time": o.out_time or "-",
++        "expected": o.in_time or "-", "overdue_min": str(overdue_min),
++        "purpose": o.purpose or "-",
++        "duty": "On duty" if o.on_duty else "Personal",
++    }, db)
++
++
++def gatepass_return_reminder(o, overdue_min: int, db=None) -> bool:
++    req = o.requester
++    return send_template(req.phone if req else None, TPL["return_reminder"](), {
++        "name": req.name if req else "-", "ref": o.ref_no,
++        "out_time": o.out_time or "-", "expected": o.in_time or "-",
++        "overdue_min": str(overdue_min),
++    }, db)
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index 642a366..152813e 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -73,7 +73,13 @@ EXPENSE_PARITY_MIGRATIONS += [
+     "CREATE INDEX IF NOT EXISTS ix_expense_pending_uploads_token "
+     "ON expense_pending_uploads (upload_token)",
+ ]
+-STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + EXPENSE_PARITY_MIGRATIONS
++GATEPASS_MIGRATIONS = [
++    "CREATE INDEX IF NOT EXISTS idx_wa_log_created ON wa_log(created_at DESC)",
++    "CREATE INDEX IF NOT EXISTS idx_outpass_open ON outpass_requests(returned_at) "
++    "WHERE returned_at IS NULL",
++    "CREATE INDEX IF NOT EXISTS idx_outpass_expected ON outpass_requests(expected_back_at)",
++]
++STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + EXPENSE_PARITY_MIGRATIONS + GATEPASS_MIGRATIONS
+ 
+ 
+ def run_startup_migrations() -> None:
+diff --git a/app/templates/gatepass.html b/app/templates/gatepass.html
+new file mode 100644
+index 0000000..b00c090
+--- /dev/null
++++ b/app/templates/gatepass.html
+@@ -0,0 +1,437 @@
++{% extends "base.html" %}
++{% block title %}Outpass / Gatepass — Metfraa{% endblock %}
++
++{% block content %}
++<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="gpApp()" x-init="init()" x-cloak>
++
++  <div class="mb-8">
++    <div class="lbl mb-2">Metfraa Portal</div>
++    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">Outpass / Gatepass</h1>
++    <div class="flex items-center gap-3 mt-3">
++      <span class="h-px w-10 bg-metfraa-blue"></span>
++      <p class="text-sm text-metfraa-gray-500">
++        Outpass — leaving, no return today. Gatepass — out and back the same day.
++      </p>
++    </div>
++  </div>
++
++  <!-- Tabs -->
++  <div class="flex gap-1 mb-6 border-b border-metfraa-gray-200 flex-wrap">
++    <template x-for="t in tabs" :key="t.id">
++      <button @click="tab = t.id; load()"
++        :class="tab === t.id
++          ? 'border-metfraa-blue text-metfraa-ink'
++          : 'border-transparent text-metfraa-gray-500 hover:text-metfraa-ink'"
++        class="px-4 py-2 text-sm font-bold border-b-2">
++        <span x-text="t.label"></span>
++        <span x-show="t.id === 'approvals' && pendingCount > 0"
++              class="ml-1 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[10px]"
++              x-text="pendingCount"></span>
++      </button>
++    </template>
++  </div>
++
++  <!-- ============ NEW REQUEST ============ -->
++  <div x-show="tab === 'new'">
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-6 max-w-2xl">
++      <div class="lbl mb-4">New request</div>
++
++      <div class="grid grid-cols-2 gap-3 mb-5">
++        <template x-for="t in ['outpass','gatepass']" :key="t">
++          <button @click="form.type = t"
++            :class="form.type === t
++              ? 'border-metfraa-blue bg-metfraa-blue/5 text-metfraa-ink'
++              : 'border-metfraa-gray-200 text-metfraa-gray-500 hover:border-metfraa-gray-300'"
++            class="border-2 rounded-lg p-4 text-left">
++            <div class="display text-sm font-bold" x-text="t === 'outpass' ? 'Outpass' : 'Gatepass'"></div>
++            <div class="text-xs mt-1 text-metfraa-gray-500"
++                 x-text="t === 'outpass' ? 'Leaving — not returning today' : 'Out and back — declares an in-time'"></div>
++          </button>
++        </template>
++      </div>
++
++      <div class="grid sm:grid-cols-2 gap-4">
++        <div>
++          <label class="lbl block mb-1">Date</label>
++          <input type="date" x-model="form.req_date"
++                 class="w-full rounded-lg border-metfraa-gray-300 text-sm">
++        </div>
++        <div>
++          <label class="lbl block mb-1">Out time</label>
++          <input type="time" x-model="form.out_time"
++                 class="w-full rounded-lg border-metfraa-gray-300 text-sm">
++        </div>
++        <div x-show="form.type === 'gatepass'">
++          <label class="lbl block mb-1">Expected in time</label>
++          <input type="time" x-model="form.in_time"
++                 class="w-full rounded-lg border-metfraa-gray-300 text-sm">
++        </div>
++      </div>
++
++      <div class="mt-4">
++        <label class="lbl block mb-1">Purpose</label>
++        <textarea x-model="form.purpose" rows="3" maxlength="2000"
++                  placeholder="Where you're going and why"
++                  class="w-full rounded-lg border-metfraa-gray-300 text-sm"></textarea>
++      </div>
++
++      <div class="mt-4 space-y-2">
++        <label class="flex items-center gap-2 text-sm">
++          <input type="checkbox" x-model="form.on_duty" class="rounded border-metfraa-gray-300">
++          <span>On duty — this is official work, not personal</span>
++        </label>
++        <label class="flex items-center gap-2 text-sm">
++          <input type="checkbox" x-model="form.manager_on_leave" class="rounded border-metfraa-gray-300">
++          <span>My manager is on leave — route to the cover approver</span>
++        </label>
++      </div>
++
++      <div class="mt-5 flex items-center justify-between gap-3 flex-wrap">
++        <div class="text-xs text-metfraa-gray-500">
++          Goes to: <span class="font-semibold" x-text="myApprover || 'your department head'"></span>
++        </div>
++        <button @click="submit()" :disabled="busy"
++          class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
++          <span x-text="busy ? 'Sending…' : 'Submit request'"></span>
++        </button>
++      </div>
++      <p x-show="msg" class="mt-3 text-sm" :class="err ? 'text-red-600' : 'text-green-700'" x-text="msg"></p>
++    </div>
++  </div>
++
++  <!-- ============ MY PASSES ============ -->
++  <div x-show="tab === 'mine'">
++    <template x-if="!mine.length">
++      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-10 text-center text-metfraa-gray-400 text-sm">
++        No requests yet.
++      </div>
++    </template>
++    <div class="space-y-3">
++      <template x-for="o in mine" :key="o.id">
++        <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4">
++          <div class="flex items-start justify-between gap-4 flex-wrap">
++            <div>
++              <div class="flex items-center gap-2 flex-wrap">
++                <span class="mono text-xs text-metfraa-gray-500" x-text="o.ref_no"></span>
++                <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
++                      :class="statusClass(o)" x-text="statusLabel(o)"></span>
++                <span x-show="o.on_duty" class="px-2 py-0.5 rounded bg-metfraa-blue/10 text-metfraa-blue text-[10px] font-bold uppercase">On duty</span>
++              </div>
++              <div class="display text-sm font-bold mt-1"
++                   x-text="(o.type === 'gatepass' ? 'Gatepass' : 'Outpass') + ' · ' + o.req_date"></div>
++              <div class="text-sm text-metfraa-gray-600 mt-1" x-text="o.purpose"></div>
++              <div class="text-xs text-metfraa-gray-500 mt-1">
++                Out <span x-text="o.out_time"></span>
++                <template x-if="o.in_time"><span> · back by <span x-text="o.in_time"></span></span></template>
++                <template x-if="o.returned_at"><span> · returned <span x-text="o.returned_at"></span></span></template>
++              </div>
++              <div x-show="o.reject_reason" class="text-xs text-red-600 mt-1">
++                Reason: <span x-text="o.reject_reason"></span>
++              </div>
++            </div>
++            <button x-show="o.type === 'gatepass' && o.status === 'approved' && !o.returned_at"
++                    @click="recordReturn(o)"
++                    class="px-3 py-1.5 rounded-lg bg-metfraa-ink text-white text-xs font-bold whitespace-nowrap">
++              I'm back
++            </button>
++          </div>
++        </div>
++      </template>
++    </div>
++  </div>
++
++  <!-- ============ APPROVALS ============ -->
++  <div x-show="tab === 'approvals'">
++    <template x-if="!approvals.length">
++      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-10 text-center text-metfraa-gray-400 text-sm">
++        Nothing routed to you.
++      </div>
++    </template>
++    <div class="space-y-3">
++      <template x-for="o in approvals" :key="o.id">
++        <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4">
++          <div class="flex items-start justify-between gap-4 flex-wrap">
++            <div>
++              <div class="flex items-center gap-2 flex-wrap">
++                <span class="mono text-xs text-metfraa-gray-500" x-text="o.ref_no"></span>
++                <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
++                      :class="statusClass(o)" x-text="statusLabel(o)"></span>
++              </div>
++              <div class="display text-sm font-bold mt-1">
++                <span x-text="o.requester_name"></span>
++                <span class="text-metfraa-gray-400 font-normal" x-text="'· ' + (o.department || '')"></span>
++              </div>
++              <div class="text-sm text-metfraa-gray-600 mt-1" x-text="o.purpose"></div>
++              <div class="text-xs text-metfraa-gray-500 mt-1">
++                <span x-text="(o.type === 'gatepass' ? 'Gatepass' : 'Outpass') + ' · ' + o.req_date"></span>
++                · out <span x-text="o.out_time"></span>
++                <template x-if="o.in_time"><span> · back by <span x-text="o.in_time"></span></span></template>
++              </div>
++              <div x-show="o.manager_on_leave" class="text-xs text-amber-700 mt-1">
++                Routed to you as leave cover.
++              </div>
++            </div>
++            <div x-show="o.status === 'pending'" class="flex gap-2">
++              <button @click="approve(o)"
++                class="px-3 py-1.5 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Approve</button>
++              <button @click="reject(o)"
++                class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-metfraa-gray-600 text-xs font-bold">Reject</button>
++            </div>
++          </div>
++        </div>
++      </template>
++    </div>
++  </div>
++
++  <!-- ============ ADMIN ============ -->
++  <div x-show="tab === 'admin'">
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
++      <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
++        <div>
++          <div class="lbl">WhatsApp delivery</div>
++          <p class="text-xs text-metfraa-gray-500 mt-1">
++            If someone says they got no alert, check here before anything else.
++          </p>
++        </div>
++        <div class="flex items-center gap-2">
++          <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
++                :class="wa.configured ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'"
++                x-text="wa.configured ? 'WATI connected' : 'WATI not configured'"></span>
++          <span x-show="!wa.hr_phone_set"
++                class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold uppercase">
++            HR phone not set
++          </span>
++          <button @click="loadWa()" class="px-2 py-1 rounded ring-1 ring-metfraa-gray-300 text-xs font-bold">Refresh</button>
++        </div>
++      </div>
++      <div class="flex gap-3 flex-wrap mb-3">
++        <template x-for="(n, k) in wa.counts" :key="k">
++          <span class="text-xs px-2 py-1 rounded bg-metfraa-gray-100">
++            <span class="font-bold" x-text="n"></span> <span x-text="k"></span>
++          </span>
++        </template>
++      </div>
++      <div class="max-h-72 overflow-y-auto">
++        <table class="w-full text-xs">
++          <tbody class="divide-y divide-metfraa-gray-100">
++            <template x-for="r in wa.rows" :key="r.id">
++              <tr>
++                <td class="py-1.5 mono text-metfraa-gray-400" x-text="r.at"></td>
++                <td class="py-1.5 mono" x-text="r.phone"></td>
++                <td class="py-1.5" x-text="r.template"></td>
++                <td class="py-1.5">
++                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold"
++                        :class="r.result === 'sent' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'"
++                        x-text="r.result"></span>
++                </td>
++                <td class="py-1.5 text-metfraa-gray-500 truncate max-w-xs" x-text="r.detail"></td>
++              </tr>
++            </template>
++          </tbody>
++        </table>
++        <div x-show="!wa.rows.length" class="text-sm text-metfraa-gray-400 py-4">No sends logged yet.</div>
++      </div>
++    </div>
++
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
++      <div class="lbl mb-3">Open gatepasses — not yet returned</div>
++      <template x-if="!openPasses.length">
++        <div class="text-sm text-metfraa-gray-400 py-4">Nothing outstanding.</div>
++      </template>
++      <table x-show="openPasses.length" class="w-full text-sm">
++        <thead>
++          <tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Employee</th><th class="py-2">Ref</th>
++            <th class="py-2">Out</th><th class="py-2">Due back</th><th class="py-2">Status</th><th></th>
++          </tr>
++        </thead>
++        <tbody class="divide-y divide-metfraa-gray-100">
++          <template x-for="o in openPasses" :key="o.id">
++            <tr>
++              <td class="py-2">
++                <div class="font-semibold" x-text="o.requester_name"></div>
++                <div class="text-xs text-metfraa-gray-500" x-text="o.department"></div>
++              </td>
++              <td class="py-2 mono text-xs" x-text="o.ref_no"></td>
++              <td class="py-2 text-xs" x-text="o.req_date + ' ' + (o.out_time || '')"></td>
++              <td class="py-2 text-xs" x-text="o.expected_back_at || '—'"></td>
++              <td class="py-2">
++                <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
++                      :class="statusClass(o)" x-text="statusLabel(o)"></span>
++              </td>
++              <td class="py-2 text-right">
++                <button @click="recordReturn(o)"
++                  class="px-2 py-1 rounded ring-1 ring-metfraa-gray-300 text-xs font-bold">Mark returned</button>
++              </td>
++            </tr>
++          </template>
++        </tbody>
++      </table>
++    </div>
++
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++      <div class="lbl mb-1">Department approvers</div>
++      <p class="text-xs text-metfraa-gray-500 mb-4">
++        Who approves passes for each department. Leave cover is used when a requester
++        ticks "my manager is on leave".
++      </p>
++      <table class="w-full text-sm">
++        <thead>
++          <tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Department</th><th class="py-2">Approver</th>
++            <th class="py-2">Leave cover</th><th></th>
++          </tr>
++        </thead>
++        <tbody class="divide-y divide-metfraa-gray-100">
++          <template x-for="d in depts" :key="d.department">
++            <tr>
++              <td class="py-2 font-semibold" x-text="d.department"></td>
++              <td class="py-2">
++                <select x-model="d.head_emp_id" class="text-xs rounded border-metfraa-gray-300 w-full">
++                  <option :value="null">— none —</option>
++                  <template x-for="e in people" :key="e.id">
++                    <option :value="e.id" x-text="e.name"></option>
++                  </template>
++                </select>
++              </td>
++              <td class="py-2">
++                <select x-model="d.leave_cover_emp_id" class="text-xs rounded border-metfraa-gray-300 w-full">
++                  <option :value="null">— none —</option>
++                  <template x-for="e in people" :key="e.id">
++                    <option :value="e.id" x-text="e.name"></option>
++                  </template>
++                </select>
++              </td>
++              <td class="py-2 text-right">
++                <button @click="saveDept(d)"
++                  class="px-3 py-1 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Save</button>
++              </td>
++            </tr>
++          </template>
++        </tbody>
++      </table>
++    </div>
++  </div>
++</div>
++
++<script>
++function gpApp() {
++  return {
++    tab: 'new', busy: false, msg: '', err: false,
++    mine: [], approvals: [], openPasses: [], depts: [], people: [], wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
++    myApprover: null, pendingCount: {{ pending_for_me }},
++    isAdmin: {{ 'true' if is_admin else 'false' }},
++    form: { type: 'outpass', req_date: new Date().toISOString().slice(0, 10),
++            out_time: '', in_time: '', purpose: '', on_duty: false, manager_on_leave: false },
++
++    get tabs() {
++      const t = [{ id: 'new', label: 'New request' }, { id: 'mine', label: 'My passes' },
++                 { id: 'approvals', label: 'Approvals' }];
++      if (this.isAdmin) t.push({ id: 'admin', label: 'Admin' });
++      return t;
++    },
++
++    init() { this.load(); this.loadMine(); },
++
++    async load() {
++      if (this.tab === 'mine') return this.loadMine();
++      if (this.tab === 'approvals') return this.loadApprovals();
++      if (this.tab === 'admin') { await this.loadOpen(); await this.loadWa(); return this.loadDepts(); }
++    },
++
++    async loadMine() {
++      const r = await fetch('/gatepass/api/mine');
++      if (!r.ok) return;
++      const d = await r.json();
++      this.mine = d.requests || [];
++      this.myApprover = d.my_approver;
++    },
++    async loadApprovals() {
++      const r = await fetch('/gatepass/api/approvals');
++      if (!r.ok) return;
++      const d = await r.json();
++      this.approvals = d.requests || [];
++      this.pendingCount = d.pending || 0;
++    },
++    async loadOpen() {
++      const r = await fetch('/gatepass/api/admin/all?status=open');
++      if (r.ok) this.openPasses = (await r.json()).requests || [];
++    },
++    async loadWa() {
++      const r = await fetch('/gatepass/api/admin/wa-log');
++      if (r.ok) this.wa = await r.json();
++    },
++    async loadDepts() {
++      const r = await fetch('/gatepass/api/admin/approvers');
++      if (!r.ok) return;
++      const d = await r.json();
++      this.depts = d.departments || [];
++      this.people = d.employees || [];
++    },
++
++    statusLabel(o) {
++      if (o.status === 'pending') return 'Pending';
++      if (o.status === 'rejected') return 'Rejected';
++      if (o.returned_at) return 'Returned';
++      if (o.multi_day) return 'Multi-day';
++      if (o.overdue) return 'Overdue';
++      return 'Approved';
++    },
++    statusClass(o) {
++      const l = this.statusLabel(o);
++      return { Pending: 'bg-amber-100 text-amber-800', Rejected: 'bg-red-100 text-red-700',
++               Returned: 'bg-green-100 text-green-800', Overdue: 'bg-red-500 text-white',
++               'Multi-day': 'bg-metfraa-gray-200 text-metfraa-gray-600',
++               Approved: 'bg-metfraa-blue/10 text-metfraa-blue' }[l] || '';
++    },
++
++    async submit() {
++      this.busy = true; this.msg = ''; this.err = false;
++      try {
++        const r = await fetch('/gatepass/api/request', {
++          method: 'POST', headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify(this.form),
++        });
++        const d = await r.json();
++        if (!r.ok) throw new Error(d.detail || 'Could not submit');
++        this.msg = `Sent to ${d.approver} · ${d.ref_no}`;
++        this.form.purpose = ''; this.form.out_time = ''; this.form.in_time = '';
++        this.loadMine();
++      } catch (e) { this.err = true; this.msg = e.message; }
++      finally { this.busy = false; }
++    },
++
++    async approve(o) {
++      if (!confirm(`Approve ${o.requester_name}'s ${o.type}?`)) return;
++      const r = await fetch(`/gatepass/api/${o.id}/approve`, { method: 'POST' });
++      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
++      this.loadApprovals();
++    },
++    async reject(o) {
++      const reason = prompt('Why is this not approved? The employee will see this.');
++      if (!reason || reason.trim().length < 3) return;
++      const r = await fetch(`/gatepass/api/${o.id}/reject`, {
++        method: 'POST', headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ reason }),
++      });
++      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
++      this.loadApprovals();
++    },
++    async recordReturn(o) {
++      const r = await fetch(`/gatepass/api/${o.id}/return`, { method: 'POST' });
++      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
++      this.loadMine(); if (this.tab === 'admin') this.loadOpen();
++    },
++    async saveDept(d) {
++      const r = await fetch('/gatepass/api/admin/approvers', {
++        method: 'POST', headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ department: d.department, head_emp_id: d.head_emp_id || null,
++                               leave_cover_emp_id: d.leave_cover_emp_id || null, active: true }),
++      });
++      if (!r.ok) { const e = await r.json().catch(() => ({})); alert(e.detail || 'Failed'); return; }
++      this.loadDepts();
++    },
++  };
++}
++</script>
++{% endblock %}
+diff --git a/app/templates/home.html b/app/templates/home.html
+index ebad4c8..0cc4c34 100644
+--- a/app/templates/home.html
++++ b/app/templates/home.html
+@@ -169,6 +169,17 @@
+     </div>
+     <span class="text-sm font-semibold text-metfraa-blue">Manage →</span>
+   </a>
++
++    <a href="/gatepass/" class="tile card-hover mt-5 flex items-center justify-between bg-white rounded-lg ring-1 ring-metfraa-gray-200 px-6 py-4 overflow-hidden">
++    <div class="flex items-center gap-3">
++      <div class="icon-tile" style="width:40px;height:40px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21V6l7-3v18"/><path d="M10 9h8a2 2 0 0 1 2 2v10"/><path d="M2 21h20"/><path d="M14 13h2M14 17h2"/></svg></div>
++      <div>
++        <div class="display text-sm font-semibold text-metfraa-ink tracking-wide">Outpass / Gatepass</div>
++        <div class="text-xs text-metfraa-gray-500">Request a pass, approve, record returns</div>
++      </div>
++    </div>
++    <span class="text-sm font-semibold text-metfraa-blue">Open →</span>
++  </a>
+   {% endif %}
+ </div>
+ {% endblock %}
+diff --git a/vercel.json b/vercel.json
+index 31daa56..35ac48d 100644
+--- a/vercel.json
++++ b/vercel.json
+@@ -16,6 +16,10 @@
+     {
+       "path": "/cron/daily-task-report",
+       "schedule": "35 4 * * *"
++    },
++    {
++      "path": "/cron/gatepass-overdue",
++      "schedule": "*/30 * * * *"
+     }
+   ],
+   "headers": [
