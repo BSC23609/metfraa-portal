@@ -654,8 +654,24 @@ def api_employee_approvers(user: Employee = Depends(get_current_user),
     back to if none is set — so an admin can see who is genuinely unconfigured."""
     if not _is_admin(db, user):
         raise HTTPException(status_code=403, detail="Admin only")
-    rows = {r.employee_id: r for r in db.query(EmployeeApprover).all()}
-    depts = {d.department.lower(): d for d in db.query(DeptApprover).all()}
+    # The overrides table is newer than the rest of the module. If it hasn't
+    # been migrated yet, still list everyone — an empty roster looks like a
+    # bug, whereas "nobody has an override" is the honest reading.
+    schema_ready = True
+    try:
+        rows = {r.employee_id: r for r in db.query(EmployeeApprover).all()}
+    except Exception:
+        db.rollback()
+        rows = {}
+        schema_ready = False
+        log.error("[gatepass] gatepass_employee_approvers missing — run the migrations",
+                  exc_info=True)
+    try:
+        depts = {(d.department or "").lower(): d
+                 for d in db.query(DeptApprover).all()}
+    except Exception:
+        db.rollback()
+        depts = {}
     people = (db.query(Employee).filter(Employee.is_active == True)  # noqa: E712
               .order_by(Employee.name).all())
     by_id = {e.id: e for e in people}
@@ -678,7 +694,7 @@ def api_employee_approvers(user: Employee = Depends(get_current_user),
             "fallback_name": fallback,
             "updated_by": r.updated_by if r else None,
         })
-    return {"employees": out,
+    return {"employees": out, "schema_ready": schema_ready,
             "choices": [{"id": e.id, "name": e.name,
                          "employee_code": e.employee_code,
                          "department": e.department or ""} for e in people]}

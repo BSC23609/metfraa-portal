@@ -301,6 +301,11 @@
         <input type="search" x-model="empQ" placeholder="Search name, code or department"
                class="text-sm rounded-lg border-metfraa-gray-300 w-64">
       </div>
+      <div x-show="empSchemaReady === false"
+           class="bg-amber-50 ring-1 ring-amber-200 rounded p-3 mb-3 text-xs text-amber-800">
+        The approver-overrides table hasn't been created yet, so assignments can't
+        be saved. Run the database migrations, then reload this page.
+      </div>
       <div class="text-xs text-metfraa-gray-500 mb-3">
         <span class="font-semibold" x-text="unsetCount"></span> of
         <span x-text="empRows.length"></span> without their own approver
@@ -367,7 +372,7 @@
 function gpApp() {
   return {
     tab: 'new', busy: false, msg: '', err: false,
-    mine: [], approvals: [], openPasses: [], depts: [], people: [], empRows: [], choices: [], empQ: '', wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
+    mine: [], approvals: [], openPasses: [], depts: [], people: [], empRows: [], choices: [], empQ: '', empSchemaReady: true, wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
     myApprover: null, pendingCount: {{ pending_for_me }},
     isAdmin: {{ 'true' if is_admin else 'false' }},
     form: { type: 'outpass', req_date: new Date().toISOString().slice(0, 10),
@@ -422,10 +427,15 @@ function gpApp() {
 
     async loadEmps() {
       const r = await fetch('/gatepass/api/admin/employee-approvers');
-      if (!r.ok) return;
+      if (!r.ok) {
+        // Don't leave a silent empty table — say what went wrong.
+        this.empRows = []; this.choices = []; this.empSchemaReady = false;
+        return;
+      }
       const d = await r.json();
       this.empRows = d.employees || [];
       this.choices = d.choices || [];
+      this.empSchemaReady = d.schema_ready !== false;
     },
     async saveEmp(e) {
       const r = await fetch('/gatepass/api/admin/employee-approvers', {
