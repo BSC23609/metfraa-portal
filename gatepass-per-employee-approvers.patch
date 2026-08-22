@@ -1,0 +1,385 @@
+diff --git a/app/models.py b/app/models.py
+index 0903ce8..67599ca 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -631,6 +631,28 @@ class DeptApprover(Base):
+     leave_cover = relationship("Employee", foreign_keys=[leave_cover_emp_id])
+ 
+ 
++class EmployeeApprover(Base):
++    """Who approves passes for one specific employee.
++
++    Replaces department-level routing as the primary mechanism: an approver
++    follows the person, not their department label. The department table is
++    kept as a fallback so a new joiner is covered before anyone sets them up
++    individually.
++    """
++    __tablename__ = "gatepass_employee_approvers"
++
++    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"),
++                         primary_key=True)
++    approver_emp_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
++    leave_cover_emp_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++    updated_by = Column(String(255), nullable=True)
++
++    employee = relationship("Employee", foreign_keys=[employee_id])
++    approver = relationship("Employee", foreign_keys=[approver_emp_id])
++    leave_cover = relationship("Employee", foreign_keys=[leave_cover_emp_id])
++
++
+ class OutpassRequest(Base):
+     """An outpass (leaving, no return expected today) or gatepass (out and back).
+ 
+diff --git a/app/routes/gatepass.py b/app/routes/gatepass.py
+index a6a52c9..833f0ee 100644
+--- a/app/routes/gatepass.py
++++ b/app/routes/gatepass.py
+@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
+ from ..access import get_access
+ from ..database import get_db
+ from ..deps import get_current_user
+-from ..models import DeptApprover, Employee, OutpassRequest
++from ..models import DeptApprover, Employee, EmployeeApprover, OutpassRequest
+ 
+ router = APIRouter(prefix="/gatepass", tags=["gatepass"])
+ log = logging.getLogger(__name__)
+@@ -71,30 +71,46 @@ def _next_ref(db: Session) -> str:
+ 
+ 
+ def _resolve_approver(db: Session, user: Employee, on_leave: bool):
+-    """Department head, or the leave cover when the requester flags it.
++    """Who approves this person's passes.
+ 
+-    Falls back to any expense/superadmin so a request never dead-ends because
+-    a department has no head configured yet.
++    Order: their own assigned approver, then their department's head, then any
++    superadmin. The fallbacks matter — a request that can't be routed is a
++    request nobody can action, so we never dead-end.
+     """
+-    dept = (user.department or "").strip()
+-    row = None
+-    if dept:
+-        row = (db.query(DeptApprover)
+-               .filter(DeptApprover.department.ilike(dept),
+-                       DeptApprover.active == True).first())  # noqa: E712
++    # 1. per-employee (the primary mechanism)
++    row = (db.query(EmployeeApprover)
++           .filter(EmployeeApprover.employee_id == user.id).first())
+     if row:
+-        emp_id = row.leave_cover_emp_id if (on_leave and row.leave_cover_emp_id) else row.head_emp_id
++        emp_id = (row.leave_cover_emp_id if (on_leave and row.leave_cover_emp_id)
++                  else row.approver_emp_id)
+         if emp_id and emp_id != user.id:
+             emp = db.query(Employee).filter(Employee.id == emp_id,
+                                             Employee.is_active == True).first()  # noqa: E712
+             if emp:
+-                return emp, (row.department or dept)
+-    # Fallback: a superadmin. Better a slightly wrong approver than a stuck request.
++                return emp, ("Leave cover" if (on_leave and row.leave_cover_emp_id)
++                             else "Approver")
++
++    # 2. department fallback — covers a new joiner before anyone sets them up
++    dept = (user.department or "").strip()
++    if dept:
++        d = (db.query(DeptApprover)
++             .filter(DeptApprover.department.ilike(dept),
++                     DeptApprover.active == True).first())  # noqa: E712
++        if d:
++            emp_id = (d.leave_cover_emp_id if (on_leave and d.leave_cover_emp_id)
++                      else d.head_emp_id)
++            if emp_id and emp_id != user.id:
++                emp = db.query(Employee).filter(Employee.id == emp_id,
++                                                Employee.is_active == True).first()  # noqa: E712
++                if emp:
++                    return emp, (d.department or dept)
++
++    # 3. last resort — better a slightly wrong approver than a stuck request
+     for e in db.query(Employee).filter(Employee.is_active == True).all():  # noqa: E712
+         if e.id == user.id:
+             continue
+         if get_access(db, e).superadmin:
+-            return e, "Admin (no department head configured)"
++            return e, "Admin (no approver configured)"
+     return None, None
+ 
+ 
+@@ -627,3 +643,93 @@ def api_wa_log(user: Employee = Depends(get_current_user), db: Session = Depends
+                   "at": (r.created_at + IST).strftime("%Y-%m-%d %H:%M")
+                         if r.created_at else None} for r in rows],
+     }
++
++
++# ------------------------------------------------- per-employee approvers
++
++@router.get("/api/admin/employee-approvers")
++def api_employee_approvers(user: Employee = Depends(get_current_user),
++                           db: Session = Depends(get_db)):
++    """Every active employee with their assigned approver, and what they'd fall
++    back to if none is set — so an admin can see who is genuinely unconfigured."""
++    if not _is_admin(db, user):
++        raise HTTPException(status_code=403, detail="Admin only")
++    rows = {r.employee_id: r for r in db.query(EmployeeApprover).all()}
++    depts = {d.department.lower(): d for d in db.query(DeptApprover).all()}
++    people = (db.query(Employee).filter(Employee.is_active == True)  # noqa: E712
++              .order_by(Employee.name).all())
++    by_id = {e.id: e for e in people}
++    out = []
++    for e in people:
++        r = rows.get(e.id)
++        d = depts.get((e.department or "").strip().lower())
++        fallback = by_id.get(d.head_emp_id).name if (d and d.head_emp_id
++                                                     and d.head_emp_id in by_id) else None
++        out.append({
++            "id": e.id, "name": e.name, "employee_code": e.employee_code,
++            "department": e.department or "",
++            "designation": e.designation or "",
++            "approver_emp_id": r.approver_emp_id if r else None,
++            "approver_name": (by_id.get(r.approver_emp_id).name
++                              if r and r.approver_emp_id in by_id else None),
++            "leave_cover_emp_id": r.leave_cover_emp_id if r else None,
++            "leave_cover_name": (by_id.get(r.leave_cover_emp_id).name
++                                 if r and r.leave_cover_emp_id in by_id else None),
++            "fallback_name": fallback,
++            "updated_by": r.updated_by if r else None,
++        })
++    return {"employees": out,
++            "choices": [{"id": e.id, "name": e.name,
++                         "employee_code": e.employee_code,
++                         "department": e.department or ""} for e in people]}
++
++
++@router.post("/api/admin/employee-approvers")
++async def api_set_employee_approver(request: Request,
++                                    user: Employee = Depends(get_current_user),
++                                    db: Session = Depends(get_db)):
++    if not _is_admin(db, user):
++        raise HTTPException(status_code=403, detail="Admin only")
++    b = await request.json()
++    try:
++        emp_id = int(b.get("employee_id"))
++    except (TypeError, ValueError):
++        raise HTTPException(status_code=400, detail="Valid employee_id required")
++    target = db.query(Employee).filter(Employee.id == emp_id).first()
++    if not target:
++        raise HTTPException(status_code=404, detail="Employee not found")
++
++    def _emp(v):
++        if v in (None, "", 0, "0"):
++            return None
++        try:
++            eid = int(v)
++        except (TypeError, ValueError):
++            raise HTTPException(status_code=400, detail="Invalid approver")
++        if eid == emp_id:
++            raise HTTPException(status_code=400,
++                                detail="Someone can't approve their own pass")
++        if not db.query(Employee).filter(Employee.id == eid,
++                                         Employee.is_active == True).first():  # noqa: E712
++            raise HTTPException(status_code=400, detail="Approver not found or inactive")
++        return eid
++
++    approver = _emp(b.get("approver_emp_id"))
++    cover = _emp(b.get("leave_cover_emp_id"))
++
++    row = (db.query(EmployeeApprover)
++           .filter(EmployeeApprover.employee_id == emp_id).first())
++    if approver is None and cover is None:
++        # Clearing both removes the override and restores the department fallback.
++        if row:
++            db.delete(row)
++            db.commit()
++        return {"ok": True, "cleared": True}
++    if not row:
++        row = EmployeeApprover(employee_id=emp_id)
++        db.add(row)
++    row.approver_emp_id = approver
++    row.leave_cover_emp_id = cover
++    row.updated_by = user.employee_code
++    db.commit()
++    return {"ok": True}
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index 251ec73..1927816 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -82,6 +82,8 @@ MISC_MIGRATIONS = [
+ ]
+ 
+ GATEPASS_MIGRATIONS = [
++    "CREATE INDEX IF NOT EXISTS idx_gp_emp_approver "
++    "ON gatepass_employee_approvers (approver_emp_id)",
+     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS action_token VARCHAR(64)",
+     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS pdf_token VARCHAR(64)",
+     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS return_token VARCHAR(64)",
+diff --git a/app/templates/gatepass.html b/app/templates/gatepass.html
+index e8c4bdc..29220b7 100644
+--- a/app/templates/gatepass.html
++++ b/app/templates/gatepass.html
+@@ -289,46 +289,76 @@
+     </div>
+ 
+     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+-      <div class="lbl mb-1">Department approvers</div>
+-      <p class="text-xs text-metfraa-gray-500 mb-4">
+-        Who approves passes for each department. Leave cover is used when a requester
+-        ticks "my manager is on leave".
+-      </p>
+-      <table class="w-full text-sm">
+-        <thead>
+-          <tr class="text-left lbl border-b border-metfraa-gray-100">
+-            <th class="py-2">Department</th><th class="py-2">Approver</th>
+-            <th class="py-2">Leave cover</th><th></th>
+-          </tr>
+-        </thead>
+-        <tbody class="divide-y divide-metfraa-gray-100">
+-          <template x-for="d in depts" :key="d.department">
+-            <tr>
+-              <td class="py-2 font-semibold" x-text="d.department"></td>
+-              <td class="py-2">
+-                <select x-model="d.head_emp_id" class="text-xs rounded border-metfraa-gray-300 w-full">
+-                  <option :value="null">— none —</option>
+-                  <template x-for="e in people" :key="e.id">
+-                    <option :value="e.id" x-text="e.name"></option>
+-                  </template>
+-                </select>
+-              </td>
+-              <td class="py-2">
+-                <select x-model="d.leave_cover_emp_id" class="text-xs rounded border-metfraa-gray-300 w-full">
+-                  <option :value="null">— none —</option>
+-                  <template x-for="e in people" :key="e.id">
+-                    <option :value="e.id" x-text="e.name"></option>
+-                  </template>
+-                </select>
+-              </td>
+-              <td class="py-2 text-right">
+-                <button @click="saveDept(d)"
+-                  class="px-3 py-1 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Save</button>
+-              </td>
++      <div class="flex items-start justify-between flex-wrap gap-3 mb-1">
++        <div>
++          <div class="lbl">Approvers</div>
++          <p class="text-xs text-metfraa-gray-500 mt-1">
++            Who approves each person's passes. Leave cover is used when someone
++            ticks "my manager is on leave". Leave both blank to fall back to
++            their department.
++          </p>
++        </div>
++        <input type="search" x-model="empQ" placeholder="Search name, code or department"
++               class="text-sm rounded-lg border-metfraa-gray-300 w-64">
++      </div>
++      <div class="text-xs text-metfraa-gray-500 mb-3">
++        <span class="font-semibold" x-text="unsetCount"></span> of
++        <span x-text="empRows.length"></span> without their own approver
++      </div>
++      <div class="max-h-[28rem] overflow-y-auto">
++        <table class="w-full text-sm">
++          <thead class="sticky top-0 bg-white">
++            <tr class="text-left lbl border-b border-metfraa-gray-100">
++              <th class="py-2">Employee</th><th class="py-2">Approver</th>
++              <th class="py-2">Leave cover</th><th></th>
+             </tr>
+-          </template>
+-        </tbody>
+-      </table>
++          </thead>
++          <tbody class="divide-y divide-metfraa-gray-100">
++            <template x-for="e in filteredEmps" :key="e.id">
++              <tr>
++                <td class="py-2 pr-3">
++                  <div class="font-semibold text-metfraa-ink" x-text="e.name"></div>
++                  <div class="text-xs text-metfraa-gray-500">
++                    <span x-text="e.employee_code"></span>
++                    <span x-show="e.department" x-text="' · ' + e.department"></span>
++                  </div>
++                  <div x-show="!e.approver_emp_id" class="text-[11px] text-amber-700 mt-0.5">
++                    <template x-if="e.fallback_name">
++                      <span>Falls back to <span x-text="e.fallback_name"></span></span>
++                    </template>
++                    <template x-if="!e.fallback_name"><span>No approver set</span></template>
++                  </div>
++                </td>
++                <td class="py-2 pr-2">
++                  <select x-model.number="e.approver_emp_id"
++                          class="text-xs rounded border-metfraa-gray-300 w-full">
++                    <option :value="null">— none —</option>
++                    <template x-for="c in choices" :key="c.id">
++                      <option :value="c.id" :disabled="c.id === e.id" x-text="c.name"></option>
++                    </template>
++                  </select>
++                </td>
++                <td class="py-2 pr-2">
++                  <select x-model.number="e.leave_cover_emp_id"
++                          class="text-xs rounded border-metfraa-gray-300 w-full">
++                    <option :value="null">— none —</option>
++                    <template x-for="c in choices" :key="c.id">
++                      <option :value="c.id" :disabled="c.id === e.id" x-text="c.name"></option>
++                    </template>
++                  </select>
++                </td>
++                <td class="py-2 text-right whitespace-nowrap">
++                  <button @click="saveEmp(e)"
++                    class="px-3 py-1 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Save</button>
++                </td>
++              </tr>
++            </template>
++          </tbody>
++        </table>
++        <div x-show="!filteredEmps.length" class="text-sm text-metfraa-gray-400 py-6 text-center">
++          No one matches that search.
++        </div>
++      </div>
+     </div>
+   </div>
+ </div>
+@@ -337,7 +367,7 @@
+ function gpApp() {
+   return {
+     tab: 'new', busy: false, msg: '', err: false,
+-    mine: [], approvals: [], openPasses: [], depts: [], people: [], wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
++    mine: [], approvals: [], openPasses: [], depts: [], people: [], empRows: [], choices: [], empQ: '', wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
+     myApprover: null, pendingCount: {{ pending_for_me }},
+     isAdmin: {{ 'true' if is_admin else 'false' }},
+     form: { type: 'outpass', req_date: new Date().toISOString().slice(0, 10),
+@@ -355,7 +385,7 @@ function gpApp() {
+     async load() {
+       if (this.tab === 'mine') return this.loadMine();
+       if (this.tab === 'approvals') return this.loadApprovals();
+-      if (this.tab === 'admin') { await this.loadOpen(); await this.loadWa(); return this.loadDepts(); }
++      if (this.tab === 'admin') { await this.loadOpen(); await this.loadWa(); return this.loadEmps(); }
+     },
+ 
+     async loadMine() {
+@@ -380,6 +410,33 @@ function gpApp() {
+       const r = await fetch('/gatepass/api/admin/wa-log');
+       if (r.ok) this.wa = await r.json();
+     },
++    get filteredEmps() {
++      const q = (this.empQ || '').trim().toLowerCase();
++      if (!q) return this.empRows;
++      return this.empRows.filter(e =>
++        (e.name || '').toLowerCase().includes(q) ||
++        (e.employee_code || '').toLowerCase().includes(q) ||
++        (e.department || '').toLowerCase().includes(q));
++    },
++    get unsetCount() { return this.empRows.filter(e => !e.approver_emp_id).length; },
++
++    async loadEmps() {
++      const r = await fetch('/gatepass/api/admin/employee-approvers');
++      if (!r.ok) return;
++      const d = await r.json();
++      this.empRows = d.employees || [];
++      this.choices = d.choices || [];
++    },
++    async saveEmp(e) {
++      const r = await fetch('/gatepass/api/admin/employee-approvers', {
++        method: 'POST', headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ employee_id: e.id,
++          approver_emp_id: e.approver_emp_id || null,
++          leave_cover_emp_id: e.leave_cover_emp_id || null }),
++      });
++      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
++      this.loadEmps();
++    },
+     async loadDepts() {
+       const r = await fetch('/gatepass/api/admin/approvers');
+       if (!r.ok) return;

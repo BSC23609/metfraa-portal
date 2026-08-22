@@ -82,6 +82,8 @@ MISC_MIGRATIONS = [
 ]
 
 GATEPASS_MIGRATIONS = [
+    "CREATE INDEX IF NOT EXISTS idx_gp_emp_approver "
+    "ON gatepass_employee_approvers (approver_emp_id)",
     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS action_token VARCHAR(64)",
     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS pdf_token VARCHAR(64)",
     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS return_token VARCHAR(64)",

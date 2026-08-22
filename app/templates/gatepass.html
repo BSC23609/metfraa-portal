@@ -289,46 +289,76 @@
     </div>
 
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
-      <div class="lbl mb-1">Department approvers</div>
-      <p class="text-xs text-metfraa-gray-500 mb-4">
-        Who approves passes for each department. Leave cover is used when a requester
-        ticks "my manager is on leave".
-      </p>
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="text-left lbl border-b border-metfraa-gray-100">
-            <th class="py-2">Department</th><th class="py-2">Approver</th>
-            <th class="py-2">Leave cover</th><th></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-metfraa-gray-100">
-          <template x-for="d in depts" :key="d.department">
-            <tr>
-              <td class="py-2 font-semibold" x-text="d.department"></td>
-              <td class="py-2">
-                <select x-model="d.head_emp_id" class="text-xs rounded border-metfraa-gray-300 w-full">
-                  <option :value="null">— none —</option>
-                  <template x-for="e in people" :key="e.id">
-                    <option :value="e.id" x-text="e.name"></option>
-                  </template>
-                </select>
-              </td>
-              <td class="py-2">
-                <select x-model="d.leave_cover_emp_id" class="text-xs rounded border-metfraa-gray-300 w-full">
-                  <option :value="null">— none —</option>
-                  <template x-for="e in people" :key="e.id">
-                    <option :value="e.id" x-text="e.name"></option>
-                  </template>
-                </select>
-              </td>
-              <td class="py-2 text-right">
-                <button @click="saveDept(d)"
-                  class="px-3 py-1 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Save</button>
-              </td>
+      <div class="flex items-start justify-between flex-wrap gap-3 mb-1">
+        <div>
+          <div class="lbl">Approvers</div>
+          <p class="text-xs text-metfraa-gray-500 mt-1">
+            Who approves each person's passes. Leave cover is used when someone
+            ticks "my manager is on leave". Leave both blank to fall back to
+            their department.
+          </p>
+        </div>
+        <input type="search" x-model="empQ" placeholder="Search name, code or department"
+               class="text-sm rounded-lg border-metfraa-gray-300 w-64">
+      </div>
+      <div class="text-xs text-metfraa-gray-500 mb-3">
+        <span class="font-semibold" x-text="unsetCount"></span> of
+        <span x-text="empRows.length"></span> without their own approver
+      </div>
+      <div class="max-h-[28rem] overflow-y-auto">
+        <table class="w-full text-sm">
+          <thead class="sticky top-0 bg-white">
+            <tr class="text-left lbl border-b border-metfraa-gray-100">
+              <th class="py-2">Employee</th><th class="py-2">Approver</th>
+              <th class="py-2">Leave cover</th><th></th>
             </tr>
-          </template>
-        </tbody>
-      </table>
+          </thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="e in filteredEmps" :key="e.id">
+              <tr>
+                <td class="py-2 pr-3">
+                  <div class="font-semibold text-metfraa-ink" x-text="e.name"></div>
+                  <div class="text-xs text-metfraa-gray-500">
+                    <span x-text="e.employee_code"></span>
+                    <span x-show="e.department" x-text="' · ' + e.department"></span>
+                  </div>
+                  <div x-show="!e.approver_emp_id" class="text-[11px] text-amber-700 mt-0.5">
+                    <template x-if="e.fallback_name">
+                      <span>Falls back to <span x-text="e.fallback_name"></span></span>
+                    </template>
+                    <template x-if="!e.fallback_name"><span>No approver set</span></template>
+                  </div>
+                </td>
+                <td class="py-2 pr-2">
+                  <select x-model.number="e.approver_emp_id"
+                          class="text-xs rounded border-metfraa-gray-300 w-full">
+                    <option :value="null">— none —</option>
+                    <template x-for="c in choices" :key="c.id">
+                      <option :value="c.id" :disabled="c.id === e.id" x-text="c.name"></option>
+                    </template>
+                  </select>
+                </td>
+                <td class="py-2 pr-2">
+                  <select x-model.number="e.leave_cover_emp_id"
+                          class="text-xs rounded border-metfraa-gray-300 w-full">
+                    <option :value="null">— none —</option>
+                    <template x-for="c in choices" :key="c.id">
+                      <option :value="c.id" :disabled="c.id === e.id" x-text="c.name"></option>
+                    </template>
+                  </select>
+                </td>
+                <td class="py-2 text-right whitespace-nowrap">
+                  <button @click="saveEmp(e)"
+                    class="px-3 py-1 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Save</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <div x-show="!filteredEmps.length" class="text-sm text-metfraa-gray-400 py-6 text-center">
+          No one matches that search.
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -337,7 +367,7 @@
 function gpApp() {
   return {
     tab: 'new', busy: false, msg: '', err: false,
-    mine: [], approvals: [], openPasses: [], depts: [], people: [], wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
+    mine: [], approvals: [], openPasses: [], depts: [], people: [], empRows: [], choices: [], empQ: '', wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
     myApprover: null, pendingCount: {{ pending_for_me }},
     isAdmin: {{ 'true' if is_admin else 'false' }},
     form: { type: 'outpass', req_date: new Date().toISOString().slice(0, 10),
@@ -355,7 +385,7 @@ function gpApp() {
     async load() {
       if (this.tab === 'mine') return this.loadMine();
       if (this.tab === 'approvals') return this.loadApprovals();
-      if (this.tab === 'admin') { await this.loadOpen(); await this.loadWa(); return this.loadDepts(); }
+      if (this.tab === 'admin') { await this.loadOpen(); await this.loadWa(); return this.loadEmps(); }
     },
 
     async loadMine() {
@@ -379,6 +409,33 @@ function gpApp() {
     async loadWa() {
       const r = await fetch('/gatepass/api/admin/wa-log');
       if (r.ok) this.wa = await r.json();
+    },
+    get filteredEmps() {
+      const q = (this.empQ || '').trim().toLowerCase();
+      if (!q) return this.empRows;
+      return this.empRows.filter(e =>
+        (e.name || '').toLowerCase().includes(q) ||
+        (e.employee_code || '').toLowerCase().includes(q) ||
+        (e.department || '').toLowerCase().includes(q));
+    },
+    get unsetCount() { return this.empRows.filter(e => !e.approver_emp_id).length; },
+
+    async loadEmps() {
+      const r = await fetch('/gatepass/api/admin/employee-approvers');
+      if (!r.ok) return;
+      const d = await r.json();
+      this.empRows = d.employees || [];
+      this.choices = d.choices || [];
+    },
+    async saveEmp(e) {
+      const r = await fetch('/gatepass/api/admin/employee-approvers', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employee_id: e.id,
+          approver_emp_id: e.approver_emp_id || null,
+          leave_cover_emp_id: e.leave_cover_emp_id || null }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
+      this.loadEmps();
     },
     async loadDepts() {
       const r = await fetch('/gatepass/api/admin/approvers');

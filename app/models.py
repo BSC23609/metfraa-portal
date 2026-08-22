@@ -631,6 +631,28 @@ class DeptApprover(Base):
     leave_cover = relationship("Employee", foreign_keys=[leave_cover_emp_id])
 
 
+class EmployeeApprover(Base):
+    """Who approves passes for one specific employee.
+
+    Replaces department-level routing as the primary mechanism: an approver
+    follows the person, not their department label. The department table is
+    kept as a fallback so a new joiner is covered before anyone sets them up
+    individually.
+    """
+    __tablename__ = "gatepass_employee_approvers"
+
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"),
+                         primary_key=True)
+    approver_emp_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    leave_cover_emp_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(String(255), nullable=True)
+
+    employee = relationship("Employee", foreign_keys=[employee_id])
+    approver = relationship("Employee", foreign_keys=[approver_emp_id])
+    leave_cover = relationship("Employee", foreign_keys=[leave_cover_emp_id])
+
+
 class OutpassRequest(Base):
     """An outpass (leaving, no return expected today) or gatepass (out and back).
 

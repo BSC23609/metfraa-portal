@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from ..access import get_access
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import DeptApprover, Employee, OutpassRequest
+from ..models import DeptApprover, Employee, EmployeeApprover, OutpassRequest
 
 router = APIRouter(prefix="/gatepass", tags=["gatepass"])
 log = logging.getLogger(__name__)
@@ -71,30 +71,46 @@ def _next_ref(db: Session) -> str:
 
 
 def _resolve_approver(db: Session, user: Employee, on_leave: bool):
-    """Department head, or the leave cover when the requester flags it.
+    """Who approves this person's passes.
 
-    Falls back to any expense/superadmin so a request never dead-ends because
-    a department has no head configured yet.
+    Order: their own assigned approver, then their department's head, then any
+    superadmin. The fallbacks matter — a request that can't be routed is a
+    request nobody can action, so we never dead-end.
     """
-    dept = (user.department or "").strip()
-    row = None
-    if dept:
-        row = (db.query(DeptApprover)
-               .filter(DeptApprover.department.ilike(dept),
-                       DeptApprover.active == True).first())  # noqa: E712
+    # 1. per-employee (the primary mechanism)
+    row = (db.query(EmployeeApprover)
+           .filter(EmployeeApprover.employee_id == user.id).first())
     if row:
-        emp_id = row.leave_cover_emp_id if (on_leave and row.leave_cover_emp_id) else row.head_emp_id
+        emp_id = (row.leave_cover_emp_id if (on_leave and row.leave_cover_emp_id)
+                  else row.approver_emp_id)
         if emp_id and emp_id != user.id:
             emp = db.query(Employee).filter(Employee.id == emp_id,
                                             Employee.is_active == True).first()  # noqa: E712
             if emp:
-                return emp, (row.department or dept)
-    # Fallback: a superadmin. Better a slightly wrong approver than a stuck request.
+                return emp, ("Leave cover" if (on_leave and row.leave_cover_emp_id)
+                             else "Approver")
+
+    # 2. department fallback — covers a new joiner before anyone sets them up
+    dept = (user.department or "").strip()
+    if dept:
+        d = (db.query(DeptApprover)
+             .filter(DeptApprover.department.ilike(dept),
+                     DeptApprover.active == True).first())  # noqa: E712
+        if d:
+            emp_id = (d.leave_cover_emp_id if (on_leave and d.leave_cover_emp_id)
+                      else d.head_emp_id)
+            if emp_id and emp_id != user.id:
+                emp = db.query(Employee).filter(Employee.id == emp_id,
+                                                Employee.is_active == True).first()  # noqa: E712
+                if emp:
+                    return emp, (d.department or dept)
+
+    # 3. last resort — better a slightly wrong approver than a stuck request
     for e in db.query(Employee).filter(Employee.is_active == True).all():  # noqa: E712
         if e.id == user.id:
             continue
         if get_access(db, e).superadmin:
-            return e, "Admin (no department head configured)"
+            return e, "Admin (no approver configured)"
     return None, None
 
 
@@ -627,3 +643,93 @@ def api_wa_log(user: Employee = Depends(get_current_user), db: Session = Depends
                   "at": (r.created_at + IST).strftime("%Y-%m-%d %H:%M")
                         if r.created_at else None} for r in rows],
     }
+
+
+# ------------------------------------------------- per-employee approvers
+
+@router.get("/api/admin/employee-approvers")
+def api_employee_approvers(user: Employee = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    """Every active employee with their assigned approver, and what they'd fall
+    back to if none is set — so an admin can see who is genuinely unconfigured."""
+    if not _is_admin(db, user):
+        raise HTTPException(status_code=403, detail="Admin only")
+    rows = {r.employee_id: r for r in db.query(EmployeeApprover).all()}
+    depts = {d.department.lower(): d for d in db.query(DeptApprover).all()}
+    people = (db.query(Employee).filter(Employee.is_active == True)  # noqa: E712
+              .order_by(Employee.name).all())
+    by_id = {e.id: e for e in people}
+    out = []
+    for e in people:
+        r = rows.get(e.id)
+        d = depts.get((e.department or "").strip().lower())
+        fallback = by_id.get(d.head_emp_id).name if (d and d.head_emp_id
+                                                     and d.head_emp_id in by_id) else None
+        out.append({
+            "id": e.id, "name": e.name, "employee_code": e.employee_code,
+            "department": e.department or "",
+            "designation": e.designation or "",
+            "approver_emp_id": r.approver_emp_id if r else None,
+            "approver_name": (by_id.get(r.approver_emp_id).name
+                              if r and r.approver_emp_id in by_id else None),
+            "leave_cover_emp_id": r.leave_cover_emp_id if r else None,
+            "leave_cover_name": (by_id.get(r.leave_cover_emp_id).name
+                                 if r and r.leave_cover_emp_id in by_id else None),
+            "fallback_name": fallback,
+            "updated_by": r.updated_by if r else None,
+        })
+    return {"employees": out,
+            "choices": [{"id": e.id, "name": e.name,
+                         "employee_code": e.employee_code,
+                         "department": e.department or ""} for e in people]}
+
+
+@router.post("/api/admin/employee-approvers")
+async def api_set_employee_approver(request: Request,
+                                    user: Employee = Depends(get_current_user),
+                                    db: Session = Depends(get_db)):
+    if not _is_admin(db, user):
+        raise HTTPException(status_code=403, detail="Admin only")
+    b = await request.json()
+    try:
+        emp_id = int(b.get("employee_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Valid employee_id required")
+    target = db.query(Employee).filter(Employee.id == emp_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    def _emp(v):
+        if v in (None, "", 0, "0"):
+            return None
+        try:
+            eid = int(v)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid approver")
+        if eid == emp_id:
+            raise HTTPException(status_code=400,
+                                detail="Someone can't approve their own pass")
+        if not db.query(Employee).filter(Employee.id == eid,
+                                         Employee.is_active == True).first():  # noqa: E712
+            raise HTTPException(status_code=400, detail="Approver not found or inactive")
+        return eid
+
+    approver = _emp(b.get("approver_emp_id"))
+    cover = _emp(b.get("leave_cover_emp_id"))
+
+    row = (db.query(EmployeeApprover)
+           .filter(EmployeeApprover.employee_id == emp_id).first())
+    if approver is None and cover is None:
+        # Clearing both removes the override and restores the department fallback.
+        if row:
+            db.delete(row)
+            db.commit()
+        return {"ok": True, "cleared": True}
+    if not row:
+        row = EmployeeApprover(employee_id=emp_id)
+        db.add(row)
+    row.approver_emp_id = approver
+    row.leave_cover_emp_id = cover
+    row.updated_by = user.employee_code
+    db.commit()
+    return {"ok": True}
