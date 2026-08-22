@@ -605,3 +605,73 @@ class ExpensePendingUpload(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     employee = relationship("Employee", foreign_keys=[employee_id])
+
+
+# ===================== Outpass / Gatepass =====================
+# Ported from the BSC Tickets Portal for Metfraa. Two differences from BSC,
+# both deliberate:
+#   * notifications are EMAIL (the portal's SMTP), not WATI WhatsApp
+#   * routing uses a per-department approver table, seeded from employees.department
+
+class DeptApprover(Base):
+    """Who approves outpasses for a department.
+
+    leave_cover_emp_id is used when the requester ticks "my manager is on
+    leave", so a request never stalls because one person is away.
+    """
+    __tablename__ = "gatepass_dept_approvers"
+
+    department = Column(String(255), primary_key=True)
+    head_emp_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    leave_cover_emp_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    active = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    head = relationship("Employee", foreign_keys=[head_emp_id])
+    leave_cover = relationship("Employee", foreign_keys=[leave_cover_emp_id])
+
+
+class OutpassRequest(Base):
+    """An outpass (leaving, no return expected today) or gatepass (out and back).
+
+    Only a gatepass gets expected_back_at and therefore only a gatepass can go
+    overdue. Times are stored as IST display strings plus resolved timestamps,
+    matching BSC so the two systems stay legible side by side.
+    """
+    __tablename__ = "outpass_requests"
+
+    id = Column(Integer, primary_key=True)
+    ref_no = Column(String(64), unique=True, nullable=False, index=True)
+    type = Column(String(16), nullable=False, default="outpass")   # outpass | gatepass
+    on_duty = Column(Boolean, default=False)        # official work vs personal
+    req_date = Column(Date, nullable=False)
+    requester_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    purpose = Column(Text, nullable=False)
+    out_time = Column(String(16))                    # 'HH:MM' as entered
+    in_time = Column(String(16))                     # gatepass only
+
+    approver_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    approver_label = Column(String(255))
+    manager_on_leave = Column(Boolean, default=False)
+
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    actioned_by_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    actioned_by_name = Column(String(255))
+    actioned_at_ist = Column(String(32))
+    reject_reason = Column(Text)
+
+    # Return tracking (gatepass only)
+    expected_back_at = Column(DateTime, nullable=True, index=True)
+    returned_at = Column(DateTime, nullable=True, index=True)
+    returned_by_name = Column(String(255))
+
+    # Independent alert stamps — each retries until it actually sends, which is
+    # the fix BSC needed when one failing send blocked the others.
+    overdue_alert_at = Column(DateTime, nullable=True)   # approver told
+    hr_alert_at = Column(DateTime, nullable=True)        # HR told
+    requester_reminder_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    requester = relationship("Employee", foreign_keys=[requester_id])
+    approver = relationship("Employee", foreign_keys=[approver_id])

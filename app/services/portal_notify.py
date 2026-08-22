@@ -205,3 +205,76 @@ def notify_consolidated_rejected(bg, report, employee_email: str,
                            f"Reason: {note}",
                            f"{returned} claim(s) returned for editing."],
                           f"{BASE()}/expense/", "Open Expense Portal"))
+
+
+# ---- Outpass / Gatepass ---------------------------------------------------
+# BSC sends these over WATI WhatsApp; the Metfraa portal has no WhatsApp
+# provider, so they go by email through the same SMTP path as everything else.
+
+def _pass_lines(o, extra: list[str] | None = None) -> list[str]:
+    label = "Gatepass" if o.type == "gatepass" else "Outpass"
+    req = o.requester
+    lines = [
+        f"<b>{label}</b> · {o.ref_no}",
+        f"Employee: {req.name if req else '—'}"
+        + (f" ({req.employee_code})" if req and req.employee_code else ""),
+        f"Department: {(req.department if req else None) or '—'}",
+        f"Date: {o.req_date.strftime('%d %b %Y') if o.req_date else '—'}",
+        f"Out: {o.out_time or '—'}" + (f" · Expected back: {o.in_time}"
+                                       if o.type == "gatepass" and o.in_time else ""),
+        f"Purpose: {o.purpose or '—'}",
+    ]
+    if o.on_duty:
+        lines.append("Marked <b>on duty</b> (official work).")
+    if o.manager_on_leave:
+        lines.append("Requester flagged their manager as on leave.")
+    return lines + (extra or [])
+
+
+def notify_gatepass_requested(approver, o, requester) -> None:
+    if not getattr(approver, "email", None):
+        return
+    _send(approver.email,
+          f"[Gatepass] Approval needed — {requester.name} ({o.ref_no})",
+          _card("A pass request needs your approval", _pass_lines(o),
+                f"{BASE()}/gatepass/", "Review request"))
+
+
+def notify_gatepass_decided(o, db=None) -> None:
+    req = o.requester
+    if not req or not req.email:
+        return
+    approved = o.status == "approved"
+    extra = ([f"Approved by: {o.actioned_by_name or '—'}"] if approved
+             else [f"Reason: {o.reject_reason or '—'}"])
+    if approved and o.type == "gatepass":
+        extra.append("Remember to record your return in the portal when you get back.")
+    _send(req.email,
+          f"[Gatepass] {'Approved' if approved else 'Not approved'} — {o.ref_no}",
+          _card("Your pass was approved" if approved else "Your pass was not approved",
+                _pass_lines(o, extra), f"{BASE()}/gatepass/", "Open Gatepass"))
+
+
+def notify_gatepass_return_reminder(o) -> None:
+    req = o.requester
+    if not req or not req.email:
+        return
+    _send(req.email,
+          f"[Gatepass] Please record your return — {o.ref_no}",
+          _card("Your gatepass is still showing as open",
+                _pass_lines(o, ["If you're back, please record your return in the "
+                                "portal so it doesn't show as overdue."]),
+                f"{BASE()}/gatepass/", "Record my return"))
+
+
+def notify_gatepass_overdue(o, to: str | None, who: str) -> None:
+    """who: 'approver' or 'hr'. HR falls back to the configured HR address."""
+    target = to or _hr_email()
+    if not target:
+        return
+    _send(target,
+          f"[Gatepass OVERDUE] {o.requester.name if o.requester else ''} — {o.ref_no}",
+          _card("A gatepass has not been returned",
+                _pass_lines(o, ["This pass is past its declared in-time and no "
+                                "return has been recorded."]),
+                f"{BASE()}/gatepass/", "Open Gatepass"))

@@ -13,7 +13,10 @@ Two guards:
 import logging
 import os
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.orm import Session
+
+from ..database import get_db
 
 log = logging.getLogger(__name__)
 
@@ -60,3 +63,18 @@ def cron_daily_task_report(request: Request):
 
     _daily_task_report_job()
     return {"status": "ok", "job": "daily_task_report"}
+
+
+@router.get("/gatepass-overdue")
+def cron_gatepass_overdue(request: Request, db: Session = Depends(get_db)):
+    """Nudge on gatepasses that were never returned.
+
+    Runs often (BSC learned that a once-a-day check is useless for a pass due
+    back at 3pm). Each recipient has its own stamp, so a send that fails
+    retries next run instead of being lost.
+    """
+    _authorize(request)
+    if not _enabled():
+        return {"ok": True, "skipped": "cron disabled"}
+    from .gatepass import run_overdue_check
+    return {"ok": True, **run_overdue_check(db)}

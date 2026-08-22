@@ -25,6 +25,7 @@ from .routes import task_reports as task_reports_routes
 from .routes import monthly_kpi as monthly_kpi_routes
 from .routes import site_visits as site_visits_routes
 from .routes import cron as cron_routes
+from .routes import gatepass as gatepass_routes
 from .routes import ehs as ehs_routes
 from .routes import ehs_ui as ehs_ui_routes
 from .routes import expense as expense_routes
@@ -111,6 +112,7 @@ app.include_router(task_reports_routes.router)
 app.include_router(monthly_kpi_routes.router)
 app.include_router(site_visits_routes.router)
 app.include_router(cron_routes.router)
+app.include_router(gatepass_routes.router)
 app.include_router(ehs_ui_routes.router)   # parity pages + contract (must precede ehs_routes)
 app.include_router(ehs_routes.router)
 app.include_router(expense_ui_routes.router)   # parity SPA + bootstrap (precedes expense_routes)

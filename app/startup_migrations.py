@@ -73,7 +73,12 @@ EXPENSE_PARITY_MIGRATIONS += [
     "CREATE INDEX IF NOT EXISTS ix_expense_pending_uploads_token "
     "ON expense_pending_uploads (upload_token)",
 ]
-STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + EXPENSE_PARITY_MIGRATIONS
+GATEPASS_MIGRATIONS = [
+    "CREATE INDEX IF NOT EXISTS idx_outpass_open ON outpass_requests(returned_at) "
+    "WHERE returned_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_outpass_expected ON outpass_requests(expected_back_at)",
+]
+STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + EXPENSE_PARITY_MIGRATIONS + GATEPASS_MIGRATIONS
 
 
 def run_startup_migrations() -> None:

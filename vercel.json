@@ -16,6 +16,10 @@
     {
       "path": "/cron/daily-task-report",
       "schedule": "35 4 * * *"
+    },
+    {
+      "path": "/cron/gatepass-overdue",
+      "schedule": "*/30 * * * *"
     }
   ],
   "headers": [
