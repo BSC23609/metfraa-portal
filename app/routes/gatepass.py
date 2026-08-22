@@ -12,6 +12,8 @@ Two deliberate differences from BSC: notifications go by EMAIL through the
 portal's SMTP rather than WATI WhatsApp, and there is no PDF/OneDrive step
 (BSC needs a printable pass at a manned gate; that can be added later).
 """
+import logging
+import os
 import re
 from datetime import date, datetime, timedelta
 
@@ -27,6 +29,7 @@ from ..deps import get_current_user
 from ..models import DeptApprover, Employee, OutpassRequest
 
 router = APIRouter(prefix="/gatepass", tags=["gatepass"])
+log = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="app/templates")
 
 IST = timedelta(hours=5, minutes=30)
@@ -242,12 +245,18 @@ async def api_request(request: Request, user: Employee = Depends(get_current_use
     db.add(o)
     db.commit()
 
+    # Notify on both channels. WhatsApp is what people actually read; email is
+    # the durable record. Neither failing may lose the request.
+    from ..services import wati
     from ..services.portal_notify import notify_gatepass_requested
-    try:
-        notify_gatepass_requested(approver, o, user)
-    except Exception:
-        pass          # a failed email must not lose the request
-    return {"ok": True, "ref_no": o.ref_no, "approver": approver.name}
+    for fn in (lambda: notify_gatepass_requested(approver, o, user),
+               lambda: wati.outpass_request(approver, o, db)):
+        try:
+            fn()
+        except Exception:
+            log.warning("[gatepass] notify failed on %s", o.ref_no, exc_info=True)
+    return {"ok": True, "ref_no": o.ref_no, "approver": approver.name,
+            "whatsapp": wati.configured()}
 
 
 @router.get("/api/approvals")
@@ -285,11 +294,14 @@ def api_approve(rid: int, user: Employee = Depends(get_current_user),
     if o.type == "gatepass":
         o.expected_back_at = _expected_back(o.req_date, o.in_time)
     db.commit()
+    from ..services import wati
     from ..services.portal_notify import notify_gatepass_decided
-    try:
-        notify_gatepass_decided(o, db)
-    except Exception:
-        pass
+    for fn in (lambda: notify_gatepass_decided(o, db),
+               lambda: wati.outpass_approved(o, db)):
+        try:
+            fn()
+        except Exception:
+            log.warning("[gatepass] notify failed on %s", o.ref_no, exc_info=True)
     return {"ok": True, "status": "approved"}
 
 
@@ -308,11 +320,14 @@ async def api_reject(rid: int, request: Request,
     o.actioned_at_ist = _ist_str()
     o.reject_reason = reason[:2000]
     db.commit()
+    from ..services import wati
     from ..services.portal_notify import notify_gatepass_decided
-    try:
-        notify_gatepass_decided(o, db)
-    except Exception:
-        pass
+    for fn in (lambda: notify_gatepass_decided(o, db),
+               lambda: wati.outpass_rejected(o, db)):
+        try:
+            fn()
+        except Exception:
+            log.warning("[gatepass] notify failed on %s", o.ref_no, exc_info=True)
     return {"ok": True, "status": "rejected"}
 
 
@@ -425,9 +440,11 @@ def run_overdue_check(db: Session) -> dict:
     """Nudge approver, HR and requester about gatepasses that never came back.
 
     Each recipient has its own stamp so a failing send for one doesn't block
-    the others and each retries until it actually goes — the bug that made
-    BSC's HR alerts silently never arrive.
+    the others, and a stamp is only set when a channel actually DELIVERED —
+    otherwise the next run retries. Setting the stamp on attempt is precisely
+    how BSC lost every HR alert for weeks.
     """
+    from ..services import wati
     from ..services.portal_notify import (notify_gatepass_overdue,
                                           notify_gatepass_return_reminder)
     cutoff = datetime.utcnow() - timedelta(minutes=OVERDUE_GRACE_MIN)
@@ -438,34 +455,77 @@ def run_overdue_check(db: Session) -> dict:
                     OutpassRequest.expected_back_at.isnot(None),
                     OutpassRequest.expected_back_at < cutoff).all())
     sent = {"approver": 0, "hr": 0, "requester": 0, "checked": len(rows),
-            "multi_day_skipped": 0}
-    for o in rows:
-        multi = _is_multi_day(o)
-        if not o.requester_reminder_at and o.requester and o.requester.email:
+            "multi_day_skipped": 0, "whatsapp": wati.configured()}
+
+    def _deliver(email_fn, wa_fn) -> bool:
+        """True if EITHER channel got through."""
+        ok = False
+        for fn in (email_fn, wa_fn):
             try:
-                notify_gatepass_return_reminder(o)
+                ok = bool(fn()) or ok
+            except Exception:
+                log.warning("[gatepass] overdue notify failed", exc_info=True)
+        return ok
+
+    hr_name = os.getenv("GATEPASS_HR_NAME", "HR")
+    hr_phone = os.getenv("GATEPASS_HR_PHONE", "")
+
+    for o in rows:
+        late = int((datetime.utcnow() - o.expected_back_at).total_seconds() // 60)
+        multi = _is_multi_day(o)
+
+        if not o.requester_reminder_at and o.requester:
+            if _deliver(lambda: (notify_gatepass_return_reminder(o), True)[1],
+                        lambda: wati.gatepass_return_reminder(o, late, db)):
                 o.requester_reminder_at = datetime.utcnow()
                 sent["requester"] += 1
-            except Exception:
-                pass
+
         if multi:
             sent["multi_day_skipped"] += 1
             db.commit()
             continue
-        if not o.overdue_alert_at and o.approver and o.approver.email:
-            try:
-                notify_gatepass_overdue(o, o.approver.email, "approver")
+
+        if not o.overdue_alert_at and o.approver:
+            ap = o.approver
+            if _deliver(lambda: (notify_gatepass_overdue(o, ap.email, "approver"), True)[1],
+                        lambda: wati.outpass_overdue(ap.name, ap.phone, o, late, db)):
                 o.overdue_alert_at = datetime.utcnow()
                 sent["approver"] += 1
-            except Exception:
-                pass
+
         if not o.hr_alert_at:
-            try:
-                notify_gatepass_overdue(o, None, "hr")
+            if _deliver(lambda: (notify_gatepass_overdue(o, None, "hr"), True)[1],
+                        lambda: wati.outpass_overdue(hr_name, hr_phone, o, late, db)
+                                 if hr_phone else False):
                 o.hr_alert_at = datetime.utcnow()
                 sent["hr"] += 1
-            except Exception:
-                pass
         db.commit()
     db.commit()
     return sent
+
+
+@router.get("/api/admin/wa-log")
+def api_wa_log(user: Employee = Depends(get_current_user), db: Session = Depends(get_db),
+               limit: int = 100):
+    """Recent WhatsApp send attempts.
+
+    Exists because BSC spent weeks believing alerts were going out. If HR says
+    they got nothing, look here first — 'declined' or 'no_phone' rows tell you
+    immediately whether it was WATI, the template, or a missing number.
+    """
+    if not _is_admin(db, user):
+        raise HTTPException(status_code=403, detail="Admin only")
+    from ..models import WaLog
+    from ..services import wati as _w
+    rows = (db.query(WaLog).order_by(WaLog.id.desc()).limit(min(limit, 500)).all())
+    counts = {}
+    for r in rows:
+        counts[r.result] = counts.get(r.result, 0) + 1
+    return {
+        "configured": _w.configured(),
+        "hr_phone_set": bool(os.getenv("GATEPASS_HR_PHONE")),
+        "counts": counts,
+        "rows": [{"id": r.id, "phone": r.phone, "template": r.template,
+                  "result": r.result, "detail": r.detail,
+                  "at": (r.created_at + IST).strftime("%Y-%m-%d %H:%M")
+                        if r.created_at else None} for r in rows],
+    }

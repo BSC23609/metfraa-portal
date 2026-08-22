@@ -186,6 +186,54 @@
   <!-- ============ ADMIN ============ -->
   <div x-show="tab === 'admin'">
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div>
+          <div class="lbl">WhatsApp delivery</div>
+          <p class="text-xs text-metfraa-gray-500 mt-1">
+            If someone says they got no alert, check here before anything else.
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                :class="wa.configured ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'"
+                x-text="wa.configured ? 'WATI connected' : 'WATI not configured'"></span>
+          <span x-show="!wa.hr_phone_set"
+                class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold uppercase">
+            HR phone not set
+          </span>
+          <button @click="loadWa()" class="px-2 py-1 rounded ring-1 ring-metfraa-gray-300 text-xs font-bold">Refresh</button>
+        </div>
+      </div>
+      <div class="flex gap-3 flex-wrap mb-3">
+        <template x-for="(n, k) in wa.counts" :key="k">
+          <span class="text-xs px-2 py-1 rounded bg-metfraa-gray-100">
+            <span class="font-bold" x-text="n"></span> <span x-text="k"></span>
+          </span>
+        </template>
+      </div>
+      <div class="max-h-72 overflow-y-auto">
+        <table class="w-full text-xs">
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="r in wa.rows" :key="r.id">
+              <tr>
+                <td class="py-1.5 mono text-metfraa-gray-400" x-text="r.at"></td>
+                <td class="py-1.5 mono" x-text="r.phone"></td>
+                <td class="py-1.5" x-text="r.template"></td>
+                <td class="py-1.5">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                        :class="r.result === 'sent' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'"
+                        x-text="r.result"></span>
+                </td>
+                <td class="py-1.5 text-metfraa-gray-500 truncate max-w-xs" x-text="r.detail"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <div x-show="!wa.rows.length" class="text-sm text-metfraa-gray-400 py-4">No sends logged yet.</div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
       <div class="lbl mb-3">Open gatepasses — not yet returned</div>
       <template x-if="!openPasses.length">
         <div class="text-sm text-metfraa-gray-400 py-4">Nothing outstanding.</div>
@@ -270,7 +318,7 @@
 function gpApp() {
   return {
     tab: 'new', busy: false, msg: '', err: false,
-    mine: [], approvals: [], openPasses: [], depts: [], people: [],
+    mine: [], approvals: [], openPasses: [], depts: [], people: [], wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
     myApprover: null, pendingCount: {{ pending_for_me }},
     isAdmin: {{ 'true' if is_admin else 'false' }},
     form: { type: 'outpass', req_date: new Date().toISOString().slice(0, 10),
@@ -288,7 +336,7 @@ function gpApp() {
     async load() {
       if (this.tab === 'mine') return this.loadMine();
       if (this.tab === 'approvals') return this.loadApprovals();
-      if (this.tab === 'admin') { await this.loadOpen(); return this.loadDepts(); }
+      if (this.tab === 'admin') { await this.loadOpen(); await this.loadWa(); return this.loadDepts(); }
     },
 
     async loadMine() {
@@ -308,6 +356,10 @@ function gpApp() {
     async loadOpen() {
       const r = await fetch('/gatepass/api/admin/all?status=open');
       if (r.ok) this.openPasses = (await r.json()).requests || [];
+    },
+    async loadWa() {
+      const r = await fetch('/gatepass/api/admin/wa-log');
+      if (r.ok) this.wa = await r.json();
     },
     async loadDepts() {
       const r = await fetch('/gatepass/api/admin/approvers');

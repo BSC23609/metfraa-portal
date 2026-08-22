@@ -74,6 +74,7 @@ EXPENSE_PARITY_MIGRATIONS += [
     "ON expense_pending_uploads (upload_token)",
 ]
 GATEPASS_MIGRATIONS = [
+    "CREATE INDEX IF NOT EXISTS idx_wa_log_created ON wa_log(created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_outpass_open ON outpass_requests(returned_at) "
     "WHERE returned_at IS NULL",
     "CREATE INDEX IF NOT EXISTS idx_outpass_expected ON outpass_requests(expected_back_at)",

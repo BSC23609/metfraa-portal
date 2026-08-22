@@ -675,3 +675,19 @@ class OutpassRequest(Base):
 
     requester = relationship("Employee", foreign_keys=[requester_id])
     approver = relationship("Employee", foreign_keys=[approver_id])
+
+
+class WaLog(Base):
+    """Every WATI send attempt, successful or not.
+
+    BSC ran for weeks believing HR alerts were going out; this table is how
+    the silence was finally proved and diagnosed. Cheap to write, invaluable.
+    """
+    __tablename__ = "wa_log"
+
+    id = Column(Integer, primary_key=True)
+    phone = Column(String(32))
+    template = Column(String(64))
+    result = Column(String(24), index=True)   # sent|declined|http_error|error|no_phone|skipped
+    detail = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
