@@ -15,6 +15,7 @@ existing KPI admin routes check it directly.
 import json
 from datetime import datetime
 import logging
+import re
 import secrets
 import string
 
@@ -48,6 +49,27 @@ def _require_manager(db: Session, user: Employee):
     return acc
 
 
+def _normalize_phone(raw) -> str | None:
+    """Store a WhatsApp-ready number, or None.
+
+    WATI needs digits with a country code. People type 98765 43210,
+    +91 98765-43210, or a leading 0 — normalise on the way IN so what is
+    stored is what will actually be sent, rather than discovering the problem
+    when a message silently doesn't arrive.
+    """
+    digits = re.sub(r"\D", "", str(raw or ""))
+    if not digits:
+        return None
+    if len(digits) == 10:
+        digits = "91" + digits
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = "91" + digits[1:]
+    if not (10 <= len(digits) <= 15):
+        raise HTTPException(status_code=400,
+                            detail="That doesn't look like a valid mobile number.")
+    return digits
+
+
 def _temp_password(n: int = 8) -> str:
     """The standard reset password.
 
@@ -66,6 +88,7 @@ def _row(db: Session, e: Employee, a=None, m=None, _bulk: bool = False) -> dict:
     return {
         "id": e.id, "employee_code": e.employee_code, "name": e.name, "email": e.email or "",
         "designation": e.designation or "", "department": e.department or "",
+        "phone": e.phone or "",
         "is_active": bool(e.is_active), "expense_level": (m.level if m else "L1"),
         "legacy_admin": bool(e.is_admin) and a is None,
         **{f: bool(getattr(a, f)) if a else False for f in ROLE_FIELDS},
@@ -118,6 +141,7 @@ async def people_create(request: Request, user: Employee = Depends(get_current_u
         email=(body.get("email") or "").strip() or None,
         designation=(body.get("designation") or "").strip() or None,
         department=(body.get("department") or "").strip() or None,
+        phone=_normalize_phone(body.get("phone")),
         is_active=True, is_admin=False, must_reset_password=True,
         password_hash=bcrypt.hashpw(temp.encode(), bcrypt.gensalt()).decode(),
     )
@@ -145,6 +169,8 @@ async def people_update(emp_id: int, request: Request, user: Employee = Depends(
     body = await request.json()
 
     # ---- details (HR + Superadmin)
+    if "phone" in body:
+        e.phone = _normalize_phone(body.get("phone"))
     for field in ("name", "email", "designation", "department"):
         if field in body:
             setattr(e, field, (str(body[field]).strip() or None) if body[field] is not None else None)

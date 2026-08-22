@@ -1,0 +1,111 @@
+diff --git a/app/routes/people.py b/app/routes/people.py
+index d0cd912..24de54b 100644
+--- a/app/routes/people.py
++++ b/app/routes/people.py
+@@ -15,6 +15,7 @@ existing KPI admin routes check it directly.
+ import json
+ from datetime import datetime
+ import logging
++import re
+ import secrets
+ import string
+ 
+@@ -48,6 +49,27 @@ def _require_manager(db: Session, user: Employee):
+     return acc
+ 
+ 
++def _normalize_phone(raw) -> str | None:
++    """Store a WhatsApp-ready number, or None.
++
++    WATI needs digits with a country code. People type 98765 43210,
++    +91 98765-43210, or a leading 0 — normalise on the way IN so what is
++    stored is what will actually be sent, rather than discovering the problem
++    when a message silently doesn't arrive.
++    """
++    digits = re.sub(r"\D", "", str(raw or ""))
++    if not digits:
++        return None
++    if len(digits) == 10:
++        digits = "91" + digits
++    elif len(digits) == 11 and digits.startswith("0"):
++        digits = "91" + digits[1:]
++    if not (10 <= len(digits) <= 15):
++        raise HTTPException(status_code=400,
++                            detail="That doesn't look like a valid mobile number.")
++    return digits
++
++
+ def _temp_password(n: int = 8) -> str:
+     """The standard reset password.
+ 
+@@ -66,6 +88,7 @@ def _row(db: Session, e: Employee, a=None, m=None, _bulk: bool = False) -> dict:
+     return {
+         "id": e.id, "employee_code": e.employee_code, "name": e.name, "email": e.email or "",
+         "designation": e.designation or "", "department": e.department or "",
++        "phone": e.phone or "",
+         "is_active": bool(e.is_active), "expense_level": (m.level if m else "L1"),
+         "legacy_admin": bool(e.is_admin) and a is None,
+         **{f: bool(getattr(a, f)) if a else False for f in ROLE_FIELDS},
+@@ -118,6 +141,7 @@ async def people_create(request: Request, user: Employee = Depends(get_current_u
+         email=(body.get("email") or "").strip() or None,
+         designation=(body.get("designation") or "").strip() or None,
+         department=(body.get("department") or "").strip() or None,
++        phone=_normalize_phone(body.get("phone")),
+         is_active=True, is_admin=False, must_reset_password=True,
+         password_hash=bcrypt.hashpw(temp.encode(), bcrypt.gensalt()).decode(),
+     )
+@@ -145,6 +169,8 @@ async def people_update(emp_id: int, request: Request, user: Employee = Depends(
+     body = await request.json()
+ 
+     # ---- details (HR + Superadmin)
++    if "phone" in body:
++        e.phone = _normalize_phone(body.get("phone"))
+     for field in ("name", "email", "designation", "department"):
+         if field in body:
+             setattr(e, field, (str(body[field]).strip() or None) if body[field] is not None else None)
+diff --git a/app/templates/people.html b/app/templates/people.html
+index 5dbb34b..5649452 100644
+--- a/app/templates/people.html
++++ b/app/templates/people.html
+@@ -69,7 +69,14 @@
+         <div><label class="lbl">Employee Code</label><input id="f-code" class="inp"></div>
+         <div><label class="lbl">Name</label><input id="f-name" class="inp"></div>
+       </div>
+-      <div><label class="lbl">Email</label><input id="f-email" class="inp"></div>
++      <div class="grid grid-cols-2 gap-2">
++        <div><label class="lbl">Email</label><input id="f-email" class="inp"></div>
++        <div>
++          <label class="lbl">Mobile</label>
++          <input id="f-phone" class="inp" placeholder="98765 43210" inputmode="tel">
++          <div class="text-[10px] text-metfraa-gray-400 mt-1">Used for WhatsApp alerts</div>
++        </div>
++      </div>
+       <div class="grid grid-cols-2 gap-2">
+         <div><label class="lbl">Designation</label><input id="f-desig" class="inp"></div>
+         <div><label class="lbl">Department</label><input id="f-dept" class="inp"></div>
+@@ -146,6 +153,9 @@ function render() {
+       <td class="px-3 py-3">
+         <div class="font-semibold text-metfraa-ink">${e.name}</div>
+         <div class="text-xs text-metfraa-gray-400">${e.employee_code} · ${e.email||'no email'} · ${e.designation||''}</div>
++        <div class="text-xs mt-0.5">${e.phone
++          ? '<span class="text-metfraa-gray-500">📱 '+e.phone+'</span>'
++          : '<span class="text-amber-700">No mobile — WhatsApp alerts won\'t reach them</span>'}</div>
+       </td>
+       <td class="px-3 py-3 space-x-1">
+         ${e.kpi_access?badge('KPI','bg-metfraa-blue/10 text-metfraa-blue'):''}
+@@ -172,6 +182,7 @@ function setForm(e) {
+   document.getElementById('f-code').value = e.employee_code||'';
+   document.getElementById('f-name').value = e.name||'';
+   document.getElementById('f-email').value = e.email||'';
++  document.getElementById('f-phone').value = e.phone||'';
+   document.getElementById('f-desig').value = e.designation||'';
+   document.getElementById('f-dept').value = e.department||'';
+   document.getElementById('f-level').value = e.expense_level||'L1';
+@@ -198,6 +209,7 @@ function formBody() {
+     employee_code: document.getElementById('f-code').value,
+     name: document.getElementById('f-name').value,
+     email: document.getElementById('f-email').value,
++    phone: document.getElementById('f-phone').value,
+     designation: document.getElementById('f-desig').value,
+     department: document.getElementById('f-dept').value,
+     expense_level: document.getElementById('f-level').value,
