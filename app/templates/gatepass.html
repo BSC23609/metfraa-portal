@@ -234,7 +234,12 @@
                         :class="r.result === 'sent' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'"
                         x-text="r.result"></span>
                 </td>
-                <td class="py-1.5 text-metfraa-gray-500 truncate max-w-xs" x-text="r.detail"></td>
+                <td class="py-1.5 text-metfraa-gray-500 max-w-sm">
+                  <div class="cursor-pointer" :title="r.detail"
+                       @click="r._open = !r._open"
+                       :class="r._open ? 'whitespace-pre-wrap break-all' : 'truncate'"
+                       x-text="r.detail"></div>
+                </td>
               </tr>
             </template>
           </tbody>
