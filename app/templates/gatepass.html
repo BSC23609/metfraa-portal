@@ -249,7 +249,19 @@
     </div>
 
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
-      <div class="lbl mb-3">Open gatepasses — not yet returned</div>
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div>
+          <div class="lbl">Open gatepasses — not yet returned</div>
+          <p class="text-xs text-metfraa-gray-500 mt-1">
+            Alerts fire automatically <span x-text="graceMin"></span> minutes past the
+            in-time. "Send alerts" pushes them out now, ignoring that wait.
+          </p>
+        </div>
+        <button @click="runOverdue()" :disabled="runningSweep"
+          class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-bold disabled:opacity-50">
+          <span x-text="runningSweep ? 'Running…' : 'Run overdue check now'"></span>
+        </button>
+      </div>
       <template x-if="!openPasses.length">
         <div class="text-sm text-metfraa-gray-400 py-4">Nothing outstanding.</div>
       </template>
@@ -257,7 +269,7 @@
         <thead>
           <tr class="text-left lbl border-b border-metfraa-gray-100">
             <th class="py-2">Employee</th><th class="py-2">Ref</th>
-            <th class="py-2">Out</th><th class="py-2">Due back</th><th class="py-2">Status</th><th class="py-2">Return</th><th></th>
+            <th class="py-2">Out</th><th class="py-2">Due back</th><th class="py-2">Status</th><th class="py-2">Return</th><th class="py-2">Alerts</th><th></th>
           </tr>
         </thead>
         <tbody class="divide-y divide-metfraa-gray-100">
@@ -283,7 +295,30 @@
                 </template>
                 <template x-if="!o.returned_at"><span class="text-metfraa-gray-400">—</span></template>
               </td>
-              <td class="py-2 text-right">
+              <td class="py-2">
+                <template x-if="o.alerted_requester || o.alerted_approver || o.alerted_hr">
+                  <div class="flex gap-1">
+                    <span class="px-1.5 py-0.5 rounded bg-green-100 text-green-800 text-[10px] font-bold"
+                          x-show="o.alerted_requester" title="Reminder sent to the employee">EMP</span>
+                    <span class="px-1.5 py-0.5 rounded bg-green-100 text-green-800 text-[10px] font-bold"
+                          x-show="o.alerted_approver" title="Alert sent to the approver">APR</span>
+                    <span class="px-1.5 py-0.5 rounded bg-green-100 text-green-800 text-[10px] font-bold"
+                          x-show="o.alerted_hr" title="Alert sent to HR">HR</span>
+                  </div>
+                </template>
+                <template x-if="!o.alerted_requester && !o.alerted_approver && !o.alerted_hr">
+                  <span class="text-[11px] text-metfraa-gray-400"
+                        x-text="o.overdue_min == null ? '—'
+                          : (o.overdue_min < o.grace_min
+                             ? 'due in ' + (o.grace_min - o.overdue_min) + ' min'
+                             : 'pending cron')"></span>
+                </template>
+              </td>
+              <td class="py-2 text-right whitespace-nowrap">
+                <button @click="sendAlerts(o)" :disabled="alerting === o.id"
+                  class="px-2 py-1 rounded bg-metfraa-ink text-white text-xs font-bold disabled:opacity-50 mr-1">
+                  <span x-text="alerting === o.id ? 'Sending…' : 'Send alerts'"></span>
+                </button>
                 <button @click="recordReturn(o)"
                   class="px-2 py-1 rounded ring-1 ring-metfraa-gray-300 text-xs font-bold">Mark returned</button>
               </td>
@@ -397,7 +432,7 @@
 function gpApp() {
   return {
     tab: 'new', busy: false, msg: '', err: false,
-    mine: [], approvals: [], openPasses: [], depts: [], people: [], empRows: [], choices: [], empQ: '', empSchemaReady: true, savingAll: false, wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
+    mine: [], approvals: [], openPasses: [], depts: [], people: [], empRows: [], choices: [], empQ: '', empSchemaReady: true, savingAll: false, alerting: null, runningSweep: false, wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
     myApprover: null, pendingCount: {{ pending_for_me }},
     isAdmin: {{ 'true' if is_admin else 'false' }},
     form: { type: 'outpass', req_date: new Date().toISOString().slice(0, 10),
@@ -432,6 +467,38 @@ function gpApp() {
       this.approvals = d.requests || [];
       this.pendingCount = d.pending || 0;
     },
+    get graceMin() {
+      const r = this.openPasses.find(o => o.grace_min != null);
+      return r ? r.grace_min : 30;
+    },
+
+    async sendAlerts(o) {
+      if (!confirm(`Send overdue alerts for ${o.requester_name} now?\n\n` +
+                   'The employee, their approver and HR will each be messaged.')) return;
+      this.alerting = o.id;
+      try {
+        const r = await fetch(`/gatepass/api/admin/${o.id}/send-alerts`, { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) { alert(d.detail || 'Failed'); return; }
+        alert(d.message + (d.errors && d.errors.length ? '\n\n' + d.errors.join('\n') : ''));
+        this.loadOpen(); this.loadWa();
+      } finally { this.alerting = null; }
+    },
+
+    async runOverdue() {
+      this.runningSweep = true;
+      try {
+        const r = await fetch('/gatepass/api/admin/run-overdue', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) { alert(d.detail || 'Failed'); return; }
+        alert(`Checked ${d.checked} open pass(es).\n` +
+              `Employee reminders: ${d.requester}\nApprover alerts: ${d.approver}\n` +
+              `HR alerts: ${d.hr}` +
+              (d.multi_day_skipped ? `\nMulti-day skipped: ${d.multi_day_skipped}` : ''));
+        this.loadOpen(); this.loadWa();
+      } finally { this.runningSweep = false; }
+    },
+
     async loadOpen() {
       const r = await fetch('/gatepass/api/admin/all?status=open');
       if (r.ok) this.openPasses = (await r.json()).requests || [];

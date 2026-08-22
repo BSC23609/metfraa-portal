@@ -35,8 +35,10 @@ templates = Jinja2Templates(directory="app/templates")
 
 IST = timedelta(hours=5, minutes=30)
 
-# A gatepass this far past its declared in-time counts as overdue.
-OVERDUE_GRACE_MIN = 30
+# A gatepass this far past its declared in-time counts as overdue. Tunable
+# without a deploy — 30 minutes is forgiving, but at a site where people are
+# expected back sharp you may want 10.
+OVERDUE_GRACE_MIN = int(os.getenv("GATEPASS_OVERDUE_GRACE_MIN", "30"))
 # Passes longer than this are treated as multi-day (site trips, logistics) and
 # excluded from HR alerts — BSC added this after logistics staff were flagged
 # every night for legitimately long trips.
@@ -186,6 +188,12 @@ def _row(o: OutpassRequest, db: Session) -> dict:
         "returned_via": o.returned_via,
         "return_verified": bool(o.return_verified),
         "return_distance_m": o.return_distance_m,
+        "alerted_requester": bool(o.requester_reminder_at),
+        "alerted_approver": bool(o.overdue_alert_at),
+        "alerted_hr": bool(o.hr_alert_at),
+        "overdue_min": (max(0, int((datetime.utcnow() - o.expected_back_at).total_seconds() // 60))
+                        if o.expected_back_at else None),
+        "grace_min": OVERDUE_GRACE_MIN,
         "overdue": overdue and not _is_multi_day(o),
         "multi_day": _is_multi_day(o),
     }
@@ -748,3 +756,87 @@ async def api_set_employee_approver(request: Request,
     row.updated_by = user.employee_code
     db.commit()
     return {"ok": True}
+
+
+def _send_alerts_for(db: Session, o: OutpassRequest, force: bool) -> dict:
+    """Send the overdue alerts for one pass.
+
+    force=True ignores the grace period AND the per-recipient stamps, so an
+    admin can push the alerts out immediately — for a genuinely urgent pass,
+    or to prove the WhatsApp path works without waiting for the cron.
+    """
+    from ..services import wati
+    from ..services.portal_notify import (notify_gatepass_overdue,
+                                          notify_gatepass_return_reminder)
+    late = 0
+    if o.expected_back_at:
+        late = max(0, int((datetime.utcnow() - o.expected_back_at).total_seconds() // 60))
+    hr_name = os.getenv("GATEPASS_HR_NAME", "HR")
+    hr_phone = os.getenv("GATEPASS_HR_PHONE", "")
+    out = {"requester": False, "approver": False, "hr": False, "errors": []}
+
+    def _try(label, email_fn, wa_fn):
+        ok = False
+        for fn in (email_fn, wa_fn):
+            try:
+                ok = bool(fn()) or ok
+            except Exception as e:
+                out["errors"].append(f"{label}: {e}")
+                log.warning("[gatepass] manual alert %s failed on %s", label,
+                            o.ref_no, exc_info=True)
+        out[label] = ok
+        return ok
+
+    if o.requester and (force or not o.requester_reminder_at):
+        if _try("requester",
+                lambda: (notify_gatepass_return_reminder(o), True)[1],
+                lambda: wati.gatepass_return_reminder(o, late, db)):
+            o.requester_reminder_at = datetime.utcnow()
+    if o.approver and (force or not o.overdue_alert_at):
+        ap = o.approver
+        if _try("approver",
+                lambda: (notify_gatepass_overdue(o, ap.email, "approver"), True)[1],
+                lambda: wati.outpass_overdue(ap.name, ap.phone, o, late, db)):
+            o.overdue_alert_at = datetime.utcnow()
+    if force or not o.hr_alert_at:
+        if _try("hr",
+                lambda: (notify_gatepass_overdue(o, None, "hr"), True)[1],
+                lambda: (wati.outpass_overdue(hr_name, hr_phone, o, late, db)
+                         if hr_phone else False)):
+            o.hr_alert_at = datetime.utcnow()
+    db.commit()
+    out["overdue_min"] = late
+    return out
+
+
+@router.post("/api/admin/{rid}/send-alerts")
+def api_send_alerts(rid: int, user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """Push the overdue alerts for one pass right now."""
+    if not _is_admin(db, user):
+        raise HTTPException(status_code=403, detail="Admin only")
+    o = db.query(OutpassRequest).filter(OutpassRequest.id == rid).first()
+    if not o:
+        raise HTTPException(status_code=404, detail="Pass not found")
+    if o.type != "gatepass":
+        raise HTTPException(status_code=400, detail="Only a gatepass has a return to chase")
+    if o.returned_at:
+        raise HTTPException(status_code=400, detail="This pass has already been returned")
+    if o.status != "approved":
+        raise HTTPException(status_code=400, detail=f"This pass is {o.status}")
+    res = _send_alerts_for(db, o, force=True)
+    sent = [k for k in ("requester", "approver", "hr") if res[k]]
+    return {"ok": True, "sent": sent, "overdue_min": res["overdue_min"],
+            "errors": res["errors"][:3],
+            "message": ("Alerts sent to " + ", ".join(sent)) if sent
+                       else "Nothing could be sent — check the delivery log below."}
+
+
+@router.post("/api/admin/run-overdue")
+def api_run_overdue(user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """Run the scheduled sweep immediately — useful to confirm the job works
+    without waiting up to 15 minutes for GitHub Actions."""
+    if not _is_admin(db, user):
+        raise HTTPException(status_code=403, detail="Admin only")
+    return {"ok": True, **run_overdue_check(db)}
