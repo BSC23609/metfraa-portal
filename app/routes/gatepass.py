@@ -185,12 +185,20 @@ def _is_admin(db: Session, user: Employee) -> bool:
 @router.get("/", response_class=HTMLResponse)
 def page(request: Request, user: Employee = Depends(get_current_user),
          db: Session = Depends(get_db)):
-    pending_for_me = (db.query(OutpassRequest)
-                      .filter(OutpassRequest.approver_id == user.id,
-                              OutpassRequest.status == "pending").count())
+    # If the tables aren't migrated yet the page must still render and SAY SO,
+    # rather than returning an opaque 500 that gives nobody anything to act on.
+    schema_ready, pending_for_me = True, 0
+    try:
+        pending_for_me = (db.query(OutpassRequest)
+                          .filter(OutpassRequest.approver_id == user.id,
+                                  OutpassRequest.status == "pending").count())
+    except Exception:
+        db.rollback()
+        schema_ready = False
+        log.error("[gatepass] schema not ready — run the migrations", exc_info=True)
     return templates.TemplateResponse(request, "gatepass.html", {
         "user": user, "is_admin": _is_admin(db, user),
-        "pending_for_me": pending_for_me,
+        "pending_for_me": pending_for_me, "schema_ready": schema_ready,
     })
 
 

@@ -203,7 +203,29 @@ def root(
         except Exception:
             ehs_pending = 0
 
+        # Guarded like the others: a module whose tables aren't migrated yet
+        # must not take down the whole home page.
+        try:
+            from .models import OutpassRequest
+            gatepass_open = (
+                db.query(OutpassRequest)
+                .filter(OutpassRequest.type == "gatepass",
+                        OutpassRequest.status == "approved",
+                        OutpassRequest.returned_at.is_(None))
+                .count()
+            )
+            gatepass_pending = (
+                db.query(OutpassRequest)
+                .filter(OutpassRequest.status == "pending")
+                .count()
+            )
+        except Exception:
+            db.rollback()
+            gatepass_open = gatepass_pending = 0
+
         admin_stats = {
+            "gatepass_open": gatepass_open,
+            "gatepass_pending": gatepass_pending,
             "exp_pending": exp_pending,
             "ehs_pending": ehs_pending,
             "pending_unlocks": pending_unlocks,
