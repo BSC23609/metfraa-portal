@@ -306,6 +306,21 @@
         The approver-overrides table hasn't been created yet, so assignments can't
         be saved. Run the database migrations, then reload this page.
       </div>
+      <div x-show="dirtyCount > 0"
+           class="flex items-center justify-between gap-3 bg-metfraa-blue/5 ring-1 ring-metfraa-blue/20 rounded p-3 mb-3">
+        <div class="text-sm text-metfraa-ink">
+          <span class="font-bold" x-text="dirtyCount"></span>
+          unsaved change<span x-show="dirtyCount !== 1">s</span>
+        </div>
+        <div class="flex gap-2">
+          <button @click="loadEmps()"
+            class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-bold">Discard</button>
+          <button @click="saveAll()" :disabled="savingAll"
+            class="px-4 py-1.5 rounded-lg bg-metfraa-blue text-white text-xs font-bold disabled:opacity-50">
+            <span x-text="savingAll ? 'Saving…' : 'Save all'"></span>
+          </button>
+        </div>
+      </div>
       <div class="text-xs text-metfraa-gray-500 mb-3">
         <span class="font-semibold" x-text="unsetCount"></span> of
         <span x-text="empRows.length"></span> without their own approver
@@ -335,26 +350,31 @@
                   </div>
                 </td>
                 <td class="py-2 pr-2">
-                  <select x-model.number="e.approver_emp_id"
+                  <select @change="setApprover(e, 'approver_emp_id', $event.target.value)"
                           class="text-xs rounded border-metfraa-gray-300 w-full">
-                    <option :value="null">— none —</option>
+                    <option value="" :selected="!e.approver_emp_id">— none —</option>
                     <template x-for="c in choices" :key="c.id">
-                      <option :value="c.id" :disabled="c.id === e.id" x-text="c.name"></option>
+                      <option :value="c.id" :disabled="c.id === e.id"
+                              :selected="c.id === e.approver_emp_id" x-text="c.name"></option>
                     </template>
                   </select>
                 </td>
                 <td class="py-2 pr-2">
-                  <select x-model.number="e.leave_cover_emp_id"
+                  <select @change="setApprover(e, 'leave_cover_emp_id', $event.target.value)"
                           class="text-xs rounded border-metfraa-gray-300 w-full">
-                    <option :value="null">— none —</option>
+                    <option value="" :selected="!e.leave_cover_emp_id">— none —</option>
                     <template x-for="c in choices" :key="c.id">
-                      <option :value="c.id" :disabled="c.id === e.id" x-text="c.name"></option>
+                      <option :value="c.id" :disabled="c.id === e.id"
+                              :selected="c.id === e.leave_cover_emp_id" x-text="c.name"></option>
                     </template>
                   </select>
                 </td>
                 <td class="py-2 text-right whitespace-nowrap">
                   <button @click="saveEmp(e)"
-                    class="px-3 py-1 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Save</button>
+                    :class="e._dirty ? 'bg-metfraa-blue text-white' : 'ring-1 ring-metfraa-gray-300 text-metfraa-gray-500'"
+                    class="px-3 py-1 rounded-lg text-xs font-bold">
+                    <span x-text="e._dirty ? 'Save' : 'Saved'"></span>
+                  </button>
                 </td>
               </tr>
             </template>
@@ -372,7 +392,7 @@
 function gpApp() {
   return {
     tab: 'new', busy: false, msg: '', err: false,
-    mine: [], approvals: [], openPasses: [], depts: [], people: [], empRows: [], choices: [], empQ: '', empSchemaReady: true, wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
+    mine: [], approvals: [], openPasses: [], depts: [], people: [], empRows: [], choices: [], empQ: '', empSchemaReady: true, savingAll: false, wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
     myApprover: null, pendingCount: {{ pending_for_me }},
     isAdmin: {{ 'true' if is_admin else 'false' }},
     form: { type: 'outpass', req_date: new Date().toISOString().slice(0, 10),
@@ -424,6 +444,45 @@ function gpApp() {
         (e.department || '').toLowerCase().includes(q));
     },
     get unsetCount() { return this.empRows.filter(e => !e.approver_emp_id).length; },
+    get dirtyCount() { return this.empRows.filter(e => e._dirty).length; },
+
+    setApprover(e, field, raw) {
+      e[field] = raw === '' ? null : Number(raw);
+      e._dirty = true;
+    },
+
+    async saveAll() {
+      const pending = this.empRows.filter(e => e._dirty);
+      if (!pending.length) return;
+      this.savingAll = true;
+      const failed = [];
+      try {
+        // Sequential on purpose — a burst of parallel writes against a
+        // serverless function is how you get connection-pool errors.
+        for (const e of pending) {
+          const ok = await this.postApprover(e);
+          if (!ok) failed.push(e.name);
+        }
+      } finally {
+        this.savingAll = false;
+      }
+      if (failed.length) alert('Could not save: ' + failed.join(', '));
+      this.loadEmps();
+    },
+
+    async postApprover(e) {
+      try {
+        const r = await fetch('/gatepass/api/admin/employee-approvers', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ employee_id: e.id,
+            approver_emp_id: e.approver_emp_id || null,
+            leave_cover_emp_id: e.leave_cover_emp_id || null }),
+        });
+        if (!r.ok) return false;
+        e._dirty = false;
+        return true;
+      } catch (err) { return false; }
+    },
 
     async loadEmps() {
       const r = await fetch('/gatepass/api/admin/employee-approvers');
@@ -438,13 +497,7 @@ function gpApp() {
       this.empSchemaReady = d.schema_ready !== false;
     },
     async saveEmp(e) {
-      const r = await fetch('/gatepass/api/admin/employee-approvers', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employee_id: e.id,
-          approver_emp_id: e.approver_emp_id || null,
-          leave_cover_emp_id: e.leave_cover_emp_id || null }),
-      });
-      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
+      if (!(await this.postApprover(e))) { alert('Could not save ' + e.name); return; }
       this.loadEmps();
     },
     async loadDepts() {

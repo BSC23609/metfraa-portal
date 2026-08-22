@@ -144,8 +144,12 @@ def download_pass(token: str, db: Session = Depends(get_db)):
                      "Please try again, or open it from the portal.", 500)
     safe = (o.ref_no or "pass").replace("/", "-")
     name = f"{(o.requester.name if o.requester else 'pass')} {safe}.pdf"
+    # An approved pass never changes, so let the phone keep it. Re-opening the
+    # WhatsApp link then costs nothing instead of a fresh round trip on mobile
+    # data — which is most of what "takes forever" actually is.
     return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'inline; filename="{name}"'})
+                    headers={"Content-Disposition": f'inline; filename="{name}"',
+                             "Cache-Control": "private, max-age=604800, immutable"})
 
 
 @router.get("/ogb/{token}", response_class=HTMLResponse)

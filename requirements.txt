@@ -8,6 +8,7 @@ msal>=1.31.1
 httpx>=0.28.1
 openpyxl>=3.1.5
 reportlab>=4.2.5
+pillow>=10.0.0        # pulled in by reportlab, declared because we use it directly
 matplotlib>=3.9.3
 python-dotenv>=1.0.1
 pydantic>=2.10.3

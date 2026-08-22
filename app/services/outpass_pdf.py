@@ -27,12 +27,49 @@ METFRAA_LOGO = _ASSETS / "metfraa-logo.png"      # 500x138
 GROUP_LOGO = _ASSETS / "group-logo.png"          # 375x133
 
 
+# Logos are ~45 KB of a 47 KB pass when embedded at source resolution, for a
+# 9 mm-tall print. Downscale once and cache: the file drops to a few KB, which
+# is what makes it open quickly on mobile data.
+_LOGO_CACHE: dict = {}
+_LOGO_PX_H = 90          # ~250 dpi at 9 mm — sharp in print, tiny on the wire
+
+
+def _logo(path: pathlib.Path):
+    key = str(path)
+    if key in _LOGO_CACHE:
+        return _LOGO_CACHE[key]
+    from io import BytesIO
+
+    from reportlab.lib.utils import ImageReader
+    try:
+        from PIL import Image
+    except ImportError:
+        # Pillow ships with reportlab, but if it ever isn't there a bigger
+        # pass is far better than no pass at the gate.
+        reader = ImageReader(str(path))
+        _LOGO_CACHE[key] = reader
+        return reader
+    im = Image.open(path).convert("RGB")
+    if im.height > _LOGO_PX_H:
+        im = im.resize((max(1, round(im.width * _LOGO_PX_H / im.height)), _LOGO_PX_H),
+                       Image.LANCZOS)
+    # JPEG, not PNG: reportlab passes a JPEG straight through as DCTDecode,
+    # whereas a PNG is re-encoded as raw pixels and balloons the file. The
+    # logos are photographic-ish on white, so JPEG artefacts don't show at
+    # 9 mm. This is the difference between a 47 KB and a ~20 KB pass.
+    buf = BytesIO()
+    im.save(buf, format="JPEG", quality=88, optimize=True)
+    buf.seek(0)
+    reader = ImageReader(buf)
+    _LOGO_CACHE[key] = reader
+    return reader
+
+
 def _draw_logo(c, path: pathlib.Path, x, y, max_h, right_align_at=None):
     """Draw a logo at its natural aspect ratio. Missing file is not fatal —
     a pass without a logo still works at the gate; a crash doesn't."""
     try:
-        from reportlab.lib.utils import ImageReader
-        img = ImageReader(str(path))
+        img = _logo(path)
         iw, ih = img.getSize()
         h = max_h
         w = h * iw / ih
