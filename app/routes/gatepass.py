@@ -15,6 +15,7 @@ portal's SMTP rather than WATI WhatsApp, and there is no PDF/OneDrive step
 import logging
 import os
 import re
+import secrets
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -241,7 +242,8 @@ async def api_request(request: Request, user: Employee = Depends(get_current_use
         req_date=req_date, requester_id=user.id, purpose=purpose,
         out_time=out_time, in_time=in_time if typ == "gatepass" else None,
         approver_id=approver.id, approver_label=label,
-        manager_on_leave=on_leave, status="pending")
+        manager_on_leave=on_leave, status="pending",
+        action_token=secrets.token_hex(20))
     db.add(o)
     db.commit()
 
@@ -272,6 +274,51 @@ def api_approvals(user: Employee = Depends(get_current_user), db: Session = Depe
             "pending": sum(1 for o in rows if o.status == "pending")}
 
 
+
+# --- shared approve/reject ------------------------------------------------
+# Both the in-app buttons and the one-tap WhatsApp links call these, so the two
+# paths can never drift apart — the BSC code has the same split for the same
+# reason.
+
+def apply_approve(db: Session, o: OutpassRequest, actor_id, actor_name: str) -> None:
+    o.status = "approved"
+    o.actioned_by_id = actor_id
+    o.actioned_by_name = actor_name
+    o.actioned_at_ist = _ist_str()
+    o.action_token = None                       # single use
+    o.pdf_token = secrets.token_hex(16)         # link to the printable pass
+    if o.type == "gatepass":
+        o.expected_back_at = _expected_back(o.req_date, o.in_time)
+    db.commit()
+    from ..services import wati
+    from ..services.portal_notify import notify_gatepass_decided
+    for fn in (lambda: notify_gatepass_decided(o, db),
+               lambda: wati.outpass_approved(o, db)):
+        try:
+            fn()
+        except Exception:
+            log.warning("[gatepass] approve notify failed on %s", o.ref_no, exc_info=True)
+
+
+def apply_reject(db: Session, o: OutpassRequest, actor_id, actor_name: str,
+                 reason: str | None) -> None:
+    o.status = "rejected"
+    o.actioned_by_id = actor_id
+    o.actioned_by_name = actor_name
+    o.actioned_at_ist = _ist_str()
+    o.reject_reason = (reason or "")[:2000] or None
+    o.action_token = None
+    db.commit()
+    from ..services import wati
+    from ..services.portal_notify import notify_gatepass_decided
+    for fn in (lambda: notify_gatepass_decided(o, db),
+               lambda: wati.outpass_rejected(o, db)):
+        try:
+            fn()
+        except Exception:
+            log.warning("[gatepass] reject notify failed on %s", o.ref_no, exc_info=True)
+
+
 def _load_for_action(db: Session, user: Employee, rid: int) -> OutpassRequest:
     o = db.query(OutpassRequest).filter(OutpassRequest.id == rid).first()
     if not o:
@@ -287,21 +334,7 @@ def _load_for_action(db: Session, user: Employee, rid: int) -> OutpassRequest:
 def api_approve(rid: int, user: Employee = Depends(get_current_user),
                 db: Session = Depends(get_db)):
     o = _load_for_action(db, user, rid)
-    o.status = "approved"
-    o.actioned_by_id = user.id
-    o.actioned_by_name = user.name
-    o.actioned_at_ist = _ist_str()
-    if o.type == "gatepass":
-        o.expected_back_at = _expected_back(o.req_date, o.in_time)
-    db.commit()
-    from ..services import wati
-    from ..services.portal_notify import notify_gatepass_decided
-    for fn in (lambda: notify_gatepass_decided(o, db),
-               lambda: wati.outpass_approved(o, db)):
-        try:
-            fn()
-        except Exception:
-            log.warning("[gatepass] notify failed on %s", o.ref_no, exc_info=True)
+    apply_approve(db, o, user.id, user.name)
     return {"ok": True, "status": "approved"}
 
 
@@ -314,20 +347,7 @@ async def api_reject(rid: int, request: Request,
     if len(reason) < 3:
         raise HTTPException(status_code=400,
                             detail="Please give a reason so the employee knows why")
-    o.status = "rejected"
-    o.actioned_by_id = user.id
-    o.actioned_by_name = user.name
-    o.actioned_at_ist = _ist_str()
-    o.reject_reason = reason[:2000]
-    db.commit()
-    from ..services import wati
-    from ..services.portal_notify import notify_gatepass_decided
-    for fn in (lambda: notify_gatepass_decided(o, db),
-               lambda: wati.outpass_rejected(o, db)):
-        try:
-            fn()
-        except Exception:
-            log.warning("[gatepass] notify failed on %s", o.ref_no, exc_info=True)
+    apply_reject(db, o, user.id, user.name, reason)
     return {"ok": True, "status": "rejected"}
 
 

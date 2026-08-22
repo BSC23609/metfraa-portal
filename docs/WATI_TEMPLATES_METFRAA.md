@@ -21,13 +21,29 @@ first real send.
 **No newlines inside a variable.** The app already strips them, but don't build
 templates that expect multi-line values.
 
+**Buttons must be "Visit Website" with a dynamic URL.** In WATI's template
+builder choose Interactive → Call to Action → Visit Website → Dynamic, then put
+the fixed part of the URL in the field and reference the variable for the last
+segment. A static button won't work — each pass needs its own token.
+
 ---
 
 ## 1. `met_outpass_request` → the approver
 
 Sent when an employee raises a pass. Goes to the department head.
 
-**Variables:** `name`, `ref`, `requester`, `type`, `purpose`, `date`, `out_time`
+**Variables:** `name`, `ref`, `requester`, `type`, `purpose`, `date`, `out_time`, `token`
+
+**Buttons — two dynamic URL buttons:**
+
+| Button text | URL |
+|---|---|
+| Approve | `https://app.metfraa.com/oga/{{token}}` |
+| Reject | `https://app.metfraa.com/ogr/{{token}}` |
+
+Only the LAST path segment may be dynamic, which is why these live at the root
+rather than under `/gatepass/`. The approver taps once — no login, no app. The
+token is single-use and dies with the pass date.
 
 ```
 Hi {{name}}, a pass request needs your approval.
@@ -46,15 +62,26 @@ Please review it in the Metfraa Portal.
 
 ## 2. `met_outpass_approved` → the requester
 
-**Variables:** `name`, `ref`, `type`, `approver`
+**Variables:** `name`, `ref`, `type`, `approver`, `token`
+
+**Button — one dynamic URL button:**
+
+| Button text | URL |
+|---|---|
+| Download pass | `https://app.metfraa.com/dl/{{token}}` |
+
+Opens the approved pass as a PDF — Metfraa header, the employee's details, an
+ON DUTY badge where applicable, and a green APPROVED band with the approver's
+name and timestamp. It renders inline, so the employee can simply show their
+phone at the gate.
 
 ```
 Hi {{name}}, your {{type}} has been approved by {{approver}}.
 
 Ref: {{ref}}
 
-If this is a gatepass, please record your return in the Metfraa Portal when you
-are back.
+Your pass is attached below. If this is a gatepass, please record your return in
+the Metfraa Portal when you are back.
 ```
 
 ---

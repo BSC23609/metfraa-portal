@@ -665,6 +665,12 @@ class OutpassRequest(Base):
     returned_at = Column(DateTime, nullable=True, index=True)
     returned_by_name = Column(String(255))
 
+    # One-tap WhatsApp approve/reject. The unguessable token IS the
+    # authorisation — no login on a phone at a factory gate. Cleared once used.
+    action_token = Column(String(64), nullable=True, index=True)
+    # Unguessable link to the approved pass PDF, sent to the requester.
+    pdf_token = Column(String(64), nullable=True, index=True)
+
     # Independent alert stamps — each retries until it actually sends, which is
     # the fix BSC needed when one failing send blocked the others.
     overdue_alert_at = Column(DateTime, nullable=True)   # approver told

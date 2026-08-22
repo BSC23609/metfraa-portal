@@ -164,6 +164,10 @@ def outpass_request(approver, o, db=None) -> bool:
         "type": _type_label(o), "purpose": o.purpose or "-",
         "date": o.req_date.strftime("%d %b %Y") if o.req_date else "-",
         "out_time": o.out_time or "-",
+        # Dynamic button suffix: the template's URL is
+        #   https://app.metfraa.com/oga/{{token}}  (approve)
+        #   https://app.metfraa.com/ogr/{{token}}  (reject)
+        "token": o.action_token or "-",
     }, db)
 
 
@@ -172,6 +176,8 @@ def outpass_approved(o, db=None) -> bool:
     return send_template(req.phone if req else None, TPL["approved"](), {
         "name": req.name if req else "-", "ref": o.ref_no, "type": _type_label(o),
         "approver": o.actioned_by_name or "-",
+        # Button URL: https://app.metfraa.com/dl/{{token}} — the approved pass PDF
+        "token": o.pdf_token or "-",
     }, db)
 
 

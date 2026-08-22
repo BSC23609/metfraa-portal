@@ -1,0 +1,527 @@
+diff --git a/app/main.py b/app/main.py
+index 0b382a0..a328b01 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -26,6 +26,7 @@ from .routes import monthly_kpi as monthly_kpi_routes
+ from .routes import site_visits as site_visits_routes
+ from .routes import cron as cron_routes
+ from .routes import gatepass as gatepass_routes
++from .routes import gatepass_public as gatepass_public_routes
+ from .routes import ehs as ehs_routes
+ from .routes import ehs_ui as ehs_ui_routes
+ from .routes import expense as expense_routes
+@@ -113,6 +114,8 @@ app.include_router(monthly_kpi_routes.router)
+ app.include_router(site_visits_routes.router)
+ app.include_router(cron_routes.router)
+ app.include_router(gatepass_routes.router)
++# Root-mounted: WhatsApp button URLs may only vary in the last path segment.
++app.include_router(gatepass_public_routes.router)
+ app.include_router(ehs_ui_routes.router)   # parity pages + contract (must precede ehs_routes)
+ app.include_router(ehs_routes.router)
+ app.include_router(expense_ui_routes.router)   # parity SPA + bootstrap (precedes expense_routes)
+diff --git a/app/models.py b/app/models.py
+index 1f9320f..dec2195 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -665,6 +665,12 @@ class OutpassRequest(Base):
+     returned_at = Column(DateTime, nullable=True, index=True)
+     returned_by_name = Column(String(255))
+ 
++    # One-tap WhatsApp approve/reject. The unguessable token IS the
++    # authorisation — no login on a phone at a factory gate. Cleared once used.
++    action_token = Column(String(64), nullable=True, index=True)
++    # Unguessable link to the approved pass PDF, sent to the requester.
++    pdf_token = Column(String(64), nullable=True, index=True)
++
+     # Independent alert stamps — each retries until it actually sends, which is
+     # the fix BSC needed when one failing send blocked the others.
+     overdue_alert_at = Column(DateTime, nullable=True)   # approver told
+diff --git a/app/routes/gatepass.py b/app/routes/gatepass.py
+index f333028..4eab041 100644
+--- a/app/routes/gatepass.py
++++ b/app/routes/gatepass.py
+@@ -15,6 +15,7 @@ portal's SMTP rather than WATI WhatsApp, and there is no PDF/OneDrive step
+ import logging
+ import os
+ import re
++import secrets
+ from datetime import date, datetime, timedelta
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Request
+@@ -241,7 +242,8 @@ async def api_request(request: Request, user: Employee = Depends(get_current_use
+         req_date=req_date, requester_id=user.id, purpose=purpose,
+         out_time=out_time, in_time=in_time if typ == "gatepass" else None,
+         approver_id=approver.id, approver_label=label,
+-        manager_on_leave=on_leave, status="pending")
++        manager_on_leave=on_leave, status="pending",
++        action_token=secrets.token_hex(20))
+     db.add(o)
+     db.commit()
+ 
+@@ -272,6 +274,51 @@ def api_approvals(user: Employee = Depends(get_current_user), db: Session = Depe
+             "pending": sum(1 for o in rows if o.status == "pending")}
+ 
+ 
++
++# --- shared approve/reject ------------------------------------------------
++# Both the in-app buttons and the one-tap WhatsApp links call these, so the two
++# paths can never drift apart — the BSC code has the same split for the same
++# reason.
++
++def apply_approve(db: Session, o: OutpassRequest, actor_id, actor_name: str) -> None:
++    o.status = "approved"
++    o.actioned_by_id = actor_id
++    o.actioned_by_name = actor_name
++    o.actioned_at_ist = _ist_str()
++    o.action_token = None                       # single use
++    o.pdf_token = secrets.token_hex(16)         # link to the printable pass
++    if o.type == "gatepass":
++        o.expected_back_at = _expected_back(o.req_date, o.in_time)
++    db.commit()
++    from ..services import wati
++    from ..services.portal_notify import notify_gatepass_decided
++    for fn in (lambda: notify_gatepass_decided(o, db),
++               lambda: wati.outpass_approved(o, db)):
++        try:
++            fn()
++        except Exception:
++            log.warning("[gatepass] approve notify failed on %s", o.ref_no, exc_info=True)
++
++
++def apply_reject(db: Session, o: OutpassRequest, actor_id, actor_name: str,
++                 reason: str | None) -> None:
++    o.status = "rejected"
++    o.actioned_by_id = actor_id
++    o.actioned_by_name = actor_name
++    o.actioned_at_ist = _ist_str()
++    o.reject_reason = (reason or "")[:2000] or None
++    o.action_token = None
++    db.commit()
++    from ..services import wati
++    from ..services.portal_notify import notify_gatepass_decided
++    for fn in (lambda: notify_gatepass_decided(o, db),
++               lambda: wati.outpass_rejected(o, db)):
++        try:
++            fn()
++        except Exception:
++            log.warning("[gatepass] reject notify failed on %s", o.ref_no, exc_info=True)
++
++
+ def _load_for_action(db: Session, user: Employee, rid: int) -> OutpassRequest:
+     o = db.query(OutpassRequest).filter(OutpassRequest.id == rid).first()
+     if not o:
+@@ -287,21 +334,7 @@ def _load_for_action(db: Session, user: Employee, rid: int) -> OutpassRequest:
+ def api_approve(rid: int, user: Employee = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+     o = _load_for_action(db, user, rid)
+-    o.status = "approved"
+-    o.actioned_by_id = user.id
+-    o.actioned_by_name = user.name
+-    o.actioned_at_ist = _ist_str()
+-    if o.type == "gatepass":
+-        o.expected_back_at = _expected_back(o.req_date, o.in_time)
+-    db.commit()
+-    from ..services import wati
+-    from ..services.portal_notify import notify_gatepass_decided
+-    for fn in (lambda: notify_gatepass_decided(o, db),
+-               lambda: wati.outpass_approved(o, db)):
+-        try:
+-            fn()
+-        except Exception:
+-            log.warning("[gatepass] notify failed on %s", o.ref_no, exc_info=True)
++    apply_approve(db, o, user.id, user.name)
+     return {"ok": True, "status": "approved"}
+ 
+ 
+@@ -314,20 +347,7 @@ async def api_reject(rid: int, request: Request,
+     if len(reason) < 3:
+         raise HTTPException(status_code=400,
+                             detail="Please give a reason so the employee knows why")
+-    o.status = "rejected"
+-    o.actioned_by_id = user.id
+-    o.actioned_by_name = user.name
+-    o.actioned_at_ist = _ist_str()
+-    o.reject_reason = reason[:2000]
+-    db.commit()
+-    from ..services import wati
+-    from ..services.portal_notify import notify_gatepass_decided
+-    for fn in (lambda: notify_gatepass_decided(o, db),
+-               lambda: wati.outpass_rejected(o, db)):
+-        try:
+-            fn()
+-        except Exception:
+-            log.warning("[gatepass] notify failed on %s", o.ref_no, exc_info=True)
++    apply_reject(db, o, user.id, user.name, reason)
+     return {"ok": True, "status": "rejected"}
+ 
+ 
+diff --git a/app/routes/gatepass_public.py b/app/routes/gatepass_public.py
+new file mode 100644
+index 0000000..6df2cd3
+--- /dev/null
++++ b/app/routes/gatepass_public.py
+@@ -0,0 +1,148 @@
++"""One-tap approve/reject from a WhatsApp button, and the pass PDF link.
++
++Ported from BSC. These live at the app ROOT (/oga, /ogr, /dl) rather than under
++/gatepass because a WhatsApp template's dynamic button may only vary in its LAST
++path segment — the rest of the URL is fixed at template-approval time. Short
++paths also keep the visible link tidy.
++
++There is deliberately NO login here: the unguessable token is the authorisation.
++An approver taps a button on their phone at a gate; forcing a session there would
++mean the feature simply goes unused. The token is single-use (cleared on action)
++and dies with the pass date.
++"""
++import logging
++from datetime import datetime, timedelta
++
++from fastapi import APIRouter, Depends
++from fastapi.responses import HTMLResponse, Response
++from sqlalchemy.orm import Session
++
++from ..database import get_db
++from ..models import OutpassRequest
++
++router = APIRouter(tags=["gatepass-public"])
++log = logging.getLogger(__name__)
++IST = timedelta(hours=5, minutes=30)
++
++
++def _page(emoji: str, title: str, msg: str, status: int = 200) -> HTMLResponse:
++    return HTMLResponse(status_code=status, content=f"""<!doctype html>
++<html><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width,initial-scale=1">
++<title>{title}</title></head>
++<body style="margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f4f6f9">
++<div style="max-width:440px;margin:12vh auto;background:#fff;border:1px solid #d6dde6;
++            border-radius:16px;padding:32px 24px;text-align:center">
++  <div style="font-size:56px;line-height:1">{emoji}</div>
++  <h2 style="color:#0d1421;margin:.5em 0 .2em">{title}</h2>
++  <p style="color:#6b7689;font-size:15px;margin:0">{msg}</p>
++  <p style="color:#8e9aad;font-size:12px;margin-top:20px">Metfraa Portal</p>
++</div></body></html>""")
++
++
++def _load(db: Session, token: str):
++    return (db.query(OutpassRequest)
++            .filter(OutpassRequest.action_token == token).first())
++
++
++def _expired(req_date) -> bool:
++    """A pass is dead once its date has passed — approving yesterday's outpass
++    tomorrow is meaningless and would confuse the overdue watcher."""
++    if not req_date:
++        return False
++    return req_date < (datetime.utcnow() + IST).date()
++
++
++def _type_name(t: str) -> str:
++    return "gate pass" if t == "gatepass" else "outpass"
++
++
++def _guard(o):
++    """Shared preconditions for both actions. Returns a page, or None to proceed."""
++    if not o:
++        return _page("⛔", "Link not valid",
++                     "This approval link is not recognised.", 404)
++    if o.status != "pending":
++        return _page("✅" if o.status == "approved" else "⛔",
++                     f"Already {o.status}",
++                     f"This request was already {o.status}"
++                     + (f" by {o.actioned_by_name}" if o.actioned_by_name else "") + ".")
++    if _expired(o.req_date):
++        return _page("🕒", "Link expired",
++                     "The date on this pass has already passed.")
++    return None
++
++
++@router.get("/oga/{token}", response_class=HTMLResponse)
++def one_tap_approve(token: str, db: Session = Depends(get_db)):
++    try:
++        o = _load(db, token)
++        blocked = _guard(o)
++        if blocked:
++            return blocked
++        from .gatepass import apply_approve
++        apply_approve(db, o, o.approver_id,
++                      (o.approver.name if o.approver else None) or o.approver_label
++                      or "Approver")
++        who = o.requester.name if o.requester else "The employee"
++        return _page("✅", "Approved",
++                     f"{who}'s {_type_name(o.type)} is approved. "
++                     "The pass has been sent to them on WhatsApp.")
++    except Exception:
++        log.error("[oga] one-tap approve failed", exc_info=True)
++        return _page("⚠️", "Something went wrong",
++                     "Please try again, or use the portal.", 500)
++
++
++@router.get("/ogr/{token}", response_class=HTMLResponse)
++def one_tap_reject(token: str, db: Session = Depends(get_db)):
++    try:
++        o = _load(db, token)
++        blocked = _guard(o)
++        if blocked:
++            return blocked
++        from .gatepass import apply_reject
++        apply_reject(db, o, o.approver_id,
++                     (o.approver.name if o.approver else None) or o.approver_label
++                     or "Approver", None)
++        who = o.requester.name if o.requester else "The employee"
++        return _page("⛔", "Rejected",
++                     f"{who}'s {_type_name(o.type)} has been rejected. "
++                     "They have been notified.")
++    except Exception:
++        log.error("[ogr] one-tap reject failed", exc_info=True)
++        return _page("⚠️", "Something went wrong",
++                     "Please try again, or use the portal.", 500)
++
++
++@router.get("/dl/{token}")
++def download_pass(token: str, db: Session = Depends(get_db)):
++    """The approved pass as a PDF. Opened from the WhatsApp button, shown at
++    the gate — so it renders inline rather than downloading."""
++    o = (db.query(OutpassRequest)
++         .filter(OutpassRequest.pdf_token == token,
++                 OutpassRequest.status == "approved").first())
++    if not o:
++        return _page("⛔", "Pass not found",
++                     "This pass link is not valid, or the pass was not approved.", 404)
++    try:
++        from ..services.outpass_pdf import build_outpass_pdf
++        req = o.requester
++        pdf = build_outpass_pdf({
++            "type": o.type, "on_duty": o.on_duty,
++            "date": o.req_date.strftime("%d %b %Y") if o.req_date else "",
++            "emp_code": req.employee_code if req else "",
++            "name": req.name if req else "",
++            "designation": (req.designation if req else "") or "",
++            "purpose": o.purpose, "out_time": o.out_time, "in_time": o.in_time,
++            "ref_no": o.ref_no, "approver": o.actioned_by_name,
++            "approved_at": o.actioned_at_ist or "",
++        })
++    except Exception:
++        log.error("[dl] pass pdf failed for %s", o.ref_no, exc_info=True)
++        return _page("⚠️", "Could not generate the pass",
++                     "Please try again, or open it from the portal.", 500)
++    safe = (o.ref_no or "pass").replace("/", "-")
++    name = f"{(o.requester.name if o.requester else 'pass')} {safe}.pdf"
++    return Response(content=pdf, media_type="application/pdf",
++                    headers={"Content-Disposition": f'inline; filename="{name}"'})
+diff --git a/app/services/outpass_pdf.py b/app/services/outpass_pdf.py
+new file mode 100644
+index 0000000..3d73731
+--- /dev/null
++++ b/app/services/outpass_pdf.py
+@@ -0,0 +1,106 @@
++"""Printable outpass / gatepass PDF.
++
++Ported from BSC's lib/outpass_pdf.js (pdfkit) to reportlab. Same layout: a
++header band, the detail fields in two columns, and a green APPROVED band across
++the bottom carrying the approver's name and the timestamp — that band is what a
++gatekeeper actually looks at, so it stays visually loud.
++"""
++import io
++
++from reportlab.lib import colors
++from reportlab.lib.pagesizes import A5, landscape
++from reportlab.lib.units import mm
++from reportlab.pdfgen import canvas as _canvas
++
++INK = colors.HexColor("#0d1421")
++BLUE = colors.HexColor("#1F7CCB")
++GREEN = colors.HexColor("#16a34a")
++MUTED = colors.HexColor("#6b7689")
++LINE = colors.HexColor("#d6dde6")
++
++
++def build_outpass_pdf(d: dict) -> bytes:
++    """d: type, on_duty, date, emp_code, name, designation, purpose,
++    out_time, in_time, ref_no, approver, approved_at."""
++    buf = io.BytesIO()
++    W, H = landscape(A5)
++    c = _canvas.Canvas(buf, pagesize=(W, H))
++    M = 14 * mm
++    full_w = W - 2 * M
++
++    # ---- header ----
++    c.setFillColor(INK)
++    c.rect(0, H - 24 * mm, W, 24 * mm, stroke=0, fill=1)
++    c.setFillColor(colors.white)
++    c.setFont("Helvetica-Bold", 15)
++    c.drawString(M, H - 13 * mm, "METFRAA STEEL BUILDINGS PVT. LTD.")
++    c.setFont("Helvetica", 8.5)
++    c.setFillColor(colors.HexColor("#9fb3c8"))
++    c.drawString(M, H - 18.5 * mm, "Steeling the Future")
++
++    label = "GATE PASS" if d.get("type") == "gatepass" else "OUT PASS"
++    c.setFont("Helvetica-Bold", 15)
++    c.setFillColor(colors.white)
++    c.drawRightString(W - M, H - 13 * mm, label)
++    c.setFont("Helvetica", 8)
++    c.setFillColor(colors.HexColor("#9fb3c8"))
++    c.drawRightString(W - M, H - 18.5 * mm, str(d.get("ref_no") or ""))
++
++    # On-duty is a materially different thing at the gate — make it obvious.
++    if d.get("on_duty"):
++        c.setFillColor(BLUE)
++        c.roundRect(W - M - 30 * mm, H - 33 * mm, 30 * mm, 6.5 * mm, 2, stroke=0, fill=1)
++        c.setFillColor(colors.white)
++        c.setFont("Helvetica-Bold", 7.5)
++        c.drawCentredString(W - M - 15 * mm, H - 31.2 * mm, "ON DUTY")
++
++    def field(lbl, val, x, y, w):
++        c.setFillColor(MUTED)
++        c.setFont("Helvetica-Bold", 6.5)
++        c.drawString(x, y + 7 * mm, str(lbl).upper())
++        c.setFillColor(INK)
++        c.setFont("Helvetica-Bold", 10.5)
++        text = str(val or "-")
++        # Purpose can run long; clip rather than overflow into the next field.
++        while c.stringWidth(text, "Helvetica-Bold", 10.5) > w - 3 * mm and len(text) > 4:
++            text = text[:-2]
++            if c.stringWidth(text + "…", "Helvetica-Bold", 10.5) <= w - 3 * mm:
++                text += "…"
++        c.drawString(x, y + 2 * mm, text)
++        c.setStrokeColor(LINE)
++        c.setLineWidth(0.5)
++        c.line(x, y, x + w, y)
++
++    col_l, col_r = M, M + full_w / 2 + 4 * mm
++    half_w = full_w / 2 - 4 * mm
++    y = H - 46 * mm
++    row = 15 * mm
++
++    field("Date", d.get("date"), col_l, y, half_w)
++    field("Employee code", d.get("emp_code"), col_r, y, half_w)
++    y -= row
++    field("Name", d.get("name"), col_l, y, half_w)
++    field("Designation", d.get("designation"), col_r, y, half_w)
++    y -= row
++    field("Out-time", d.get("out_time"), col_l, y, half_w)
++    if d.get("type") == "gatepass":
++        field("In-time", d.get("in_time"), col_r, y, half_w)
++    y -= row
++    field("Purpose", d.get("purpose"), col_l, y, full_w)
++
++    # ---- approval band ----
++    bh = 13 * mm
++    by = M
++    c.setFillColor(GREEN)
++    c.roundRect(M, by, full_w, bh, 3, stroke=0, fill=1)
++    c.setFillColor(colors.white)
++    c.setFont("Helvetica-Bold", 12)
++    c.drawString(M + 6 * mm, by + 4.6 * mm, "APPROVED")
++    c.setFont("Helvetica", 8.5)
++    c.setFillColor(colors.HexColor("#eafbf1"))
++    c.drawRightString(W - M - 6 * mm, by + 4.8 * mm,
++                      f"Approved by {d.get('approver') or '-'}    {d.get('approved_at') or ''}")
++
++    c.showPage()
++    c.save()
++    return buf.getvalue()
+diff --git a/app/services/wati.py b/app/services/wati.py
+index aac7121..a5f589d 100644
+--- a/app/services/wati.py
++++ b/app/services/wati.py
+@@ -164,6 +164,10 @@ def outpass_request(approver, o, db=None) -> bool:
+         "type": _type_label(o), "purpose": o.purpose or "-",
+         "date": o.req_date.strftime("%d %b %Y") if o.req_date else "-",
+         "out_time": o.out_time or "-",
++        # Dynamic button suffix: the template's URL is
++        #   https://app.metfraa.com/oga/{{token}}  (approve)
++        #   https://app.metfraa.com/ogr/{{token}}  (reject)
++        "token": o.action_token or "-",
+     }, db)
+ 
+ 
+@@ -172,6 +176,8 @@ def outpass_approved(o, db=None) -> bool:
+     return send_template(req.phone if req else None, TPL["approved"](), {
+         "name": req.name if req else "-", "ref": o.ref_no, "type": _type_label(o),
+         "approver": o.actioned_by_name or "-",
++        # Button URL: https://app.metfraa.com/dl/{{token}} — the approved pass PDF
++        "token": o.pdf_token or "-",
+     }, db)
+ 
+ 
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index 152813e..57bf45a 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -74,6 +74,10 @@ EXPENSE_PARITY_MIGRATIONS += [
+     "ON expense_pending_uploads (upload_token)",
+ ]
+ GATEPASS_MIGRATIONS = [
++    "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS action_token VARCHAR(64)",
++    "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS pdf_token VARCHAR(64)",
++    "CREATE INDEX IF NOT EXISTS idx_outpass_action_token ON outpass_requests(action_token)",
++    "CREATE INDEX IF NOT EXISTS idx_outpass_pdf_token ON outpass_requests(pdf_token)",
+     "CREATE INDEX IF NOT EXISTS idx_wa_log_created ON wa_log(created_at DESC)",
+     "CREATE INDEX IF NOT EXISTS idx_outpass_open ON outpass_requests(returned_at) "
+     "WHERE returned_at IS NULL",
+diff --git a/docs/WATI_TEMPLATES_METFRAA.md b/docs/WATI_TEMPLATES_METFRAA.md
+index c853b2e..2bdb872 100644
+--- a/docs/WATI_TEMPLATES_METFRAA.md
++++ b/docs/WATI_TEMPLATES_METFRAA.md
+@@ -21,13 +21,29 @@ first real send.
+ **No newlines inside a variable.** The app already strips them, but don't build
+ templates that expect multi-line values.
+ 
++**Buttons must be "Visit Website" with a dynamic URL.** In WATI's template
++builder choose Interactive → Call to Action → Visit Website → Dynamic, then put
++the fixed part of the URL in the field and reference the variable for the last
++segment. A static button won't work — each pass needs its own token.
++
+ ---
+ 
+ ## 1. `met_outpass_request` → the approver
+ 
+ Sent when an employee raises a pass. Goes to the department head.
+ 
+-**Variables:** `name`, `ref`, `requester`, `type`, `purpose`, `date`, `out_time`
++**Variables:** `name`, `ref`, `requester`, `type`, `purpose`, `date`, `out_time`, `token`
++
++**Buttons — two dynamic URL buttons:**
++
++| Button text | URL |
++|---|---|
++| Approve | `https://app.metfraa.com/oga/{{token}}` |
++| Reject | `https://app.metfraa.com/ogr/{{token}}` |
++
++Only the LAST path segment may be dynamic, which is why these live at the root
++rather than under `/gatepass/`. The approver taps once — no login, no app. The
++token is single-use and dies with the pass date.
+ 
+ ```
+ Hi {{name}}, a pass request needs your approval.
+@@ -46,15 +62,26 @@ Please review it in the Metfraa Portal.
+ 
+ ## 2. `met_outpass_approved` → the requester
+ 
+-**Variables:** `name`, `ref`, `type`, `approver`
++**Variables:** `name`, `ref`, `type`, `approver`, `token`
++
++**Button — one dynamic URL button:**
++
++| Button text | URL |
++|---|---|
++| Download pass | `https://app.metfraa.com/dl/{{token}}` |
++
++Opens the approved pass as a PDF — Metfraa header, the employee's details, an
++ON DUTY badge where applicable, and a green APPROVED band with the approver's
++name and timestamp. It renders inline, so the employee can simply show their
++phone at the gate.
+ 
+ ```
+ Hi {{name}}, your {{type}} has been approved by {{approver}}.
+ 
+ Ref: {{ref}}
+ 
+-If this is a gatepass, please record your return in the Metfraa Portal when you
+-are back.
++Your pass is attached below. If this is a gatepass, please record your return in
++the Metfraa Portal when you are back.
+ ```
+ 
+ ---
