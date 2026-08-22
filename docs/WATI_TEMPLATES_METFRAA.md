@@ -154,28 +154,25 @@ sends are logged as `skipped` rather than failing.
 
 `/cron/gatepass-overdue` is **not** in `vercel.json`. Vercel Hobby allows only
 one cron run per day, and a daily check is useless for a pass due back at 3pm.
-BSC also found Vercel's scheduler fired unreliably, so an external pinger is the
-better answer regardless of plan.
 
-**Set it up on [cron-job.org](https://cron-job.org):**
+It runs from **`.github/workflows/gatepass-overdue.yml`** every 15 minutes —
+the same pattern as BSC's `outpass-overdue.yml`, including the retry-once-on-5xx
+logic so a cold start or gateway hiccup is a warning rather than a failed run.
 
-| Field | Value |
-|---|---|
-| URL | `https://app.metfraa.com/cron/gatepass-overdue` |
-| Schedule | every 15 minutes |
-| Request method | GET |
-| Header | `Authorization: Bearer <your CRON_SECRET>` |
-
-Add the header under **Advanced → Headers**. The value must match the
-`CRON_SECRET` environment variable in Vercel exactly, or the endpoint returns
-401.
+**One thing to set up:** add a repository secret named `CRON_SECRET` under
+GitHub → Settings → Secrets and variables → Actions, matching the `CRON_SECRET`
+environment variable in Vercel exactly. Without it every run returns 401.
 
 Calling it often is safe. Each recipient has its own stamp, and a stamp is only
 set once a channel actually delivered — so extra runs do nothing, and a send
 that failed is retried on the next run rather than being lost.
 
-**To check it's working:** open the cron-job.org execution history. A healthy
-run returns 200 with a body like
+**To check it's working:** GitHub → Actions → "Gatepass overdue watcher". A
+healthy run prints `HTTP 200` and a body like
 `{"ok":true,"checked":3,"approver":1,"hr":1,"requester":1,"whatsapp":true}`.
-A 401 means the header doesn't match; a 503 means `CRON_SECRET` isn't set in
-Vercel.
+A 401 means `CRON_SECRET` doesn't match; a 503 means it isn't set in Vercel.
+
+**Note:** GitHub's scheduled runs are best-effort and can be delayed under load.
+For gatepasses that's fine — a few minutes' lag on an overdue alert doesn't
+matter. You can also trigger a run by hand from the Actions tab
+(**Run workflow**), which is useful for testing.

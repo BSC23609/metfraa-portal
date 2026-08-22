@@ -1,0 +1,46 @@
+name: Gatepass overdue watcher
+
+# Checks for approved gatepasses past their expected return with no return recorded,
+# and notifies the approver, HR and the requester (once each, per pass).
+#
+# Not a Vercel cron: Hobby plans allow only one run per day, and a daily check is
+# useless for a pass due back at 3pm.
+#
+# Retry + 5xx tolerance, same as the BSC watchers: the work is idempotent (each
+# recipient has its own stamp, and a stamp is only set once a channel actually
+# delivered), so a transient gateway hiccup or cold-start timeout is a warning, not
+# a failure. Real problems — bad CRON_SECRET (401), broken route (404) — fail loudly.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit /cron/gatepass-overdue
+        run: |
+          hit() {
+            curl -sS --max-time 70 -o /tmp/resp.txt -w "%{http_code}" \
+              "https://app.metfraa.com/cron/gatepass-overdue" \
+              -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" || echo "000"
+          }
+          code=$(hit)
+          echo "HTTP $code"; cat /tmp/resp.txt; echo
+
+          if [ "$code" -ge 500 ] || [ "$code" = "000" ]; then
+            echo "::warning::first attempt returned $code - retrying in 20s"
+            sleep 20
+            code=$(hit)
+            echo "retry HTTP $code"; cat /tmp/resp.txt; echo
+          fi
+
+          if [ "$code" -ge 400 ] && [ "$code" -lt 500 ]; then
+            echo "::error::gatepass-overdue returned $code - check CRON_SECRET / route"; exit 1
+          fi
+          if [ "$code" -ge 500 ] || [ "$code" = "000" ]; then
+            echo "::warning::still $code after retry - alerts are idempotent, next run catches up"
+            exit 0
+          fi
+          echo "OK"

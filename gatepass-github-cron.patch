@@ -1,0 +1,118 @@
+diff --git a/.github/workflows/gatepass-overdue.yml b/.github/workflows/gatepass-overdue.yml
+new file mode 100644
+index 0000000..8344cbc
+--- /dev/null
++++ b/.github/workflows/gatepass-overdue.yml
+@@ -0,0 +1,46 @@
++name: Gatepass overdue watcher
++
++# Checks for approved gatepasses past their expected return with no return recorded,
++# and notifies the approver, HR and the requester (once each, per pass).
++#
++# Not a Vercel cron: Hobby plans allow only one run per day, and a daily check is
++# useless for a pass due back at 3pm.
++#
++# Retry + 5xx tolerance, same as the BSC watchers: the work is idempotent (each
++# recipient has its own stamp, and a stamp is only set once a channel actually
++# delivered), so a transient gateway hiccup or cold-start timeout is a warning, not
++# a failure. Real problems — bad CRON_SECRET (401), broken route (404) — fail loudly.
++on:
++  schedule:
++    - cron: '*/15 * * * *'
++  workflow_dispatch: {}
++
++jobs:
++  watch:
++    runs-on: ubuntu-latest
++    steps:
++      - name: Hit /cron/gatepass-overdue
++        run: |
++          hit() {
++            curl -sS --max-time 70 -o /tmp/resp.txt -w "%{http_code}" \
++              "https://app.metfraa.com/cron/gatepass-overdue" \
++              -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" || echo "000"
++          }
++          code=$(hit)
++          echo "HTTP $code"; cat /tmp/resp.txt; echo
++
++          if [ "$code" -ge 500 ] || [ "$code" = "000" ]; then
++            echo "::warning::first attempt returned $code - retrying in 20s"
++            sleep 20
++            code=$(hit)
++            echo "retry HTTP $code"; cat /tmp/resp.txt; echo
++          fi
++
++          if [ "$code" -ge 400 ] && [ "$code" -lt 500 ]; then
++            echo "::error::gatepass-overdue returned $code - check CRON_SECRET / route"; exit 1
++          fi
++          if [ "$code" -ge 500 ] || [ "$code" = "000" ]; then
++            echo "::warning::still $code after retry - alerts are idempotent, next run catches up"
++            exit 0
++          fi
++          echo "OK"
+diff --git a/app/routes/cron.py b/app/routes/cron.py
+index 44ff3ab..9e11586 100644
+--- a/app/routes/cron.py
++++ b/app/routes/cron.py
+@@ -70,10 +70,10 @@ def cron_gatepass_overdue(request: Request, db: Session = Depends(get_db)):
+     """Nudge on gatepasses that were never returned.
+ 
+     NOT in vercel.json: Hobby plans allow only ONE cron run per day, and a
+-    daily check is useless for a pass due back at 3pm. This is driven by an
+-    external pinger (cron-job.org) every 15-30 minutes, sending
+-    `Authorization: Bearer $CRON_SECRET`. BSC reached the same conclusion for
+-    a second reason — Vercel's scheduler fired unreliably.
++    daily check is useless for a pass due back at 3pm. Driven instead by
++    .github/workflows/gatepass-overdue.yml every 15 minutes, sending
++    `Authorization: Bearer $CRON_SECRET` — the same pattern BSC uses for its
++    outpass watcher, retry logic included.
+ 
+     Safe to call as often as you like: each recipient has its own stamp and a
+     stamp is only set once a channel actually delivered, so extra runs are
+diff --git a/docs/WATI_TEMPLATES_METFRAA.md b/docs/WATI_TEMPLATES_METFRAA.md
+index 4afc047..c853b2e 100644
+--- a/docs/WATI_TEMPLATES_METFRAA.md
++++ b/docs/WATI_TEMPLATES_METFRAA.md
+@@ -154,28 +154,25 @@ sends are logged as `skipped` rather than failing.
+ 
+ `/cron/gatepass-overdue` is **not** in `vercel.json`. Vercel Hobby allows only
+ one cron run per day, and a daily check is useless for a pass due back at 3pm.
+-BSC also found Vercel's scheduler fired unreliably, so an external pinger is the
+-better answer regardless of plan.
+ 
+-**Set it up on [cron-job.org](https://cron-job.org):**
++It runs from **`.github/workflows/gatepass-overdue.yml`** every 15 minutes —
++the same pattern as BSC's `outpass-overdue.yml`, including the retry-once-on-5xx
++logic so a cold start or gateway hiccup is a warning rather than a failed run.
+ 
+-| Field | Value |
+-|---|---|
+-| URL | `https://app.metfraa.com/cron/gatepass-overdue` |
+-| Schedule | every 15 minutes |
+-| Request method | GET |
+-| Header | `Authorization: Bearer <your CRON_SECRET>` |
+-
+-Add the header under **Advanced → Headers**. The value must match the
+-`CRON_SECRET` environment variable in Vercel exactly, or the endpoint returns
+-401.
++**One thing to set up:** add a repository secret named `CRON_SECRET` under
++GitHub → Settings → Secrets and variables → Actions, matching the `CRON_SECRET`
++environment variable in Vercel exactly. Without it every run returns 401.
+ 
+ Calling it often is safe. Each recipient has its own stamp, and a stamp is only
+ set once a channel actually delivered — so extra runs do nothing, and a send
+ that failed is retried on the next run rather than being lost.
+ 
+-**To check it's working:** open the cron-job.org execution history. A healthy
+-run returns 200 with a body like
++**To check it's working:** GitHub → Actions → "Gatepass overdue watcher". A
++healthy run prints `HTTP 200` and a body like
+ `{"ok":true,"checked":3,"approver":1,"hr":1,"requester":1,"whatsapp":true}`.
+-A 401 means the header doesn't match; a 503 means `CRON_SECRET` isn't set in
+-Vercel.
++A 401 means `CRON_SECRET` doesn't match; a 503 means it isn't set in Vercel.
++
++**Note:** GitHub's scheduled runs are best-effort and can be delayed under load.
++For gatepasses that's fine — a few minutes' lag on an overdue alert doesn't
++matter. You can also trigger a run by hand from the Actions tab
++(**Run workflow**), which is useful for testing.
