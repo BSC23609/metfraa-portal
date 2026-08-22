@@ -25,6 +25,37 @@
   </div>
   {% endif %}
 
+  <!-- Open gatepass: the single most important thing this module needs from
+       an employee, so it sits above the tabs rather than inside one. -->
+  <template x-if="openMine">
+    <div class="mb-6 rounded-lg p-5 flex items-center justify-between gap-4 flex-wrap"
+         :class="openMine.overdue
+           ? 'bg-red-50 ring-1 ring-red-200'
+           : 'bg-metfraa-blue/5 ring-1 ring-metfraa-blue/25'">
+      <div>
+        <div class="display text-base font-bold"
+             :class="openMine.overdue ? 'text-red-800' : 'text-metfraa-ink'"
+             x-text="openMine.overdue ? 'Your gatepass is overdue' : 'You have an open gatepass'"></div>
+        <div class="text-sm mt-1"
+             :class="openMine.overdue ? 'text-red-700' : 'text-metfraa-gray-600'">
+          <span x-text="openMine.ref_no"></span> ·
+          out <span x-text="openMine.out_time"></span>
+          <template x-if="openMine.in_time">
+            <span> · back by <span x-text="openMine.in_time"></span></span>
+          </template>
+        </div>
+        <div class="text-xs mt-1 text-metfraa-gray-500">
+          Tap when you're at the gate — your location confirms the return.
+        </div>
+      </div>
+      <button @click="recordReturn(openMine)" :disabled="returning"
+        class="px-6 py-3 rounded-lg text-white text-sm font-bold whitespace-nowrap disabled:opacity-60"
+        :class="openMine.overdue ? 'bg-red-600 hover:bg-red-700' : 'bg-metfraa-ink hover:bg-black'">
+        <span x-text="returning ? 'Checking location…' : \"I'm back\""></span>
+      </button>
+    </div>
+  </template>
+
   <!-- Tabs -->
   <div class="flex gap-1 mb-6 border-b border-metfraa-gray-200 flex-wrap">
     <template x-for="t in tabs" :key="t.id">
@@ -140,9 +171,9 @@
               </div>
             </div>
             <button x-show="o.type === 'gatepass' && o.status === 'approved' && !o.returned_at"
-                    @click="recordReturn(o)"
-                    class="px-3 py-1.5 rounded-lg bg-metfraa-ink text-white text-xs font-bold whitespace-nowrap">
-              I'm back
+                    @click="recordReturn(o)" :disabled="returning"
+                    class="px-5 py-2.5 rounded-lg bg-metfraa-ink hover:bg-black text-white text-sm font-bold whitespace-nowrap disabled:opacity-60">
+              <span x-text="returning ? 'Checking location…' : \"I'm back\""></span>
             </button>
           </div>
         </div>
@@ -432,11 +463,17 @@
 function gpApp() {
   return {
     tab: 'new', busy: false, msg: '', err: false,
-    mine: [], approvals: [], openPasses: [], depts: [], people: [], empRows: [], choices: [], empQ: '', empSchemaReady: true, savingAll: false, alerting: null, runningSweep: false, wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
+    mine: [], approvals: [], openPasses: [], depts: [], people: [], empRows: [], choices: [], empQ: '', empSchemaReady: true, savingAll: false, alerting: null, runningSweep: false, returning: false, wa: { configured: false, hr_phone_set: false, counts: {}, rows: [] },
     myApprover: null, pendingCount: {{ pending_for_me }},
     isAdmin: {{ 'true' if is_admin else 'false' }},
     form: { type: 'outpass', req_date: new Date().toISOString().slice(0, 10),
             out_time: '', in_time: '', purpose: '', on_duty: false, manager_on_leave: false },
+
+    // The one open gatepass this person still needs to close, if any.
+    get openMine() {
+      return this.mine.find(o => o.type === 'gatepass'
+        && o.status === 'approved' && !o.returned_at) || null;
+    },
 
     get tabs() {
       const t = [{ id: 'new', label: 'New request' }, { id: 'mine', label: 'My passes' },
@@ -445,7 +482,28 @@ function gpApp() {
       return t;
     },
 
-    init() { this.load(); this.loadMine(); },
+    async init() {
+      await this.loadMine();
+      // Land on My passes when something is outstanding — closing it matters
+      // more than raising a new one.
+      if (this.openMine) this.tab = 'mine';
+      this.load();
+    },
+
+    // Ask the browser for a position, but never hang on it.
+    getPosition() {
+      return new Promise(resolve => {
+        if (!navigator.geolocation) return resolve({});
+        let done = false;
+        const finish = v => { if (!done) { done = true; resolve(v); } };
+        setTimeout(() => finish({}), 12000);
+        navigator.geolocation.getCurrentPosition(
+          p => finish({ lat: p.coords.latitude, lng: p.coords.longitude,
+                        accuracy: p.coords.accuracy }),
+          () => finish({}),
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+      });
+    },
 
     async load() {
       if (this.tab === 'mine') return this.loadMine();
@@ -629,9 +687,21 @@ function gpApp() {
       this.loadApprovals();
     },
     async recordReturn(o) {
-      const r = await fetch(`/gatepass/api/${o.id}/return`, { method: 'POST' });
-      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
-      this.loadMine(); if (this.tab === 'admin') this.loadOpen();
+      this.returning = true;
+      try {
+        // Same geofence as the WhatsApp link — the app mustn't be a way round it.
+        const pos = await this.getPosition();
+        const r = await fetch(`/gatepass/api/${o.id}/return`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(pos),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(d.detail || 'Could not record your return'); return; }
+        alert(d.verified
+          ? 'Return confirmed at the gate.'
+          : 'Return recorded.');
+        this.loadMine(); if (this.tab === 'admin') this.loadOpen();
+      } finally { this.returning = false; }
     },
     async saveDept(d) {
       const r = await fetch('/gatepass/api/admin/approvers', {

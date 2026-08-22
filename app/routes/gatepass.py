@@ -462,13 +462,21 @@ async def api_reject(rid: int, request: Request,
 
 
 @router.post("/api/{rid}/return")
-def api_return(rid: int, user: Employee = Depends(get_current_user),
-               db: Session = Depends(get_db)):
-    """Record the actual return. The requester or an admin may do this."""
+async def api_return(rid: int, request: Request,
+                     user: Employee = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    """Record the actual return.
+
+    An employee closing their OWN pass is held to the same geofence as the
+    WhatsApp link — otherwise the in-app button is a way straight round it.
+    An admin closing someone else's pass is the deliberate override and is
+    recorded as such.
+    """
     o = db.query(OutpassRequest).filter(OutpassRequest.id == rid).first()
     if not o:
         raise HTTPException(status_code=404, detail="Request not found")
-    if o.requester_id != user.id and not _is_admin(db, user):
+    is_own = o.requester_id == user.id
+    if not is_own and not _is_admin(db, user):
         raise HTTPException(status_code=403, detail="Not your gatepass")
     if o.type != "gatepass":
         raise HTTPException(status_code=400, detail="Only a gatepass has a return")
@@ -477,8 +485,38 @@ def api_return(rid: int, user: Employee = Depends(get_current_user),
                             detail=f"Cannot record a return on a {o.status} request")
     if o.returned_at:
         raise HTTPException(status_code=409, detail="Return already recorded")
-    via = "self" if o.requester_id == user.id else "admin"
-    geo = apply_return(db, o, user.name, via=via)
+
+    body = {}
+    try:
+        body = await request.json() or {}
+    except Exception:
+        pass
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    lat, lng, acc = _num(body.get("lat")), _num(body.get("lng")), _num(body.get("accuracy"))
+
+    if is_own and require_gps():
+        geo = check_geofence(lat, lng, acc)
+        if not geo["verified"]:
+            if geo["distance_m"] is not None:
+                detail = (f"You appear to be {geo['distance_m']} m from the gate. "
+                          "Please try again once you're back at the gate.")
+            elif geo["reason"] == "gate location not configured":
+                detail = ("The gate location hasn't been set up yet, so your return "
+                          "can't be confirmed. Please ask HR to record it.")
+            else:
+                detail = ("Your location couldn't be read. Please allow location "
+                          "access and try again at the gate, or ask HR to record "
+                          "your return.")
+            raise HTTPException(status_code=422, detail=detail)
+
+    via = ("gps" if (is_own and lat is not None) else "self" if is_own else "admin")
+    geo = apply_return(db, o, user.name, via=via, lat=lat, lng=lng, accuracy=acc)
     return {"ok": True, "verified": geo["verified"], "distance_m": geo["distance_m"],
             "returned_at": (o.returned_at + IST).strftime("%Y-%m-%d %H:%M")}
 
