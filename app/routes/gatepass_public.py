@@ -203,7 +203,9 @@ def one_tap_return_page(token: str, db: Session = Depends(get_db)):
       body: JSON.stringify(body)
     }}).then(function (r) {{ return r.json(); }})
       .then(function (d) {{
-        if (!d.ok) return show('⚠️', 'Could not record', d.error || 'Please try the portal.');
+        if (!d.ok) return show(d.too_far ? '📍' : '⚠️',
+                               d.too_far ? 'Not at the gate' : 'Could not record',
+                               d.error || 'Please try the portal.');
         show(d.verified ? '✅' : '⚠️', 'Return recorded', d.message);
       }})
       .catch(function () {{ show('⚠️', 'Could not record',
@@ -253,8 +255,26 @@ async def one_tap_return_confirm(token: str, request: Request,
         lat, lng = _num(body.get("lat")), _num(body.get("lng"))
         acc = _num(body.get("accuracy"))
 
-        from .gatepass import apply_return
+        from .gatepass import apply_return, check_geofence, require_gps
         name = o.requester.name if o.requester else "Employee"
+
+        # Check BEFORE recording: if the geofence is enforced, a return from
+        # outside it must not close the pass at all.
+        geo = check_geofence(lat, lng, acc)
+        if require_gps() and not geo["verified"]:
+            if geo["distance_m"] is not None:
+                why = (f"You appear to be {geo['distance_m']} m from the gate. "
+                       "Please try again once you're back at the gate.")
+            elif geo["reason"] == "gate location not configured":
+                why = ("The gate location hasn't been set up yet, so your return "
+                       "can't be confirmed. Please ask HR to record it.")
+            else:
+                why = ("Your location couldn't be read. Please allow location "
+                       "access and try again at the gate, or ask HR to record "
+                       "your return.")
+            return {"ok": False, "error": why, "distance_m": geo["distance_m"],
+                    "too_far": geo["distance_m"] is not None}
+
         geo = apply_return(db, o, name, via="gps" if lat is not None else "self",
                            lat=lat, lng=lng, accuracy=acc)
 
@@ -268,6 +288,7 @@ async def one_tap_return_confirm(token: str, request: Request,
         if geo["verified"]:
             msg = f"Confirmed at the gate at {when}{late}."
         else:
+            # Only reachable with GATEPASS_REQUIRE_GPS=false.
             why = geo["reason"] or "location unavailable"
             msg = (f"Recorded at {when}{late}. Location could not be confirmed "
                    f"({why}), so this shows as unverified for HR.")

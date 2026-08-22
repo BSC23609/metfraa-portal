@@ -361,6 +361,14 @@ def apply_reject(db: Session, o: OutpassRequest, actor_id, actor_name: str,
 # fuzzy fix at the gate isn't rejected — but never by more than 100m of slop,
 # or the geofence stops meaning anything.
 
+# When True (the default) a return is REFUSED unless the phone reports a
+# position inside the gate radius — the same rule BSC enforces. Set
+# GATEPASS_REQUIRE_GPS=false to fall back to recording it as unverified.
+def require_gps() -> bool:
+    return (os.getenv("GATEPASS_REQUIRE_GPS", "true").strip().lower()
+            not in ("false", "0", "no", "off"))
+
+
 def gate_config() -> dict:
     def _f(name):
         v = os.getenv(name)
