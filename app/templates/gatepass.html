@@ -242,7 +242,7 @@
         <thead>
           <tr class="text-left lbl border-b border-metfraa-gray-100">
             <th class="py-2">Employee</th><th class="py-2">Ref</th>
-            <th class="py-2">Out</th><th class="py-2">Due back</th><th class="py-2">Status</th><th></th>
+            <th class="py-2">Out</th><th class="py-2">Due back</th><th class="py-2">Status</th><th class="py-2">Return</th><th></th>
           </tr>
         </thead>
         <tbody class="divide-y divide-metfraa-gray-100">
@@ -258,6 +258,15 @@
               <td class="py-2">
                 <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
                       :class="statusClass(o)" x-text="statusLabel(o)"></span>
+              </td>
+              <td class="py-2">
+                <template x-if="o.returned_at">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                        :class="o.return_verified ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'"
+                        :title="o.return_distance_m != null ? o.return_distance_m + ' m from the gate' : 'no location'"
+                        x-text="o.return_verified ? 'At gate' : 'Unverified'"></span>
+                </template>
+                <template x-if="!o.returned_at"><span class="text-metfraa-gray-400">—</span></template>
               </td>
               <td class="py-2 text-right">
                 <button @click="recordReturn(o)"

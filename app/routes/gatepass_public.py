@@ -13,7 +13,7 @@ and dies with the pass date.
 import logging
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session
 
@@ -149,43 +149,126 @@ def download_pass(token: str, db: Session = Depends(get_db)):
 
 
 @router.get("/ogb/{token}", response_class=HTMLResponse)
-def one_tap_return(token: str, db: Session = Depends(get_db)):
-    """One-tap "I'm back" from the return-reminder WhatsApp.
+def one_tap_return_page(token: str, db: Session = Depends(get_db)):
+    """The "I'm back" button opens this. It asks the browser for a location and
+    posts it to /ogb/{token}/confirm, so the return can be checked against the
+    gate geofence — the same verification BSC does from its QR poster.
 
-    The recorded time is when the button is tapped, which is what we want —
-    the alternative is chasing people to open the portal, which is exactly why
-    passes were sitting open at BSC. Marking a return you didn't make is the
-    same risk as the in-app button, so no extra authorisation is warranted.
+    If location is refused or unavailable the pass STILL closes, flagged
+    unverified. Blocking the close would recreate the very problem this exists
+    to fix: passes left open because recording a return was a hassle.
     """
+    o = (db.query(OutpassRequest)
+         .filter(OutpassRequest.return_token == token).first())
+    if not o:
+        return _page("⛔", "Link not valid",
+                     "This link is not recognised, or the return was already "
+                     "recorded.", 404)
+    if o.returned_at:
+        when = (o.returned_at + IST).strftime("%d %b, %I:%M %p")
+        return _page("✅", "Already recorded",
+                     f"Your return was already recorded at {when}.")
+    if o.status != "approved":
+        return _page("⛔", "Not an open pass", f"This pass is {o.status}.")
+
+    name = o.requester.name if o.requester else "there"
+    return HTMLResponse(f"""<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Record your return</title></head>
+<body style="margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f4f6f9">
+<div style="max-width:440px;margin:10vh auto;background:#fff;border:1px solid #d6dde6;
+            border-radius:16px;padding:32px 24px;text-align:center">
+  <div id="ico" style="font-size:56px;line-height:1">📍</div>
+  <h2 id="ttl" style="color:#0d1421;margin:.5em 0 .2em">Hi {name}</h2>
+  <p id="msg" style="color:#6b7689;font-size:15px;margin:0">
+    Checking your location so your return can be confirmed at the gate…</p>
+  <p style="color:#8e9aad;font-size:12px;margin-top:20px">Metfraa Portal</p>
+</div>
+<script>
+  var done = false;
+  function show(ico, ttl, msg) {{
+    document.getElementById('ico').textContent = ico;
+    document.getElementById('ttl').textContent = ttl;
+    document.getElementById('msg').textContent = msg;
+  }}
+  function send(body) {{
+    if (done) return; done = true;
+    fetch('/ogb/{token}/confirm', {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify(body)
+    }}).then(function (r) {{ return r.json(); }})
+      .then(function (d) {{
+        if (!d.ok) return show('⚠️', 'Could not record', d.error || 'Please try the portal.');
+        show(d.verified ? '✅' : '⚠️', 'Return recorded', d.message);
+      }})
+      .catch(function () {{ show('⚠️', 'Could not record',
+        'Please record your return in the portal instead.'); }});
+  }}
+  if (!navigator.geolocation) {{ send({{}}); }}
+  else {{
+    // Don't leave someone staring at a spinner if the fix never arrives.
+    var t = setTimeout(function () {{ send({{}}); }}, 12000);
+    navigator.geolocation.getCurrentPosition(
+      function (p) {{ clearTimeout(t); send({{lat: p.coords.latitude,
+        lng: p.coords.longitude, accuracy: p.coords.accuracy}}); }},
+      function () {{ clearTimeout(t); send({{}}); }},
+      {{enableHighAccuracy: true, timeout: 10000, maximumAge: 0}});
+  }}
+</script>
+</body></html>""")
+
+
+@router.post("/ogb/{token}/confirm")
+async def one_tap_return_confirm(token: str, request: Request,
+                                 db: Session = Depends(get_db)):
     try:
         o = (db.query(OutpassRequest)
              .filter(OutpassRequest.return_token == token).first())
         if not o:
-            # Token is cleared once used, so a stale tap is the common case.
-            return _page("⛔", "Link not valid",
-                         "This link is not recognised, or the return was already "
-                         "recorded.", 404)
+            return {"ok": False, "error": "This link is no longer valid."}
         if o.returned_at:
             when = (o.returned_at + IST).strftime("%d %b, %I:%M %p")
-            return _page("✅", "Already recorded",
-                         f"Your return was already recorded at {when}.")
+            return {"ok": True, "verified": bool(o.return_verified),
+                    "message": f"Already recorded at {when}."}
         if o.status != "approved":
-            return _page("⛔", "Not an open pass",
-                         f"This pass is {o.status}.")
+            return {"ok": False, "error": f"This pass is {o.status}."}
+
+        body = {}
+        try:
+            body = await request.json() or {}
+        except Exception:
+            pass
+
+        def _num(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        lat, lng = _num(body.get("lat")), _num(body.get("lng"))
+        acc = _num(body.get("accuracy"))
+
         from .gatepass import apply_return
         name = o.requester.name if o.requester else "Employee"
-        apply_return(db, o, name)
+        geo = apply_return(db, o, name, via="gps" if lat is not None else "self",
+                           lat=lat, lng=lng, accuracy=acc)
+
         when = (o.returned_at + IST).strftime("%d %b, %I:%M %p")
         late = ""
         if o.expected_back_at and o.returned_at > o.expected_back_at:
             mins = int((o.returned_at - o.expected_back_at).total_seconds() // 60)
             hrs, mins = divmod(mins, 60)
-            late = (" (" + (f"{hrs}h {mins}m" if hrs else f"{mins}m")
-                    + " past the declared in-time)")
-        return _page("✅", "Return recorded",
-                     f"Thanks {name} — recorded at {when}{late}. "
-                     "Your gatepass is now closed.")
+            late = (" — " + (f"{hrs}h {mins}m" if hrs else f"{mins}m")
+                    + " past your in-time")
+        if geo["verified"]:
+            msg = f"Confirmed at the gate at {when}{late}."
+        else:
+            why = geo["reason"] or "location unavailable"
+            msg = (f"Recorded at {when}{late}. Location could not be confirmed "
+                   f"({why}), so this shows as unverified for HR.")
+        return {"ok": True, "verified": geo["verified"], "message": msg,
+                "distance_m": geo["distance_m"]}
     except Exception:
-        log.error("[ogb] one-tap return failed", exc_info=True)
-        return _page("⚠️", "Something went wrong",
-                     "Please record your return in the portal instead.", 500)
+        log.error("[ogb] return confirm failed", exc_info=True)
+        return {"ok": False, "error": "Something went wrong. Please use the portal."}

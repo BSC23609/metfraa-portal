@@ -664,6 +664,16 @@ class OutpassRequest(Base):
     expected_back_at = Column(DateTime, nullable=True, index=True)
     returned_at = Column(DateTime, nullable=True, index=True)
     returned_by_name = Column(String(255))
+    # How the return was recorded, and whether it was inside the geofence.
+    # 'gps' = verified at the gate; 'self' = tapped but location unavailable or
+    # too far; 'admin' = recorded on someone's behalf. Kept separate from
+    # returned_at so a pass always closes, but an unverified close is visible.
+    returned_via = Column(String(16), nullable=True)
+    return_verified = Column(Boolean, default=False)
+    return_lat = Column(Float, nullable=True)
+    return_lng = Column(Float, nullable=True)
+    return_accuracy_m = Column(Float, nullable=True)
+    return_distance_m = Column(Integer, nullable=True)
 
     # One-tap WhatsApp approve/reject. The unguessable token IS the
     # authorisation — no login on a phone at a factory gate. Cleared once used.

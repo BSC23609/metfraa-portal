@@ -134,9 +134,17 @@ No return has been recorded in the Metfraa Portal.
 |---|---|
 | I'm back | `https://app.metfraa.com/ogb/{{token}}` |
 
-One tap records the return — no login, no opening the portal. The time recorded
-is the moment they tap. The token is single-use and is also cleared if the
-return is recorded in the app, so a stale link can't double-record.
+The button opens a page that asks the browser for a location, then records the
+return — the same geofence check BSC does from its QR poster at the gate. If the
+position is inside the gate radius the return is marked **verified**; if location
+is refused, unavailable, or too far away the pass **still closes** but is flagged
+**unverified** for HR, with the distance recorded.
+
+Closing the pass either way is deliberate: refusing to close it because someone's
+GPS is off would recreate the exact problem this feature exists to solve.
+
+The token is single-use and is also cleared if the return is recorded in the app,
+so a stale link can't double-record.
 
 ```
 Hi {{name}}, your gatepass is still showing as open.
@@ -161,6 +169,14 @@ Set in Vercel → Settings → Environment Variables:
 | `WATI_TOKEN` | the Metfraa WATI access token |
 | `GATEPASS_HR_PHONE` | HR's WhatsApp number for overdue alerts |
 | `GATEPASS_HR_NAME` | the name used in the greeting, e.g. `Rajasekar` |
+| `GATE_LAT` | gate latitude, e.g. `11.0168` — without it no return can be verified |
+| `GATE_LNG` | gate longitude, e.g. `76.9558` |
+| `GATE_RADIUS_M` | how close counts as "at the gate" (default `150`) |
+
+To get the gate coordinates: stand at the gate, open Google Maps, long-press your
+location, and copy the two numbers it shows. The radius is padded by the phone's
+own reported accuracy (capped at 100 m), so an honest but fuzzy fix at the gate
+isn't wrongly rejected.
 
 The template names above are the defaults, so no further variables are needed if
 you register them with these exact names. If Meta approves one under a different

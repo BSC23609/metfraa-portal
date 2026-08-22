@@ -1,0 +1,371 @@
+diff --git a/app/models.py b/app/models.py
+index 30acc55..0903ce8 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -664,6 +664,16 @@ class OutpassRequest(Base):
+     expected_back_at = Column(DateTime, nullable=True, index=True)
+     returned_at = Column(DateTime, nullable=True, index=True)
+     returned_by_name = Column(String(255))
++    # How the return was recorded, and whether it was inside the geofence.
++    # 'gps' = verified at the gate; 'self' = tapped but location unavailable or
++    # too far; 'admin' = recorded on someone's behalf. Kept separate from
++    # returned_at so a pass always closes, but an unverified close is visible.
++    returned_via = Column(String(16), nullable=True)
++    return_verified = Column(Boolean, default=False)
++    return_lat = Column(Float, nullable=True)
++    return_lng = Column(Float, nullable=True)
++    return_accuracy_m = Column(Float, nullable=True)
++    return_distance_m = Column(Integer, nullable=True)
+ 
+     # One-tap WhatsApp approve/reject. The unguessable token IS the
+     # authorisation — no login on a phone at a factory gate. Cleared once used.
+diff --git a/app/routes/gatepass.py b/app/routes/gatepass.py
+index 6c56dda..6150052 100644
+--- a/app/routes/gatepass.py
++++ b/app/routes/gatepass.py
+@@ -167,6 +167,9 @@ def _row(o: OutpassRequest, db: Session) -> dict:
+         "returned_at": (o.returned_at + IST).strftime("%Y-%m-%d %H:%M")
+                        if o.returned_at else None,
+         "returned_by_name": o.returned_by_name,
++        "returned_via": o.returned_via,
++        "return_verified": bool(o.return_verified),
++        "return_distance_m": o.return_distance_m,
+         "overdue": overdue and not _is_multi_day(o),
+         "multi_day": _is_multi_day(o),
+     }
+@@ -320,13 +323,71 @@ def apply_reject(db: Session, o: OutpassRequest, actor_id, actor_name: str,
+             log.warning("[gatepass] reject notify failed on %s", o.ref_no, exc_info=True)
+ 
+ 
+-def apply_return(db: Session, o: OutpassRequest, by_name: str) -> None:
+-    """Record the actual return. Shared by the in-app button and the one-tap
+-    link so the two can't drift."""
++
++# --- gate geofence ---------------------------------------------------------
++# A return is "verified" only if the phone reports a position inside the gate
++# radius. The radius is padded by the reading's own accuracy so an honest but
++# fuzzy fix at the gate isn't rejected — but never by more than 100m of slop,
++# or the geofence stops meaning anything.
++
++def gate_config() -> dict:
++    def _f(name):
++        v = os.getenv(name)
++        try:
++            return float(v) if v not in (None, "") else None
++        except ValueError:
++            return None
++    return {"lat": _f("GATE_LAT"), "lng": _f("GATE_LNG"),
++            "radius": _f("GATE_RADIUS_M") or 150.0}
++
++
++def haversine_m(lat1, lng1, lat2, lng2) -> float:
++    from math import asin, cos, radians, sin, sqrt
++    dlat, dlng = radians(lat2 - lat1), radians(lng2 - lng1)
++    a = (sin(dlat / 2) ** 2
++         + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2)
++    return 2 * 6371000 * asin(sqrt(a))
++
++
++def check_geofence(lat, lng, accuracy) -> dict:
++    """-> {verified, distance_m, reason}. Never raises; an unconfigured gate
++    means we simply can't verify, not that the return is refused."""
++    cfg = gate_config()
++    if cfg["lat"] is None or cfg["lng"] is None:
++        return {"verified": False, "distance_m": None,
++                "reason": "gate location not configured"}
++    if lat is None or lng is None:
++        return {"verified": False, "distance_m": None,
++                "reason": "no location provided"}
++    dist = round(haversine_m(lat, lng, cfg["lat"], cfg["lng"]))
++    allow = cfg["radius"] + min(float(accuracy or 0), 100.0)
++    if dist > allow:
++        return {"verified": False, "distance_m": dist,
++                "reason": f"{dist} m from the gate"}
++    return {"verified": True, "distance_m": dist, "reason": None}
++
++
++def apply_return(db: Session, o: OutpassRequest, by_name: str, via: str = "self",
++                 lat=None, lng=None, accuracy=None) -> dict:
++    """Record the actual return. Shared by the in-app button, the one-tap link
++    and admin, so the paths can't drift.
++
++    The pass ALWAYS closes. Location only decides whether it closes *verified*.
++    Refusing to close a pass because someone's GPS is off would recreate the
++    exact problem this feature exists to solve — people not recording returns.
++    """
++    geo = check_geofence(lat, lng, accuracy)
+     o.returned_at = datetime.utcnow()
+     o.returned_by_name = by_name
++    o.returned_via = via
++    o.return_verified = bool(geo["verified"])
++    o.return_lat = lat
++    o.return_lng = lng
++    o.return_accuracy_m = accuracy
++    o.return_distance_m = geo["distance_m"]
+     o.return_token = None          # single use
+     db.commit()
++    return geo
+ 
+ 
+ def _load_for_action(db: Session, user: Employee, rid: int) -> OutpassRequest:
+@@ -377,8 +438,9 @@ def api_return(rid: int, user: Employee = Depends(get_current_user),
+                             detail=f"Cannot record a return on a {o.status} request")
+     if o.returned_at:
+         raise HTTPException(status_code=409, detail="Return already recorded")
+-    apply_return(db, o, user.name)
+-    return {"ok": True,
++    via = "self" if o.requester_id == user.id else "admin"
++    geo = apply_return(db, o, user.name, via=via)
++    return {"ok": True, "verified": geo["verified"], "distance_m": geo["distance_m"],
+             "returned_at": (o.returned_at + IST).strftime("%Y-%m-%d %H:%M")}
+ 
+ 
+diff --git a/app/routes/gatepass_public.py b/app/routes/gatepass_public.py
+index 32e1093..20bc6ea 100644
+--- a/app/routes/gatepass_public.py
++++ b/app/routes/gatepass_public.py
+@@ -13,7 +13,7 @@ and dies with the pass date.
+ import logging
+ from datetime import datetime, timedelta
+ 
+-from fastapi import APIRouter, Depends
++from fastapi import APIRouter, Depends, Request
+ from fastapi.responses import HTMLResponse, Response
+ from sqlalchemy.orm import Session
+ 
+@@ -149,43 +149,126 @@ def download_pass(token: str, db: Session = Depends(get_db)):
+ 
+ 
+ @router.get("/ogb/{token}", response_class=HTMLResponse)
+-def one_tap_return(token: str, db: Session = Depends(get_db)):
+-    """One-tap "I'm back" from the return-reminder WhatsApp.
++def one_tap_return_page(token: str, db: Session = Depends(get_db)):
++    """The "I'm back" button opens this. It asks the browser for a location and
++    posts it to /ogb/{token}/confirm, so the return can be checked against the
++    gate geofence — the same verification BSC does from its QR poster.
+ 
+-    The recorded time is when the button is tapped, which is what we want —
+-    the alternative is chasing people to open the portal, which is exactly why
+-    passes were sitting open at BSC. Marking a return you didn't make is the
+-    same risk as the in-app button, so no extra authorisation is warranted.
++    If location is refused or unavailable the pass STILL closes, flagged
++    unverified. Blocking the close would recreate the very problem this exists
++    to fix: passes left open because recording a return was a hassle.
+     """
++    o = (db.query(OutpassRequest)
++         .filter(OutpassRequest.return_token == token).first())
++    if not o:
++        return _page("⛔", "Link not valid",
++                     "This link is not recognised, or the return was already "
++                     "recorded.", 404)
++    if o.returned_at:
++        when = (o.returned_at + IST).strftime("%d %b, %I:%M %p")
++        return _page("✅", "Already recorded",
++                     f"Your return was already recorded at {when}.")
++    if o.status != "approved":
++        return _page("⛔", "Not an open pass", f"This pass is {o.status}.")
++
++    name = o.requester.name if o.requester else "there"
++    return HTMLResponse(f"""<!doctype html>
++<html><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width,initial-scale=1">
++<title>Record your return</title></head>
++<body style="margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f4f6f9">
++<div style="max-width:440px;margin:10vh auto;background:#fff;border:1px solid #d6dde6;
++            border-radius:16px;padding:32px 24px;text-align:center">
++  <div id="ico" style="font-size:56px;line-height:1">📍</div>
++  <h2 id="ttl" style="color:#0d1421;margin:.5em 0 .2em">Hi {name}</h2>
++  <p id="msg" style="color:#6b7689;font-size:15px;margin:0">
++    Checking your location so your return can be confirmed at the gate…</p>
++  <p style="color:#8e9aad;font-size:12px;margin-top:20px">Metfraa Portal</p>
++</div>
++<script>
++  var done = false;
++  function show(ico, ttl, msg) {{
++    document.getElementById('ico').textContent = ico;
++    document.getElementById('ttl').textContent = ttl;
++    document.getElementById('msg').textContent = msg;
++  }}
++  function send(body) {{
++    if (done) return; done = true;
++    fetch('/ogb/{token}/confirm', {{
++      method: 'POST', headers: {{'Content-Type': 'application/json'}},
++      body: JSON.stringify(body)
++    }}).then(function (r) {{ return r.json(); }})
++      .then(function (d) {{
++        if (!d.ok) return show('⚠️', 'Could not record', d.error || 'Please try the portal.');
++        show(d.verified ? '✅' : '⚠️', 'Return recorded', d.message);
++      }})
++      .catch(function () {{ show('⚠️', 'Could not record',
++        'Please record your return in the portal instead.'); }});
++  }}
++  if (!navigator.geolocation) {{ send({{}}); }}
++  else {{
++    // Don't leave someone staring at a spinner if the fix never arrives.
++    var t = setTimeout(function () {{ send({{}}); }}, 12000);
++    navigator.geolocation.getCurrentPosition(
++      function (p) {{ clearTimeout(t); send({{lat: p.coords.latitude,
++        lng: p.coords.longitude, accuracy: p.coords.accuracy}}); }},
++      function () {{ clearTimeout(t); send({{}}); }},
++      {{enableHighAccuracy: true, timeout: 10000, maximumAge: 0}});
++  }}
++</script>
++</body></html>""")
++
++
++@router.post("/ogb/{token}/confirm")
++async def one_tap_return_confirm(token: str, request: Request,
++                                 db: Session = Depends(get_db)):
+     try:
+         o = (db.query(OutpassRequest)
+              .filter(OutpassRequest.return_token == token).first())
+         if not o:
+-            # Token is cleared once used, so a stale tap is the common case.
+-            return _page("⛔", "Link not valid",
+-                         "This link is not recognised, or the return was already "
+-                         "recorded.", 404)
++            return {"ok": False, "error": "This link is no longer valid."}
+         if o.returned_at:
+             when = (o.returned_at + IST).strftime("%d %b, %I:%M %p")
+-            return _page("✅", "Already recorded",
+-                         f"Your return was already recorded at {when}.")
++            return {"ok": True, "verified": bool(o.return_verified),
++                    "message": f"Already recorded at {when}."}
+         if o.status != "approved":
+-            return _page("⛔", "Not an open pass",
+-                         f"This pass is {o.status}.")
++            return {"ok": False, "error": f"This pass is {o.status}."}
++
++        body = {}
++        try:
++            body = await request.json() or {}
++        except Exception:
++            pass
++
++        def _num(v):
++            try:
++                return float(v)
++            except (TypeError, ValueError):
++                return None
++
++        lat, lng = _num(body.get("lat")), _num(body.get("lng"))
++        acc = _num(body.get("accuracy"))
++
+         from .gatepass import apply_return
+         name = o.requester.name if o.requester else "Employee"
+-        apply_return(db, o, name)
++        geo = apply_return(db, o, name, via="gps" if lat is not None else "self",
++                           lat=lat, lng=lng, accuracy=acc)
++
+         when = (o.returned_at + IST).strftime("%d %b, %I:%M %p")
+         late = ""
+         if o.expected_back_at and o.returned_at > o.expected_back_at:
+             mins = int((o.returned_at - o.expected_back_at).total_seconds() // 60)
+             hrs, mins = divmod(mins, 60)
+-            late = (" (" + (f"{hrs}h {mins}m" if hrs else f"{mins}m")
+-                    + " past the declared in-time)")
+-        return _page("✅", "Return recorded",
+-                     f"Thanks {name} — recorded at {when}{late}. "
+-                     "Your gatepass is now closed.")
++            late = (" — " + (f"{hrs}h {mins}m" if hrs else f"{mins}m")
++                    + " past your in-time")
++        if geo["verified"]:
++            msg = f"Confirmed at the gate at {when}{late}."
++        else:
++            why = geo["reason"] or "location unavailable"
++            msg = (f"Recorded at {when}{late}. Location could not be confirmed "
++                   f"({why}), so this shows as unverified for HR.")
++        return {"ok": True, "verified": geo["verified"], "message": msg,
++                "distance_m": geo["distance_m"]}
+     except Exception:
+-        log.error("[ogb] one-tap return failed", exc_info=True)
+-        return _page("⚠️", "Something went wrong",
+-                     "Please record your return in the portal instead.", 500)
++        log.error("[ogb] return confirm failed", exc_info=True)
++        return {"ok": False, "error": "Something went wrong. Please use the portal."}
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index 00e1d05..63c7967 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -77,6 +77,12 @@ GATEPASS_MIGRATIONS = [
+     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS action_token VARCHAR(64)",
+     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS pdf_token VARCHAR(64)",
+     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS return_token VARCHAR(64)",
++    "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS returned_via VARCHAR(16)",
++    "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS return_verified BOOLEAN DEFAULT FALSE",
++    "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS return_lat DOUBLE PRECISION",
++    "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS return_lng DOUBLE PRECISION",
++    "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS return_accuracy_m DOUBLE PRECISION",
++    "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS return_distance_m INTEGER",
+     "CREATE INDEX IF NOT EXISTS idx_outpass_return_token ON outpass_requests(return_token)",
+     "CREATE INDEX IF NOT EXISTS idx_outpass_action_token ON outpass_requests(action_token)",
+     "CREATE INDEX IF NOT EXISTS idx_outpass_pdf_token ON outpass_requests(pdf_token)",
+diff --git a/app/templates/gatepass.html b/app/templates/gatepass.html
+index b00c090..3452bdf 100644
+--- a/app/templates/gatepass.html
++++ b/app/templates/gatepass.html
+@@ -242,7 +242,7 @@
+         <thead>
+           <tr class="text-left lbl border-b border-metfraa-gray-100">
+             <th class="py-2">Employee</th><th class="py-2">Ref</th>
+-            <th class="py-2">Out</th><th class="py-2">Due back</th><th class="py-2">Status</th><th></th>
++            <th class="py-2">Out</th><th class="py-2">Due back</th><th class="py-2">Status</th><th class="py-2">Return</th><th></th>
+           </tr>
+         </thead>
+         <tbody class="divide-y divide-metfraa-gray-100">
+@@ -259,6 +259,15 @@
+                 <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                       :class="statusClass(o)" x-text="statusLabel(o)"></span>
+               </td>
++              <td class="py-2">
++                <template x-if="o.returned_at">
++                  <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
++                        :class="o.return_verified ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'"
++                        :title="o.return_distance_m != null ? o.return_distance_m + ' m from the gate' : 'no location'"
++                        x-text="o.return_verified ? 'At gate' : 'Unverified'"></span>
++                </template>
++                <template x-if="!o.returned_at"><span class="text-metfraa-gray-400">—</span></template>
++              </td>
+               <td class="py-2 text-right">
+                 <button @click="recordReturn(o)"
+                   class="px-2 py-1 rounded ring-1 ring-metfraa-gray-300 text-xs font-bold">Mark returned</button>
+diff --git a/docs/WATI_TEMPLATES_METFRAA.md b/docs/WATI_TEMPLATES_METFRAA.md
+index 0c4f196..0e91229 100644
+--- a/docs/WATI_TEMPLATES_METFRAA.md
++++ b/docs/WATI_TEMPLATES_METFRAA.md
+@@ -134,9 +134,17 @@ No return has been recorded in the Metfraa Portal.
+ |---|---|
+ | I'm back | `https://app.metfraa.com/ogb/{{token}}` |
+ 
+-One tap records the return — no login, no opening the portal. The time recorded
+-is the moment they tap. The token is single-use and is also cleared if the
+-return is recorded in the app, so a stale link can't double-record.
++The button opens a page that asks the browser for a location, then records the
++return — the same geofence check BSC does from its QR poster at the gate. If the
++position is inside the gate radius the return is marked **verified**; if location
++is refused, unavailable, or too far away the pass **still closes** but is flagged
++**unverified** for HR, with the distance recorded.
++
++Closing the pass either way is deliberate: refusing to close it because someone's
++GPS is off would recreate the exact problem this feature exists to solve.
++
++The token is single-use and is also cleared if the return is recorded in the app,
++so a stale link can't double-record.
+ 
+ ```
+ Hi {{name}}, your gatepass is still showing as open.
+@@ -161,6 +169,14 @@ Set in Vercel → Settings → Environment Variables:
+ | `WATI_TOKEN` | the Metfraa WATI access token |
+ | `GATEPASS_HR_PHONE` | HR's WhatsApp number for overdue alerts |
+ | `GATEPASS_HR_NAME` | the name used in the greeting, e.g. `Rajasekar` |
++| `GATE_LAT` | gate latitude, e.g. `11.0168` — without it no return can be verified |
++| `GATE_LNG` | gate longitude, e.g. `76.9558` |
++| `GATE_RADIUS_M` | how close counts as "at the gate" (default `150`) |
++
++To get the gate coordinates: stand at the gate, open Google Maps, long-press your
++location, and copy the two numbers it shows. The radius is padded by the phone's
++own reported accuracy (capped at 100 m), so an honest but fuzzy fix at the gate
++isn't wrongly rejected.
+ 
+ The template names above are the defaults, so no further variables are needed if
+ you register them with these exact names. If Meta approves one under a different

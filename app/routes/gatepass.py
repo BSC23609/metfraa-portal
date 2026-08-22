@@ -167,6 +167,9 @@ def _row(o: OutpassRequest, db: Session) -> dict:
         "returned_at": (o.returned_at + IST).strftime("%Y-%m-%d %H:%M")
                        if o.returned_at else None,
         "returned_by_name": o.returned_by_name,
+        "returned_via": o.returned_via,
+        "return_verified": bool(o.return_verified),
+        "return_distance_m": o.return_distance_m,
         "overdue": overdue and not _is_multi_day(o),
         "multi_day": _is_multi_day(o),
     }
@@ -320,13 +323,71 @@ def apply_reject(db: Session, o: OutpassRequest, actor_id, actor_name: str,
             log.warning("[gatepass] reject notify failed on %s", o.ref_no, exc_info=True)
 
 
-def apply_return(db: Session, o: OutpassRequest, by_name: str) -> None:
-    """Record the actual return. Shared by the in-app button and the one-tap
-    link so the two can't drift."""
+
+# --- gate geofence ---------------------------------------------------------
+# A return is "verified" only if the phone reports a position inside the gate
+# radius. The radius is padded by the reading's own accuracy so an honest but
+# fuzzy fix at the gate isn't rejected — but never by more than 100m of slop,
+# or the geofence stops meaning anything.
+
+def gate_config() -> dict:
+    def _f(name):
+        v = os.getenv(name)
+        try:
+            return float(v) if v not in (None, "") else None
+        except ValueError:
+            return None
+    return {"lat": _f("GATE_LAT"), "lng": _f("GATE_LNG"),
+            "radius": _f("GATE_RADIUS_M") or 150.0}
+
+
+def haversine_m(lat1, lng1, lat2, lng2) -> float:
+    from math import asin, cos, radians, sin, sqrt
+    dlat, dlng = radians(lat2 - lat1), radians(lng2 - lng1)
+    a = (sin(dlat / 2) ** 2
+         + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2)
+    return 2 * 6371000 * asin(sqrt(a))
+
+
+def check_geofence(lat, lng, accuracy) -> dict:
+    """-> {verified, distance_m, reason}. Never raises; an unconfigured gate
+    means we simply can't verify, not that the return is refused."""
+    cfg = gate_config()
+    if cfg["lat"] is None or cfg["lng"] is None:
+        return {"verified": False, "distance_m": None,
+                "reason": "gate location not configured"}
+    if lat is None or lng is None:
+        return {"verified": False, "distance_m": None,
+                "reason": "no location provided"}
+    dist = round(haversine_m(lat, lng, cfg["lat"], cfg["lng"]))
+    allow = cfg["radius"] + min(float(accuracy or 0), 100.0)
+    if dist > allow:
+        return {"verified": False, "distance_m": dist,
+                "reason": f"{dist} m from the gate"}
+    return {"verified": True, "distance_m": dist, "reason": None}
+
+
+def apply_return(db: Session, o: OutpassRequest, by_name: str, via: str = "self",
+                 lat=None, lng=None, accuracy=None) -> dict:
+    """Record the actual return. Shared by the in-app button, the one-tap link
+    and admin, so the paths can't drift.
+
+    The pass ALWAYS closes. Location only decides whether it closes *verified*.
+    Refusing to close a pass because someone's GPS is off would recreate the
+    exact problem this feature exists to solve — people not recording returns.
+    """
+    geo = check_geofence(lat, lng, accuracy)
     o.returned_at = datetime.utcnow()
     o.returned_by_name = by_name
+    o.returned_via = via
+    o.return_verified = bool(geo["verified"])
+    o.return_lat = lat
+    o.return_lng = lng
+    o.return_accuracy_m = accuracy
+    o.return_distance_m = geo["distance_m"]
     o.return_token = None          # single use
     db.commit()
+    return geo
 
 
 def _load_for_action(db: Session, user: Employee, rid: int) -> OutpassRequest:
@@ -377,8 +438,9 @@ def api_return(rid: int, user: Employee = Depends(get_current_user),
                             detail=f"Cannot record a return on a {o.status} request")
     if o.returned_at:
         raise HTTPException(status_code=409, detail="Return already recorded")
-    apply_return(db, o, user.name)
-    return {"ok": True,
+    via = "self" if o.requester_id == user.id else "admin"
+    geo = apply_return(db, o, user.name, via=via)
+    return {"ok": True, "verified": geo["verified"], "distance_m": geo["distance_m"],
             "returned_at": (o.returned_at + IST).strftime("%Y-%m-%d %H:%M")}
 
 
