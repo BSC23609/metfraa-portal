@@ -126,7 +126,17 @@ No return has been recorded in the Metfraa Portal.
 
 ## 5. `met_gatepass_return_reminder` → the requester
 
-**Variables:** `name`, `ref`, `out_time`, `expected`, `overdue_min`
+**Variables:** `name`, `ref`, `out_time`, `expected`, `overdue_min`, `token`
+
+**Button — one dynamic URL button:**
+
+| Button text | URL |
+|---|---|
+| I'm back | `https://app.metfraa.com/ogb/{{token}}` |
+
+One tap records the return — no login, no opening the portal. The time recorded
+is the moment they tap. The token is single-use and is also cleared if the
+return is recorded in the app, so a stale link can't double-record.
 
 ```
 Hi {{name}}, your gatepass is still showing as open.
@@ -136,8 +146,7 @@ Expected back: {{expected}}
 Overdue by: {{overdue_min}} minutes
 Ref: {{ref}}
 
-If you are back, please record your return in the Metfraa Portal so it does not
-show as overdue.
+If you are back, tap the button below to record your return.
 ```
 
 ---

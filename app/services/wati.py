@@ -206,4 +206,7 @@ def gatepass_return_reminder(o, overdue_min: int, db=None) -> bool:
         "name": req.name if req else "-", "ref": o.ref_no,
         "out_time": o.out_time or "-", "expected": o.in_time or "-",
         "overdue_min": str(overdue_min),
+        # Button URL: https://app.metfraa.com/ogb/{{token}} — one tap records
+        # the return, so nobody has to open the portal to close a pass.
+        "token": o.return_token or "-",
     }, db)

@@ -289,6 +289,7 @@ def apply_approve(db: Session, o: OutpassRequest, actor_id, actor_name: str) -> 
     o.pdf_token = secrets.token_hex(16)         # link to the printable pass
     if o.type == "gatepass":
         o.expected_back_at = _expected_back(o.req_date, o.in_time)
+        o.return_token = secrets.token_hex(16)  # one-tap "I'm back"
     db.commit()
     from ..services import wati
     from ..services.portal_notify import notify_gatepass_decided
@@ -317,6 +318,15 @@ def apply_reject(db: Session, o: OutpassRequest, actor_id, actor_name: str,
             fn()
         except Exception:
             log.warning("[gatepass] reject notify failed on %s", o.ref_no, exc_info=True)
+
+
+def apply_return(db: Session, o: OutpassRequest, by_name: str) -> None:
+    """Record the actual return. Shared by the in-app button and the one-tap
+    link so the two can't drift."""
+    o.returned_at = datetime.utcnow()
+    o.returned_by_name = by_name
+    o.return_token = None          # single use
+    db.commit()
 
 
 def _load_for_action(db: Session, user: Employee, rid: int) -> OutpassRequest:
@@ -367,9 +377,7 @@ def api_return(rid: int, user: Employee = Depends(get_current_user),
                             detail=f"Cannot record a return on a {o.status} request")
     if o.returned_at:
         raise HTTPException(status_code=409, detail="Return already recorded")
-    o.returned_at = datetime.utcnow()
-    o.returned_by_name = user.name
-    db.commit()
+    apply_return(db, o, user.name)
     return {"ok": True,
             "returned_at": (o.returned_at + IST).strftime("%Y-%m-%d %H:%M")}
 

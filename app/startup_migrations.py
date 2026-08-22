@@ -76,6 +76,8 @@ EXPENSE_PARITY_MIGRATIONS += [
 GATEPASS_MIGRATIONS = [
     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS action_token VARCHAR(64)",
     "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS pdf_token VARCHAR(64)",
+    "ALTER TABLE outpass_requests ADD COLUMN IF NOT EXISTS return_token VARCHAR(64)",
+    "CREATE INDEX IF NOT EXISTS idx_outpass_return_token ON outpass_requests(return_token)",
     "CREATE INDEX IF NOT EXISTS idx_outpass_action_token ON outpass_requests(action_token)",
     "CREATE INDEX IF NOT EXISTS idx_outpass_pdf_token ON outpass_requests(pdf_token)",
     "CREATE INDEX IF NOT EXISTS idx_wa_log_created ON wa_log(created_at DESC)",

@@ -146,3 +146,46 @@ def download_pass(token: str, db: Session = Depends(get_db)):
     name = f"{(o.requester.name if o.requester else 'pass')} {safe}.pdf"
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{name}"'})
+
+
+@router.get("/ogb/{token}", response_class=HTMLResponse)
+def one_tap_return(token: str, db: Session = Depends(get_db)):
+    """One-tap "I'm back" from the return-reminder WhatsApp.
+
+    The recorded time is when the button is tapped, which is what we want —
+    the alternative is chasing people to open the portal, which is exactly why
+    passes were sitting open at BSC. Marking a return you didn't make is the
+    same risk as the in-app button, so no extra authorisation is warranted.
+    """
+    try:
+        o = (db.query(OutpassRequest)
+             .filter(OutpassRequest.return_token == token).first())
+        if not o:
+            # Token is cleared once used, so a stale tap is the common case.
+            return _page("⛔", "Link not valid",
+                         "This link is not recognised, or the return was already "
+                         "recorded.", 404)
+        if o.returned_at:
+            when = (o.returned_at + IST).strftime("%d %b, %I:%M %p")
+            return _page("✅", "Already recorded",
+                         f"Your return was already recorded at {when}.")
+        if o.status != "approved":
+            return _page("⛔", "Not an open pass",
+                         f"This pass is {o.status}.")
+        from .gatepass import apply_return
+        name = o.requester.name if o.requester else "Employee"
+        apply_return(db, o, name)
+        when = (o.returned_at + IST).strftime("%d %b, %I:%M %p")
+        late = ""
+        if o.expected_back_at and o.returned_at > o.expected_back_at:
+            mins = int((o.returned_at - o.expected_back_at).total_seconds() // 60)
+            hrs, mins = divmod(mins, 60)
+            late = (" (" + (f"{hrs}h {mins}m" if hrs else f"{mins}m")
+                    + " past the declared in-time)")
+        return _page("✅", "Return recorded",
+                     f"Thanks {name} — recorded at {when}{late}. "
+                     "Your gatepass is now closed.")
+    except Exception:
+        log.error("[ogb] one-tap return failed", exc_info=True)
+        return _page("⚠️", "Something went wrong",
+                     "Please record your return in the portal instead.", 500)

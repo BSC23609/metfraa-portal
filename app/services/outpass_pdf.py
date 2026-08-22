@@ -6,6 +6,7 @@ the bottom carrying the approver's name and the timestamp — that band is what 
 gatekeeper actually looks at, so it stays visually loud.
 """
 import io
+import pathlib
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A5, landscape
@@ -18,6 +19,30 @@ GREEN = colors.HexColor("#16a34a")
 MUTED = colors.HexColor("#6b7689")
 LINE = colors.HexColor("#d6dde6")
 
+# Both logos ship as opaque white-background PNGs, so the header is a WHITE
+# letterhead rather than the dark band used elsewhere — a dark band would show
+# them as white boxes. This also matches the EHS portal's header.
+_ASSETS = pathlib.Path(__file__).resolve().parent.parent / "static" / "expense" / "assets"
+METFRAA_LOGO = _ASSETS / "metfraa-logo.png"      # 500x138
+GROUP_LOGO = _ASSETS / "group-logo.png"          # 375x133
+
+
+def _draw_logo(c, path: pathlib.Path, x, y, max_h, right_align_at=None):
+    """Draw a logo at its natural aspect ratio. Missing file is not fatal —
+    a pass without a logo still works at the gate; a crash doesn't."""
+    try:
+        from reportlab.lib.utils import ImageReader
+        img = ImageReader(str(path))
+        iw, ih = img.getSize()
+        h = max_h
+        w = h * iw / ih
+        if right_align_at is not None:
+            x = right_align_at - w
+        c.drawImage(img, x, y, width=w, height=h, mask="auto")
+        return w
+    except Exception:
+        return 0
+
 
 def build_outpass_pdf(d: dict) -> bytes:
     """d: type, on_duty, date, emp_code, name, designation, purpose,
@@ -28,31 +53,44 @@ def build_outpass_pdf(d: dict) -> bytes:
     M = 14 * mm
     full_w = W - 2 * M
 
-    # ---- header ----
-    c.setFillColor(INK)
-    c.rect(0, H - 24 * mm, W, 24 * mm, stroke=0, fill=1)
+    # ---- header (white letterhead) ----
+    head_h = 22 * mm
+    head_y = H - head_h
     c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 15)
-    c.drawString(M, H - 13 * mm, "METFRAA STEEL BUILDINGS PVT. LTD.")
-    c.setFont("Helvetica", 8.5)
-    c.setFillColor(colors.HexColor("#9fb3c8"))
-    c.drawString(M, H - 18.5 * mm, "Steeling the Future")
+    c.rect(0, head_y, W, head_h, stroke=0, fill=1)
+
+    _draw_logo(c, METFRAA_LOGO, M, head_y + 6.5 * mm, 9 * mm)
+    _draw_logo(c, GROUP_LOGO, 0, head_y + 6.5 * mm, 9 * mm, right_align_at=W - M)
+
+    # Blue rule under the letterhead, then the pass title on a dark strip so
+    # the document type is unmistakable at a glance.
+    c.setFillColor(BLUE)
+    c.rect(0, head_y - 1.2 * mm, W, 1.2 * mm, stroke=0, fill=1)
+
+    strip_h = 11 * mm
+    strip_y = head_y - 1.2 * mm - strip_h
+    c.setFillColor(INK)
+    c.rect(0, strip_y, W, strip_h, stroke=0, fill=1)
 
     label = "GATE PASS" if d.get("type") == "gatepass" else "OUT PASS"
-    c.setFont("Helvetica-Bold", 15)
     c.setFillColor(colors.white)
-    c.drawRightString(W - M, H - 13 * mm, label)
-    c.setFont("Helvetica", 8)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(M, strip_y + 3.6 * mm, label)
+    c.setFont("Helvetica", 8.5)
     c.setFillColor(colors.HexColor("#9fb3c8"))
-    c.drawRightString(W - M, H - 18.5 * mm, str(d.get("ref_no") or ""))
+    c.drawRightString(W - M, strip_y + 3.8 * mm, str(d.get("ref_no") or ""))
 
     # On-duty is a materially different thing at the gate — make it obvious.
+    # Sits inside the dark strip next to the title, so it can never collide
+    # with the fields below.
     if d.get("on_duty"):
+        bw = 22 * mm
+        bx = M + c.stringWidth(label, "Helvetica-Bold", 13) + 5 * mm
         c.setFillColor(BLUE)
-        c.roundRect(W - M - 30 * mm, H - 33 * mm, 30 * mm, 6.5 * mm, 2, stroke=0, fill=1)
+        c.roundRect(bx, strip_y + 2.9 * mm, bw, 5.4 * mm, 1.5, stroke=0, fill=1)
         c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 7.5)
-        c.drawCentredString(W - M - 15 * mm, H - 31.2 * mm, "ON DUTY")
+        c.setFont("Helvetica-Bold", 7)
+        c.drawCentredString(bx + bw / 2, strip_y + 4.5 * mm, "ON DUTY")
 
     def field(lbl, val, x, y, w):
         c.setFillColor(MUTED)
@@ -73,7 +111,7 @@ def build_outpass_pdf(d: dict) -> bytes:
 
     col_l, col_r = M, M + full_w / 2 + 4 * mm
     half_w = full_w / 2 - 4 * mm
-    y = H - 46 * mm
+    y = strip_y - 16 * mm
     row = 15 * mm
 
     field("Date", d.get("date"), col_l, y, half_w)

@@ -670,6 +670,9 @@ class OutpassRequest(Base):
     action_token = Column(String(64), nullable=True, index=True)
     # Unguessable link to the approved pass PDF, sent to the requester.
     pdf_token = Column(String(64), nullable=True, index=True)
+    # One-tap "I'm back" from the return reminder. Minted on approval for a
+    # gatepass, cleared once the return is recorded.
+    return_token = Column(String(64), nullable=True, index=True)
 
     # Independent alert stamps — each retries until it actually sends, which is
     # the fix BSC needed when one failing send blocked the others.
