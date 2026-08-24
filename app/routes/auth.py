@@ -26,7 +26,7 @@ from ..deps import (
     issue_session_token,
     set_session_cookie,
 )
-from ..models import AuditLog, Employee, PasswordResetRequest
+from ..models import AuditLog, Employee, PasswordOtp, PasswordResetRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 templates = Jinja2Templates(directory="app/templates")
@@ -35,6 +35,25 @@ templates = Jinja2Templates(directory="app/templates")
 DEFAULT_PASSWORD = "Metfraa@123"
 RESET_LINK_EXPIRY_HOURS = 24
 BASE_URL = os.getenv("BASE_URL", "https://kpis.metfraa.com").rstrip("/")
+
+# --- self-service OTP reset tunables ---
+OTP_EXPIRY_MIN = int(os.getenv("OTP_EXPIRY_MIN", "10"))
+OTP_MAX_ATTEMPTS = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))
+OTP_RESEND_COOLDOWN_SEC = int(os.getenv("OTP_RESEND_COOLDOWN_SEC", "30"))
+RESET_TOKEN_EXPIRY_MIN = int(os.getenv("OTP_RESET_TOKEN_EXPIRY_MIN", "15"))
+
+
+def _mask_phone(raw) -> str:
+    """Show only the last 4 digits so the user recognises their own number
+    without it being fully disclosed on screen."""
+    digits = re.sub(r"\D", "", str(raw or ""))
+    if len(digits) < 4:
+        return "your registered mobile"
+    return "••• ••• " + digits[-4:]
+
+
+def _gen_otp() -> str:
+    return f"{secrets.randbelow(10 ** 6):06d}"
 
 
 # ============================================================
@@ -422,3 +441,189 @@ async def password_reset_confirm_submit(
 
     else:
         raise HTTPException(status_code=400, detail="Unknown action")
+
+
+# ============================================================
+# Self-service password reset over WhatsApp OTP
+#
+#   /auth/reset            enter employee code
+#   POST /auth/reset/send  → WhatsApp a 6-digit code to the on-file mobile
+#   POST /auth/reset/verify→ check the code, mint a short-lived reset token
+#   POST /auth/reset/set   → set the new password, log in
+#
+# The code is stored hashed; a reset_token bridges verify→set so the final
+# POST can't be forged. No HR approval needed — proving control of the
+# registered mobile is the authorisation.
+# ============================================================
+
+def _render_reset(request, stage, *, err=None, ok=None, flow=None,
+                  masked=None, reset_token=None, attempts_left=None):
+    return templates.TemplateResponse(request, "password_otp.html", {
+        "stage": stage, "err": err, "ok": ok, "flow": flow or "",
+        "masked": masked or "", "reset_token": reset_token or "",
+        "attempts_left": attempts_left,
+    })
+
+
+@router.get("/reset", response_class=HTMLResponse)
+def reset_start_page(request: Request, err: str | None = None):
+    return _render_reset(request, "code", err=err)
+
+
+@router.post("/reset/send")
+async def reset_send_otp(
+    request: Request,
+    employee_code: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    code = (employee_code or "").strip().upper()
+    if not code:
+        return _render_reset(request, "code", err="Please enter your employee code.")
+
+    emp = db.query(Employee).filter(Employee.employee_code == code).first()
+    if not emp or not emp.is_active:
+        return _render_reset(request, "code",
+                             err="No active account found for that code. Check the code or contact HR.")
+
+    from ..services import wati
+    phone = wati.normalize_phone(emp.phone)
+    if not phone:
+        return _render_reset(request, "code",
+                             err="No mobile number is on file for your account. Please contact HR to reset your password.")
+
+    # Resend cooldown — don't let a button-masher fan out a burst of codes.
+    last = (db.query(PasswordOtp)
+            .filter(PasswordOtp.employee_id == emp.id,
+                    PasswordOtp.consumed_at.is_(None))
+            .order_by(PasswordOtp.id.desc()).first())
+    if last and last.created_at and \
+            (datetime.utcnow() - last.created_at).total_seconds() < OTP_RESEND_COOLDOWN_SEC:
+        wait = OTP_RESEND_COOLDOWN_SEC - int((datetime.utcnow() - last.created_at).total_seconds())
+        return _render_reset(request, "otp", flow=last.flow_token,
+                             masked=_mask_phone(emp.phone),
+                             err=f"A code was just sent. Please wait {wait}s before requesting another.")
+
+    otp = _gen_otp()
+    row = PasswordOtp(
+        employee_id=emp.id,
+        flow_token=secrets.token_urlsafe(32),
+        code_hash=hash_password(otp),
+        expires_at=datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MIN),
+        attempts=0,
+    )
+    db.add(row)
+    db.commit()
+
+    ok = wati.password_otp(emp.phone, otp, db)
+    db.add(AuditLog(actor_code=emp.employee_code, actor_email=emp.email,
+                    action="password_otp_sent",
+                    details={"employee_id": emp.id, "delivered": bool(ok)}))
+    db.commit()
+
+    if not ok:
+        return _render_reset(request, "code",
+                             err="We couldn't send a WhatsApp code to your number right now. "
+                                 "Please try again shortly, or contact HR.")
+
+    return _render_reset(request, "otp", flow=row.flow_token,
+                         masked=_mask_phone(emp.phone),
+                         ok=f"A 6-digit code was sent to {_mask_phone(emp.phone)} on WhatsApp.")
+
+
+@router.post("/reset/resend")
+async def reset_resend_otp(
+    request: Request,
+    flow: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    row = db.query(PasswordOtp).filter_by(flow_token=flow).first()
+    if not row or row.consumed_at:
+        return _render_reset(request, "code", err="That reset session has expired. Please start again.")
+    emp = row.employee
+    if not emp or not emp.is_active:
+        return _render_reset(request, "code", err="Account unavailable. Please contact HR.")
+    # Reuse the send path's cooldown + issue logic by delegating.
+    return await reset_send_otp(request, employee_code=emp.employee_code, db=db)
+
+
+@router.post("/reset/verify")
+async def reset_verify_otp(
+    request: Request,
+    flow: str = Form(...),
+    otp: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    row = db.query(PasswordOtp).filter_by(flow_token=flow).first()
+    if not row or row.consumed_at:
+        return _render_reset(request, "code", err="That reset session has expired. Please start again.")
+
+    masked = _mask_phone(row.employee.phone if row.employee else None)
+
+    if row.expires_at < datetime.utcnow():
+        return _render_reset(request, "code",
+                             err="Your code has expired. Please request a new one.")
+
+    if row.attempts >= OTP_MAX_ATTEMPTS:
+        return _render_reset(request, "code",
+                             err="Too many incorrect attempts. Please request a new code.")
+
+    entered = re.sub(r"\D", "", otp or "")
+    if not verify_password(entered, row.code_hash):
+        row.attempts += 1
+        db.commit()
+        left = max(0, OTP_MAX_ATTEMPTS - row.attempts)
+        if left == 0:
+            return _render_reset(request, "code",
+                                 err="Too many incorrect attempts. Please request a new code.")
+        return _render_reset(request, "otp", flow=flow, masked=masked,
+                             err="Incorrect code. Please try again.", attempts_left=left)
+
+    # Correct — mint a short-lived reset token for the set-password step.
+    row.verified_at = datetime.utcnow()
+    row.reset_token = secrets.token_urlsafe(32)
+    row.reset_expires_at = datetime.utcnow() + timedelta(minutes=RESET_TOKEN_EXPIRY_MIN)
+    db.commit()
+    return _render_reset(request, "password", reset_token=row.reset_token)
+
+
+@router.post("/reset/set")
+async def reset_set_password(
+    request: Request,
+    reset_token: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    row = db.query(PasswordOtp).filter_by(reset_token=reset_token).first()
+    if not row or row.consumed_at or not row.reset_expires_at:
+        return _render_reset(request, "code", err="That reset session is no longer valid. Please start again.")
+    if row.reset_expires_at < datetime.utcnow():
+        return _render_reset(request, "code", err="Your reset window expired. Please start again.")
+
+    emp = row.employee
+    if not emp or not emp.is_active:
+        return _render_reset(request, "code", err="Account unavailable. Please contact HR.")
+
+    if new_password != confirm_password:
+        return _render_reset(request, "password", reset_token=reset_token,
+                             err="The two passwords do not match.")
+    perr = validate_new_password(new_password)
+    if perr:
+        return _render_reset(request, "password", reset_token=reset_token, err=perr)
+    if new_password == DEFAULT_PASSWORD:
+        return _render_reset(request, "password", reset_token=reset_token,
+                             err="Please choose a password different from the default.")
+
+    emp.password_hash = hash_password(new_password)
+    emp.must_reset_password = False
+    row.consumed_at = datetime.utcnow()
+    db.add(AuditLog(actor_code=emp.employee_code, actor_email=emp.email,
+                    action="password_reset_via_otp",
+                    details={"employee_id": emp.id}))
+    db.commit()
+
+    # Log them straight in — they've proven the mobile and set a fresh password.
+    token = issue_session_token(emp)
+    response = RedirectResponse(url="/", status_code=303)
+    set_session_cookie(response, token)
+    return response

@@ -228,3 +228,31 @@ A 401 means `CRON_SECRET` doesn't match; a 503 means it isn't set in Vercel.
 For gatepasses that's fine — a few minutes' lag on an overdue alert doesn't
 matter. You can also trigger a run by hand from the Actions tab
 (**Run workflow**), which is useful for testing.
+
+---
+
+## Password reset OTP — `otp_password2`
+
+Self-service password reset (`/auth/reset`) WhatsApps a 6-digit code to the
+employee's on-file mobile. Reuses the same **Authentication-category** template
+BSC Tickets uses.
+
+| | |
+|---|---|
+| Template name | `otp_password2` (override with `WATI_OTP_TPL`) |
+| Category | **Authentication** (not Utility) |
+| Body variable | single `{{1}}` = the code |
+| Button | Copy-code (WATI fills it from the same `{{1}}`) |
+
+The template must exist and be **approved in the Metfraa WATI account** — the
+BSC copy lives in a different account. If Meta approves it under a different
+name, set `WATI_OTP_TPL` in Vercel to match; the code passes one parameter
+named `1`, so only the name→value mapping matters.
+
+Sent via `wati.password_otp(phone, code, db)`. Every attempt is written to the
+`wa_log` table, so a silent failure shows up in **Gatepass → Admin → WhatsApp
+log** the same way overdue alerts do — check there first if a user says no code
+arrived (`no_phone`, `declined`, or `http_error` tells you which).
+
+**Tunables (env, all optional):** `OTP_EXPIRY_MIN` (10), `OTP_MAX_ATTEMPTS`
+(5), `OTP_RESEND_COOLDOWN_SEC` (30), `OTP_RESET_TOKEN_EXPIRY_MIN` (15).

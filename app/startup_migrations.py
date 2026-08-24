@@ -106,6 +106,29 @@ GATEPASS_MIGRATIONS = [
 STARTUP_MIGRATIONS = (STARTUP_MIGRATIONS + EXPENSE_PARITY_MIGRATIONS
                       + GATEPASS_MIGRATIONS + MISC_MIGRATIONS)
 
+# --- self-service OTP password reset ---
+# CREATE TABLE IF NOT EXISTS so the table self-heals on every boot without the
+# INIT_DB dance (Base.metadata.create_all is skipped on Vercel unless INIT_DB
+# is set). Types mirror models.PasswordOtp.
+OTP_MIGRATIONS = [
+    "CREATE TABLE IF NOT EXISTS password_otps ("
+    " id SERIAL PRIMARY KEY,"
+    " employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,"
+    " flow_token VARCHAR(64) UNIQUE NOT NULL,"
+    " code_hash VARCHAR(255) NOT NULL,"
+    " expires_at TIMESTAMP NOT NULL,"
+    " attempts INTEGER NOT NULL DEFAULT 0,"
+    " verified_at TIMESTAMP,"
+    " reset_token VARCHAR(64),"
+    " reset_expires_at TIMESTAMP,"
+    " consumed_at TIMESTAMP,"
+    " created_at TIMESTAMP NOT NULL DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_password_otps_flow ON password_otps(flow_token)",
+    "CREATE INDEX IF NOT EXISTS idx_password_otps_reset ON password_otps(reset_token)",
+    "CREATE INDEX IF NOT EXISTS idx_password_otps_emp ON password_otps(employee_id)",
+]
+STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + OTP_MIGRATIONS
+
 
 def run_startup_migrations() -> None:
     """Apply pending column additions. Runs on every startup — safe.

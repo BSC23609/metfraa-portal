@@ -50,6 +50,9 @@ TPL = {
     "overdue": lambda: os.getenv("WATI_OVERDUE_TPL", "met_outpass_overdue"),
     "return_reminder": lambda: os.getenv("WATI_RETURN_REMINDER_TPL",
                                          "met_gatepass_return_reminder"),
+    # Authentication-category template: single {{1}} = the code, Copy-code
+    # button. Shared with BSC Tickets — already Meta-approved as otp_password2.
+    "otp": lambda: os.getenv("WATI_OTP_TPL", "otp_password2"),
 }
 
 
@@ -210,3 +213,10 @@ def gatepass_return_reminder(o, overdue_min: int, db=None) -> bool:
         # the return, so nobody has to open the portal to close a pass.
         "token": o.return_token or "-",
     }, db)
+
+
+def password_otp(phone, code: str, db=None) -> bool:
+    """Send a password-reset OTP. Template `otp_password2` is Authentication
+    category with one variable {{1}} (the code) and a Copy-code button — WATI
+    populates both the body and the button from the single "1" parameter."""
+    return send_template(phone, TPL["otp"](), {"1": str(code)}, db)

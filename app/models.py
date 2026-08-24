@@ -148,6 +148,36 @@ class PasswordResetRequest(Base):
     employee = relationship("Employee")
 
 
+class PasswordOtp(Base):
+    """One-time-code self-service password reset over WhatsApp.
+
+    The employee proves control of their on-file mobile by entering a 6-digit
+    code we WhatsApp them, then sets a new password — no HR in the loop. The
+    code is stored hashed (never plaintext); a short-lived reset_token bridges
+    the verify step and the set-password step so the second POST can't be
+    forged without having passed the first.
+    """
+    __tablename__ = "password_otps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    # Opaque handle carried through the flow so the employee's identity is never
+    # exposed in a URL or hidden field.
+    flow_token = Column(String(64), unique=True, nullable=False, index=True)
+    code_hash = Column(String(255), nullable=False)
+    expires_at = Column(DateTime, nullable=False)      # OTP validity window
+    attempts = Column(Integer, default=0, nullable=False)  # wrong-code guesses
+    verified_at = Column(DateTime, nullable=True)
+    # Issued only after the code is verified; consumed when the password is set.
+    reset_token = Column(String(64), nullable=True, index=True)
+    reset_expires_at = Column(DateTime, nullable=True)
+    consumed_at = Column(DateTime, nullable=True)       # password actually changed
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    employee = relationship("Employee")
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 
