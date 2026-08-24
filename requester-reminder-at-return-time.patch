@@ -1,26 +1,24 @@
 diff --git a/app/routes/gatepass.py b/app/routes/gatepass.py
-index 4dff131..ab74637 100644
+index 2a43fea..3a8a915 100644
 --- a/app/routes/gatepass.py
 +++ b/app/routes/gatepass.py
-@@ -606,6 +606,17 @@ async def api_set_approver(request: Request, user: Employee = Depends(get_curren
+@@ -607,6 +607,15 @@ async def api_set_approver(request: Request, user: Employee = Depends(get_curren
  def run_overdue_check(db: Session) -> dict:
      """Nudge approver, HR and requester about gatepasses that never came back.
  
 +    Two different clocks:
 +      - The REQUESTER is reminded the moment they pass their own declared
-+        return time (expected_back_at), with no grace window. The point is to
-+        nudge them at the time they themselves said they'd be back, not a
-+        quarter-hour later.
++        return time (expected_back_at), with no grace window — nudge them at
++        the time they themselves said they'd be back, not a quarter-hour later.
 +      - The APPROVER and HR only escalate once the pass is genuinely overdue —
 +        past expected_back_at + OVERDUE_GRACE_MIN. Unchanged.
 +    So the query selects anything past its declared return time, and the grace
-+    gate lives inside the loop guarding only the approver/HR legs. Given a
-+    ~15-min pinger, "at their return time" means the first run at or after it.
++    gate lives inside the loop guarding only the approver/HR legs.
 +
      Each recipient has its own stamp so a failing send for one doesn't block
      the others, and a stamp is only set when a channel actually DELIVERED —
      otherwise the next run retries. Setting the stamp on attempt is precisely
-@@ -614,13 +625,15 @@ def run_overdue_check(db: Session) -> dict:
+@@ -615,13 +624,15 @@ def run_overdue_check(db: Session) -> dict:
      from ..services import wati
      from ..services.portal_notify import (notify_gatepass_overdue,
                                            notify_gatepass_return_reminder)
@@ -38,7 +36,7 @@ index 4dff131..ab74637 100644
      sent = {"approver": 0, "hr": 0, "requester": 0, "checked": len(rows),
              "multi_day_skipped": 0, "whatsapp": wati.configured()}
  
-@@ -638,15 +651,23 @@ def run_overdue_check(db: Session) -> dict:
+@@ -639,15 +650,23 @@ def run_overdue_check(db: Session) -> dict:
      hr_phone = os.getenv("GATEPASS_HR_PHONE", "")
  
      for o in rows:
@@ -64,7 +62,7 @@ index 4dff131..ab74637 100644
          if multi:
              sent["multi_day_skipped"] += 1
              db.commit()
-@@ -656,14 +677,14 @@ def run_overdue_check(db: Session) -> dict:
+@@ -657,14 +676,14 @@ def run_overdue_check(db: Session) -> dict:
              ap = o.approver
              if _deliver(lambda: (notify_gatepass_overdue(o, ap.email, "approver"), True)[1],
                          lambda: wati.outpass_overdue(ap.name, ap.phone, o, late, db)):

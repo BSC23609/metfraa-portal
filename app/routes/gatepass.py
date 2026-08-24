@@ -607,6 +607,15 @@ async def api_set_approver(request: Request, user: Employee = Depends(get_curren
 def run_overdue_check(db: Session) -> dict:
     """Nudge approver, HR and requester about gatepasses that never came back.
 
+    Two different clocks:
+      - The REQUESTER is reminded the moment they pass their own declared
+        return time (expected_back_at), with no grace window — nudge them at
+        the time they themselves said they'd be back, not a quarter-hour later.
+      - The APPROVER and HR only escalate once the pass is genuinely overdue —
+        past expected_back_at + OVERDUE_GRACE_MIN. Unchanged.
+    So the query selects anything past its declared return time, and the grace
+    gate lives inside the loop guarding only the approver/HR legs.
+
     Each recipient has its own stamp so a failing send for one doesn't block
     the others, and a stamp is only set when a channel actually DELIVERED —
     otherwise the next run retries. Setting the stamp on attempt is precisely
@@ -615,13 +624,15 @@ def run_overdue_check(db: Session) -> dict:
     from ..services import wati
     from ..services.portal_notify import (notify_gatepass_overdue,
                                           notify_gatepass_return_reminder)
-    cutoff = datetime.utcnow() - timedelta(minutes=OVERDUE_GRACE_MIN)
+    now = datetime.utcnow()
+    # Anything past its DECLARED return time — the grace gate moved into the
+    # loop (see below) so the requester leg can fire before it.
     rows = (db.query(OutpassRequest)
             .filter(OutpassRequest.type == "gatepass",
                     OutpassRequest.status == "approved",
                     OutpassRequest.returned_at.is_(None),
                     OutpassRequest.expected_back_at.isnot(None),
-                    OutpassRequest.expected_back_at < cutoff).all())
+                    OutpassRequest.expected_back_at < now).all())
     sent = {"approver": 0, "hr": 0, "requester": 0, "checked": len(rows),
             "multi_day_skipped": 0, "whatsapp": wati.configured()}
 
@@ -639,14 +650,22 @@ def run_overdue_check(db: Session) -> dict:
     hr_phone = os.getenv("GATEPASS_HR_PHONE", "")
 
     for o in rows:
-        late = int((datetime.utcnow() - o.expected_back_at).total_seconds() // 60)
+        late = int((now - o.expected_back_at).total_seconds() // 60)
         multi = _is_multi_day(o)
+        overdue = late >= OVERDUE_GRACE_MIN
 
+        # Requester — reminded at their own declared return time, no grace.
         if not o.requester_reminder_at and o.requester:
             if _deliver(lambda: (notify_gatepass_return_reminder(o), True)[1],
                         lambda: wati.gatepass_return_reminder(o, late, db)):
-                o.requester_reminder_at = datetime.utcnow()
+                o.requester_reminder_at = now
                 sent["requester"] += 1
+
+        # Approver + HR — escalate only once genuinely overdue. A pass past its
+        # return time but still inside the grace is reminder-only for now.
+        if not overdue:
+            db.commit()
+            continue
 
         if multi:
             sent["multi_day_skipped"] += 1
@@ -657,14 +676,14 @@ def run_overdue_check(db: Session) -> dict:
             ap = o.approver
             if _deliver(lambda: (notify_gatepass_overdue(o, ap.email, "approver"), True)[1],
                         lambda: wati.outpass_overdue(ap.name, ap.phone, o, late, db)):
-                o.overdue_alert_at = datetime.utcnow()
+                o.overdue_alert_at = now
                 sent["approver"] += 1
 
         if not o.hr_alert_at:
             if _deliver(lambda: (notify_gatepass_overdue(o, None, "hr"), True)[1],
                         lambda: wati.outpass_overdue(hr_name, hr_phone, o, late, db)
                                  if hr_phone else False):
-                o.hr_alert_at = datetime.utcnow()
+                o.hr_alert_at = now
                 sent["hr"] += 1
         db.commit()
     db.commit()
