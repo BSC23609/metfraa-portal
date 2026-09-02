@@ -1,0 +1,67 @@
+diff --git a/app/routes/tgt26.py b/app/routes/tgt26.py
+index d86e91f..9552d9e 100644
+--- a/app/routes/tgt26.py
++++ b/app/routes/tgt26.py
+@@ -168,6 +168,29 @@ def _send_session_text(phone: str, message: str, db: Session) -> None:
+         db.rollback()
+ 
+ 
++@router.get("/tgt26/wati-webhook")
++def wati_webhook_probe():
++    """Some dashboards validate a webhook URL with a GET before saving.
++    Answer politely instead of 405 so the URL can be registered."""
++    return {"ok": True, "hint": "WATI must POST message events here"}
++
++
++def _extract_text(data: dict) -> str:
++    """WATI payload shapes vary by event and tenant version. Quick-reply taps
++    have arrived as plain `text`, as type=button with `buttonText`, and nested
++    under interactive/button/listReply objects. Take the first non-empty."""
++    for v in (data.get("text"), data.get("buttonText"),
++              (data.get("button") or {}).get("text")
++              if isinstance(data.get("button"), dict) else None,
++              (data.get("interactiveButtonReply") or {}).get("title")
++              if isinstance(data.get("interactiveButtonReply"), dict) else None,
++              (data.get("listReply") or {}).get("title")
++              if isinstance(data.get("listReply"), dict) else None):
++        if v and str(v).strip():
++            return str(v).strip()
++    return ""
++
++
+ @router.post("/tgt26/wati-webhook")
+ async def wati_webhook(request: Request, db: Session = Depends(get_db)):
+     """WATI dashboard → Webhooks → "Message received" → this URL.
+@@ -175,15 +198,29 @@ async def wati_webhook(request: Request, db: Session = Depends(get_db)):
+     Two-step capture: the "Need Changes" quick-reply creates an
+     awaiting_details row and the bot asks for specifics; the sender's next
+     text message fills it in. Always returns 200 — WATI retries non-200s.
++
++    Every hit is audited to wa_log (template=tgt26_webhook_in) with a slice of
++    the raw payload, so "did WATI call us at all?" is answerable from SQL:
++        SELECT * FROM wa_log WHERE template='tgt26_webhook_in'
++        ORDER BY id DESC LIMIT 5;
+     """
++    raw = await request.body()
+     try:
+         data = await request.json()
+     except Exception:
+-        return {"ok": True}
++        data = {}
++    phone = re.sub(r"\D", "", str(data.get("waId")
++                                  or data.get("whatsappNumber") or ""))
++    text = _extract_text(data)
++    try:
++        db.add(WaLog(phone=(phone or "?")[:32], template="tgt26_webhook_in",
++                     result="received",
++                     detail=f"text={text[:80]!r} raw={raw[:380]!r}"))
++        db.commit()
++    except Exception:
++        db.rollback()
+     if data.get("owner") is True:  # our own outbound messages echo back too
+         return {"ok": True}
+-    phone = re.sub(r"\D", "", str(data.get("waId") or ""))
+-    text = str(data.get("text") or "").strip()
+     if not phone or not text:
+         return {"ok": True}
+ 
