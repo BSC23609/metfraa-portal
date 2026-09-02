@@ -889,6 +889,33 @@ async def api_settle(sub_id: int, request: Request,
         "message": "Settlement filed — awaiting review."}}
 
 
+def _od_fetch(paths: list) -> bytes | None:
+    """Try each candidate OneDrive path in turn; return the first that exists.
+
+    Migrated claims store a portal-scheme path (or a placeholder) that the old
+    files were never at — the Node app synced them under
+    <root>/<Employee> (<code>)/Reports|Uploads/. So we try the stored path
+    first (correct for new claims) and fall back to the reconstructed legacy
+    path (correct for migrated ones)."""
+    for pth in paths:
+        if not pth:
+            continue
+        try:
+            data = _od.download_from_path(pth)
+        except Exception:
+            data = None
+        if data:
+            return data
+    return None
+
+
+def _emp_name_code(db, sub):
+    e = sub.employee or (db.query(Employee).filter(Employee.id == sub.employee_id).first())
+    name = (e.name if e else None) or sub.employee_name or "Unknown"
+    code = (e.employee_code if e else None)
+    return name, code
+
+
 @router.get("/api/submissions/{sub_id}/pdf")
 def api_submission_pdf(sub_id: int, request: Request, download: str | None = None,
                        user=Depends(get_optional_user), db: Session = Depends(get_db)):
@@ -916,26 +943,24 @@ def api_submission_pdf(sub_id: int, request: Request, download: str | None = Non
     disp = "attachment" if download else "inline"
     fname = f"{(sub.reference or 'report')}.pdf"
 
-    # 1. the stored OneDrive copy
+    # 1. the stored OneDrive copy, or the legacy per-employee location
     path = sub.pdf_web_url
-    if path:
-        if path.startswith("http"):
-            # Stored as a share link — hand it back for the browser to open.
-            return {"pdf_path": path}
-        try:
-            data = _od.download_from_path(path)
-        except Exception:
-            data = None
-        if data:
-            return _R(content=data, media_type="application/pdf",
-                      headers={"Content-Disposition": f'{disp}; filename="{fname}"',
-                               "Cache-Control": "private, max-age=3600"})
+    if path and path.startswith("http"):
+        return {"pdf_path": path}
+    from ..routes.expense import _artifacts
+    art = _artifacts()
+    name, code = _emp_name_code(db, sub)
+    candidates = [path, art.legacy_report_path(name, code, sub.reference)]
+    data = _od_fetch(candidates)
+    if data:
+        return _R(content=data, media_type="application/pdf",
+                  headers={"Content-Disposition": f'{disp}; filename="{fname}"',
+                           "Cache-Control": "private, max-age=3600"})
 
     # 2. regenerate on the fly so the button never dead-ends
     try:
-        from ..routes.expense import _artifacts
         meta = FORM_META.get(sub.form_type) or {}
-        pdf = _artifacts().generate_expense_pdf(sub, meta.get("title", sub.form_type))
+        pdf = art.generate_expense_pdf(sub, meta.get("title", sub.form_type))
     except Exception as e:
         log.error("[expense] pdf regen failed for %s: %s", sub.reference, e, exc_info=True)
         return _err(502, "Could not produce the report just now — please try again.")
@@ -959,7 +984,10 @@ def api_attachment(sub_id: int, att_id: int, request: Request,
                  ExpenseAttachment.submission_id == sub.id).first())
     if not a:
         return _err(404, "Not found")
-    data = _od.download_from_path(a.onedrive_path)
+    from ..routes.expense import _artifacts
+    name, code = _emp_name_code(db, sub)
+    legacy = _artifacts().legacy_bill_path(name, code, sub.reference, a.filename)
+    data = _od_fetch([a.onedrive_path, legacy])
     if data is None:
         return _err(404, "File not found in OneDrive")
     from fastapi.responses import Response as _Resp

@@ -347,3 +347,31 @@ def build_consolidated_pdf(report, employee, rows: list) -> tuple[bytes, int]:
 
     doc.build(el)
     return buf.getvalue(), doc.page
+
+
+def _safe_name(name: str) -> str:
+    """Match the OLD Node app's safeName() exactly, so a legacy OneDrive path
+    reconstructs byte-for-byte: forbidden chars -> '-', whitespace collapsed,
+    trimmed, capped at 120."""
+    import re
+    out = re.sub(r'[\\/:*?"<>|]', "-", str(name or "Unknown"))
+    out = re.sub(r"\s+", " ", out).strip()
+    return out[:120]
+
+
+def legacy_employee_folder(name: str, code: str | None) -> str:
+    """<root>/<name> (<code>) — the layout the Node app synced to, and where
+    every MIGRATED claim's files actually live. New portal claims use
+    submission_folder() instead; this exists only to reach the old files."""
+    label = _safe_name(name)
+    if code:
+        label += f" ({_safe_name(code)})"
+    return f"{expense_root()}/{label}"
+
+
+def legacy_report_path(name: str, code: str | None, reference: str) -> str:
+    return f"{legacy_employee_folder(name, code)}/Reports/{reference}.pdf"
+
+
+def legacy_bill_path(name: str, code: str | None, reference: str, filename: str) -> str:
+    return f"{legacy_employee_folder(name, code)}/Uploads/{reference}__{filename}"
