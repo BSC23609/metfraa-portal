@@ -889,6 +889,60 @@ async def api_settle(sub_id: int, request: Request,
         "message": "Settlement filed — awaiting review."}}
 
 
+@router.get("/api/submissions/{sub_id}/pdf")
+def api_submission_pdf(sub_id: int, request: Request, download: str | None = None,
+                       user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    """The approval PDF for one submission.
+
+    The SPA links here from both the "download report" button and the post-
+    submit confirmation. It was never routed — the request fell through to
+    FastAPI's default 404 ({"detail":"Not Found"}), which is why the file
+    being in OneDrive made no difference: nothing here ran.
+
+    Prefers the stored OneDrive copy; if that's missing (older rows, a failed
+    upload) it regenerates from the submission so the download still works.
+    """
+    from fastapi.responses import Response as _R
+
+    blocked = _guard(request, user, db)
+    if blocked:
+        return blocked
+    sub = db.query(ExpenseSubmission).filter(ExpenseSubmission.id == sub_id).first()
+    if not sub:
+        return _err(404, "Submission not found.")
+    if sub.employee_id != user.id and not _is_admin(db, user):
+        return _err(403, "You can only open your own reports.")
+
+    disp = "attachment" if download else "inline"
+    fname = f"{(sub.reference or 'report')}.pdf"
+
+    # 1. the stored OneDrive copy
+    path = sub.pdf_web_url
+    if path:
+        if path.startswith("http"):
+            # Stored as a share link — hand it back for the browser to open.
+            return {"pdf_path": path}
+        try:
+            data = _od.download_from_path(path)
+        except Exception:
+            data = None
+        if data:
+            return _R(content=data, media_type="application/pdf",
+                      headers={"Content-Disposition": f'{disp}; filename="{fname}"',
+                               "Cache-Control": "private, max-age=3600"})
+
+    # 2. regenerate on the fly so the button never dead-ends
+    try:
+        from ..routes.expense import _artifacts
+        meta = FORM_META.get(sub.form_type) or {}
+        pdf = _artifacts().generate_expense_pdf(sub, meta.get("title", sub.form_type))
+    except Exception as e:
+        log.error("[expense] pdf regen failed for %s: %s", sub.reference, e, exc_info=True)
+        return _err(502, "Could not produce the report just now — please try again.")
+    return _R(content=pdf, media_type="application/pdf",
+              headers={"Content-Disposition": f'{disp}; filename="{fname}"'})
+
+
 @router.get("/api/submissions/{sub_id}/attachment/{att_id}")
 def api_attachment(sub_id: int, att_id: int, request: Request,
                    user=Depends(get_optional_user), db: Session = Depends(get_db)):
