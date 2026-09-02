@@ -1896,9 +1896,19 @@ def _rollup_for_period(db: Session, period: str) -> list[dict]:
     """
     rows = (db.query(ExpenseSubmission)
             .filter(ExpenseSubmission.period == period).all())
-    by_emp: dict[int, dict] = {}
+
+    # Group by a stable person-key, not raw employee_id: a duplicate employee
+    # record (same person, two ids — e.g. MET114 vs MET-114) would otherwise
+    # split into two wrap-up rows. Prefer email; fall back to id when a row has
+    # no email so two people can't wrongly collapse. Run
+    # scripts/check_duplicate_employees.py to fix the underlying duplicate.
+    def _pkey(sub):
+        em = (sub.employee_email or "").strip().lower()
+        return ("email:" + em) if em else ("id:" + str(sub.employee_id))
+
+    by_emp: dict[str, dict] = {}
     for s in rows:
-        r = by_emp.setdefault(s.employee_id, {
+        r = by_emp.setdefault(_pkey(s), {
             "employee_id": s.employee_id, "employee_name": s.employee_name,
             "employee_email": s.employee_email, "employee_code": None,
             "total": 0, "pending_count": 0, "approved_count": 0, "settled_count": 0,
