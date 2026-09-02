@@ -763,3 +763,51 @@ class WaLog(Base):
     result = Column(String(24), index=True)   # sent|declined|http_error|error|no_phone|skipped
     detail = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class Tgt26Pass(Base):
+    """Team Get Together 2026 — one row per registered employee's event pass.
+
+    Seeded from scripts/tgt26_manifest.csv by scripts/tgt26_setup.py. The
+    pass_id carries an unguessable hash suffix, which is the authorisation for
+    the public verify/check-in/download routes (same principle as the gatepass
+    return_token: forcing a login at a venue gate means the feature goes unused).
+    """
+    __tablename__ = "tgt26_passes"
+
+    pass_id = Column(String(32), primary_key=True)
+    sno = Column(Integer, nullable=False)
+    company = Column(String(8), nullable=False)
+    name = Column(String(120), nullable=False)
+    designation = Column(String(120))
+    department = Column(String(64))
+    spouse = Column(Boolean, nullable=False, default=False)
+    k5 = Column(Integer, nullable=False, default=0)      # kids under 5
+    k12 = Column(Integer, nullable=False, default=0)     # kids under 12
+    k12p = Column(Integer, nullable=False, default=0)    # kids above 12
+    total_attendees = Column(Integer, nullable=False)
+    mobile = Column(String(16), nullable=False, index=True)
+    pass_sent_at = Column(DateTime, nullable=True)       # stamped by /tgt26/send-passes
+    checked_in_at = Column(DateTime, nullable=True)      # stamped at the gate
+
+
+class Tgt26ChangeRequest(Base):
+    """Pass change requests captured from the WhatsApp "Need Changes" button.
+
+    Two-step: the button tap creates a row with status=awaiting_details and the
+    bot asks for specifics; the sender's next free-text message fills
+    requested_change and flips status to received. HR reviews at
+    /tgt26/change-requests and marks rows actioned.
+    """
+    __tablename__ = "tgt26_change_requests"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    phone = Column(String(16), nullable=False, index=True)
+    employee_name = Column(String(120))
+    pass_id = Column(String(32))
+    requested_change = Column(Text)
+    status = Column(String(24), nullable=False, default="awaiting_details",
+                    index=True)  # awaiting_details | received | actioned
+    received_at = Column(DateTime, nullable=True)
+    action_note = Column(Text)

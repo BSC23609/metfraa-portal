@@ -27,6 +27,7 @@ from .routes import site_visits as site_visits_routes
 from .routes import cron as cron_routes
 from .routes import gatepass as gatepass_routes
 from .routes import gatepass_public as gatepass_public_routes
+from .routes import tgt26 as tgt26_routes
 from .routes import ehs as ehs_routes
 from .routes import ehs_ui as ehs_ui_routes
 from .routes import expense as expense_routes
@@ -116,6 +117,7 @@ app.include_router(cron_routes.router)
 app.include_router(gatepass_routes.router)
 # Root-mounted: WhatsApp button URLs may only vary in the last path segment.
 app.include_router(gatepass_public_routes.router)
+app.include_router(tgt26_routes.router)   # Team Get Together 2026 passes (same rationale)
 app.include_router(ehs_ui_routes.router)   # parity pages + contract (must precede ehs_routes)
 app.include_router(ehs_routes.router)
 app.include_router(expense_ui_routes.router)   # parity SPA + bootstrap (precedes expense_routes)

@@ -256,3 +256,39 @@ arrived (`no_phone`, `declined`, or `http_error` tells you which).
 
 **Tunables (env, all optional):** `OTP_EXPIRY_MIN` (10), `OTP_MAX_ATTEMPTS`
 (5), `OTP_RESEND_COOLDOWN_SEC` (30), `OTP_RESET_TOKEN_EXPIRY_MIN` (15).
+
+---
+
+## 6. `tgt26_event_pass` — Team Get Together 2026 entry pass
+
+One-off event template (06-Sep-2026). Category **UTILITY**, language English.
+
+**Body**
+
+```
+Dear {{name}},
+
+Greetings from Bharat Steel Group! You are cordially invited to *Team Get Together 2026* on *Sunday, 06 September 2026* at *PGC, Ponneri*.
+
+Your event entry pass ({{total}} attendee(s)) is ready. Please download it using the button below and present it at the entry gate on the event day.
+
+— HR Team, Bharat Steel Group
+```
+
+**Buttons**
+
+1. Visit Website → **Dynamic** → label `Download Pass` → URL
+   `https://app.metfraa.com/tgt26/pass/{{pass_file}}`
+2. Quick Reply → label `Need Changes`
+
+Variable names must be exactly `name`, `total`, `pass_file` — the app sends
+them by name from `/tgt26/send-passes`. Override the template name per
+environment with `WATI_TGT26_PASS_TPL` if Meta approval lands differently.
+
+**Webhook** (for the Need Changes capture): WATI dashboard → Webhooks →
+*Message Received* → `https://app.metfraa.com/tgt26/wati-webhook`.
+
+**Sending**: after `python scripts/tgt26_setup.py` and deploying the pass
+images, POST `/tgt26/send-passes` as an admin — first with the default
+`?dry_run=true` to see the recipient list, then `?dry_run=false` to send.
+Delivery lands in `wa_log` like every other template.

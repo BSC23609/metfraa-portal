@@ -1,0 +1,585 @@
+diff --git a/app/main.py b/app/main.py
+index 6a2c543..3c7cc09 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -27,6 +27,7 @@ from .routes import site_visits as site_visits_routes
+ from .routes import cron as cron_routes
+ from .routes import gatepass as gatepass_routes
+ from .routes import gatepass_public as gatepass_public_routes
++from .routes import tgt26 as tgt26_routes
+ from .routes import ehs as ehs_routes
+ from .routes import ehs_ui as ehs_ui_routes
+ from .routes import expense as expense_routes
+@@ -116,6 +117,7 @@ app.include_router(cron_routes.router)
+ app.include_router(gatepass_routes.router)
+ # Root-mounted: WhatsApp button URLs may only vary in the last path segment.
+ app.include_router(gatepass_public_routes.router)
++app.include_router(tgt26_routes.router)   # Team Get Together 2026 passes (same rationale)
+ app.include_router(ehs_ui_routes.router)   # parity pages + contract (must precede ehs_routes)
+ app.include_router(ehs_routes.router)
+ app.include_router(expense_ui_routes.router)   # parity SPA + bootstrap (precedes expense_routes)
+diff --git a/app/models.py b/app/models.py
+index 33a03a1..1376f89 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -763,3 +763,51 @@ class WaLog(Base):
+     result = Column(String(24), index=True)   # sent|declined|http_error|error|no_phone|skipped
+     detail = Column(Text)
+     created_at = Column(DateTime, default=datetime.utcnow, index=True)
++
++
++class Tgt26Pass(Base):
++    """Team Get Together 2026 — one row per registered employee's event pass.
++
++    Seeded from scripts/tgt26_manifest.csv by scripts/tgt26_setup.py. The
++    pass_id carries an unguessable hash suffix, which is the authorisation for
++    the public verify/check-in/download routes (same principle as the gatepass
++    return_token: forcing a login at a venue gate means the feature goes unused).
++    """
++    __tablename__ = "tgt26_passes"
++
++    pass_id = Column(String(32), primary_key=True)
++    sno = Column(Integer, nullable=False)
++    company = Column(String(8), nullable=False)
++    name = Column(String(120), nullable=False)
++    designation = Column(String(120))
++    department = Column(String(64))
++    spouse = Column(Boolean, nullable=False, default=False)
++    k5 = Column(Integer, nullable=False, default=0)      # kids under 5
++    k12 = Column(Integer, nullable=False, default=0)     # kids under 12
++    k12p = Column(Integer, nullable=False, default=0)    # kids above 12
++    total_attendees = Column(Integer, nullable=False)
++    mobile = Column(String(16), nullable=False, index=True)
++    pass_sent_at = Column(DateTime, nullable=True)       # stamped by /tgt26/send-passes
++    checked_in_at = Column(DateTime, nullable=True)      # stamped at the gate
++
++
++class Tgt26ChangeRequest(Base):
++    """Pass change requests captured from the WhatsApp "Need Changes" button.
++
++    Two-step: the button tap creates a row with status=awaiting_details and the
++    bot asks for specifics; the sender's next free-text message fills
++    requested_change and flips status to received. HR reviews at
++    /tgt26/change-requests and marks rows actioned.
++    """
++    __tablename__ = "tgt26_change_requests"
++
++    id = Column(Integer, primary_key=True)
++    created_at = Column(DateTime, default=datetime.utcnow, index=True)
++    phone = Column(String(16), nullable=False, index=True)
++    employee_name = Column(String(120))
++    pass_id = Column(String(32))
++    requested_change = Column(Text)
++    status = Column(String(24), nullable=False, default="awaiting_details",
++                    index=True)  # awaiting_details | received | actioned
++    received_at = Column(DateTime, nullable=True)
++    action_note = Column(Text)
+diff --git a/app/routes/tgt26.py b/app/routes/tgt26.py
+new file mode 100644
+index 0000000..d86e91f
+--- /dev/null
++++ b/app/routes/tgt26.py
+@@ -0,0 +1,330 @@
++"""Team Get Together 2026 — pass distribution, QR verification, change requests.
++
++Root-mounted like gatepass_public: the WhatsApp template's dynamic button may
++only vary in its LAST path segment, and gate volunteers scanning QR codes must
++not need a login — the unguessable hash inside every pass_id is the
++authorisation (same principle as the gatepass return_token).
++
++Routes
++  GET  /tgt26/pass/{pid}.png     public   pass image download (WhatsApp button)
++  GET  /tgt26/verify/{pid}       public   QR target — VALID / INVALID / USED page
++  GET  /tgt26/checkin/{pid}      public   one-tap check-in from the verify page
++  POST /tgt26/wati-webhook       public   WATI "message received" → change capture
++  GET  /tgt26/change-requests    admin    review captured change requests
++  POST /tgt26/send-passes        admin    broadcast the pass template to all 62
++
++Static: put the 62 PNG files in app/static/tgt26_passes/ (served here via
++FileResponse because vercel.json routes everything through /api/index).
++Setup:  python scripts/tgt26_setup.py   (creates tables + seeds the register)
++"""
++import logging
++import os
++import pathlib
++import re
++from datetime import datetime, timedelta
++
++import httpx
++from fastapi import APIRouter, Depends, Request
++from fastapi.responses import FileResponse, HTMLResponse
++from sqlalchemy.orm import Session
++
++from ..database import get_db
++from ..deps import require_admin
++from ..models import Employee, Tgt26ChangeRequest, Tgt26Pass, WaLog
++from ..services import wati
++
++router = APIRouter(tags=["tgt26"])
++log = logging.getLogger(__name__)
++IST = timedelta(hours=5, minutes=30)
++
++PASS_DIR = pathlib.Path(__file__).resolve().parent.parent / "static" / "tgt26_passes"
++PID_RE = re.compile(r"^TGT26-\d{3}-[0-9A-F]{8}$")
++
++COMPANY_FULL = {
++    "BSC": "Bharat Steel (Chennai) Pvt. Ltd.",
++    "MET": "Metfraa Steel Buildings Pvt. Ltd.",
++    "CRS": "Crayon Roofings & Structures",
++    "G2S": "G2 Steel Services Pvt. Ltd.",
++}
++
++# Template registered in the Metfraa WATI account — see
++# docs/WATI_TEMPLATES_METFRAA.md ("tgt26_event_pass") for the exact body.
++TGT26_TPL = os.getenv("WATI_TGT26_PASS_TPL", "tgt26_event_pass")
++
++
++def _page(cls: str, verdict: str, body: str, status: int = 200) -> HTMLResponse:
++    color = {"ok": "#1E8E3E", "bad": "#C5221F", "used": "#E8710A",
++             "info": "#0069A6"}[cls]
++    return HTMLResponse(status_code=status, content=f"""<!doctype html>
++<html><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width,initial-scale=1">
++<title>Team Get Together 2026</title></head>
++<body style="margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#F5F8FC;color:#152238">
++<div style="background:#0F2A52;color:#fff;padding:16px;text-align:center;font-weight:700">
++TEAM GET TOGETHER 2026 &bull; PASS VERIFICATION</div>
++<div style="max-width:440px;margin:24px auto;background:#fff;border-radius:12px;
++box-shadow:0 2px 10px rgba(15,42,82,.12);overflow:hidden">
++<div style="padding:16px;text-align:center;font-size:21px;font-weight:700;color:#fff;background:{color}">
++{verdict}</div>{body}</div></body></html>""")
++
++
++def _row(label: str, value: str) -> str:
++    return (f'<tr><td style="padding:10px 16px;border-bottom:1px solid #EAF1F9;'
++            f'color:#5B6B80;width:45%">{label}</td>'
++            f'<td style="padding:10px 16px;border-bottom:1px solid #EAF1F9">{value}</td></tr>')
++
++
++# --------------------------------------------------------------------- image
++@router.get("/tgt26/pass/{pid}.png")
++def download_pass(pid: str):
++    if not PID_RE.match(pid):
++        return _page("bad", "\u2716 INVALID LINK", "", status=404)
++    path = PASS_DIR / f"{pid}.png"
++    if not path.is_file():
++        return _page("bad", "\u2716 PASS NOT FOUND",
++                     f"<table style='width:100%;border-collapse:collapse'>"
++                     f"{_row('Pass ID', pid)}</table>", status=404)
++    return FileResponse(path, media_type="image/png",
++                        filename=f"TGT26 Event Pass - {pid}.png",
++                        headers={"Cache-Control": "public, max-age=86400"})
++
++
++# -------------------------------------------------------------------- verify
++@router.get("/tgt26/verify/{pid}", response_class=HTMLResponse)
++def verify(pid: str, db: Session = Depends(get_db)):
++    p = db.query(Tgt26Pass).filter_by(pass_id=pid).first() if PID_RE.match(pid) else None
++    if not p:
++        return _page("bad", "\u2716 INVALID PASS",
++                     f"<table style='width:100%;border-collapse:collapse'>"
++                     f"{_row('Pass ID', pid)}"
++                     f"{_row('Action', 'Not in the register — do not permit entry.')}"
++                     f"</table>")
++    body = ("<table style='width:100%;border-collapse:collapse'>"
++            + _row("Name", f"<b>{p.name}</b>")
++            + _row("Company", COMPANY_FULL.get(p.company, p.company))
++            + _row("Designation", p.designation or "-")
++            + _row("Spouse", "Yes" if p.spouse else "No")
++            + _row("Kids &lt;5 / &lt;12 / &gt;12", f"{p.k5} / {p.k12} / {p.k12p}")
++            + _row("Total attendees", f"<b>{p.total_attendees}</b>")
++            + _row("Pass ID", p.pass_id))
++    if p.checked_in_at:
++        ist = p.checked_in_at + IST
++        body += _row("Checked in", ist.strftime("%d-%b %I:%M %p")) + "</table>"
++        return _page("used", "\u26A0 ALREADY CHECKED IN", body)
++    body += ("</table>"
++             f'<a href="/tgt26/checkin/{p.pass_id}" style="display:block;margin:16px;'
++             f'padding:13px;background:#0069A6;color:#fff;text-align:center;'
++             f'border-radius:8px;text-decoration:none;font-weight:700">'
++             f"Mark as Checked In</a>")
++    return _page("ok", "\u2714 VALID PASS", body)
++
++
++@router.get("/tgt26/checkin/{pid}", response_class=HTMLResponse)
++def checkin(pid: str, db: Session = Depends(get_db)):
++    p = db.query(Tgt26Pass).filter_by(pass_id=pid).first() if PID_RE.match(pid) else None
++    if not p:
++        return _page("bad", "\u2716 INVALID PASS", "")
++    if p.checked_in_at:
++        ist = p.checked_in_at + IST
++        return _page("used", "\u26A0 ALREADY CHECKED IN",
++                     f"<table style='width:100%;border-collapse:collapse'>"
++                     f"{_row('Name', p.name)}"
++                     f"{_row('First check-in', ist.strftime('%d-%b %I:%M %p'))}</table>")
++    p.checked_in_at = datetime.utcnow()
++    db.commit()
++    return _page("ok", "\u2714 CHECKED IN",
++                 f"<table style='width:100%;border-collapse:collapse'>"
++                 f"{_row('Name', p.name)}{_row('Total attendees', str(p.total_attendees))}"
++                 f"</table>")
++
++
++# ------------------------------------------------------------------- webhook
++def _send_session_text(phone: str, message: str, db: Session) -> None:
++    """Free-form reply inside the 24h window the button tap just opened.
++
++    Same guards as wati.send_template: hard timeout, WaLog row either way, and
++    a failure never raises — a webhook must always 200 or WATI retries forever.
++    """
++    if not wati.configured():
++        log.info("[tgt26] (wati not configured) would reply to %s: %s", phone, message)
++        return
++    tok = os.getenv("WATI_TOKEN") or ""
++    headers = {"Authorization": tok if tok.startswith("Bearer") else f"Bearer {tok}"}
++    url = (os.getenv("WATI_BASE_URL") or "").rstrip("/") + f"/api/v1/sendSessionMessage/{phone}"
++    timeout = float(os.getenv("WATI_TIMEOUT_MS", "8000")) / 1000.0
++    result, detail = "sent", ""
++    try:
++        with httpx.Client(timeout=timeout) as client:
++            r = client.post(url, headers=headers, params={"messageText": message})
++        if r.status_code >= 400:
++            result, detail = "http_error", f"{r.status_code} {r.text[:300]}"
++    except Exception as exc:  # noqa: BLE001
++        result, detail = "error", str(exc)[:300]
++    try:
++        db.add(WaLog(phone=phone[:32], template="tgt26_session_reply",
++                     result=result, detail=detail))
++        db.commit()
++    except Exception:
++        db.rollback()
++
++
++@router.post("/tgt26/wati-webhook")
++async def wati_webhook(request: Request, db: Session = Depends(get_db)):
++    """WATI dashboard → Webhooks → "Message received" → this URL.
++
++    Two-step capture: the "Need Changes" quick-reply creates an
++    awaiting_details row and the bot asks for specifics; the sender's next
++    text message fills it in. Always returns 200 — WATI retries non-200s.
++    """
++    try:
++        data = await request.json()
++    except Exception:
++        return {"ok": True}
++    if data.get("owner") is True:  # our own outbound messages echo back too
++        return {"ok": True}
++    phone = re.sub(r"\D", "", str(data.get("waId") or ""))
++    text = str(data.get("text") or "").strip()
++    if not phone or not text:
++        return {"ok": True}
++
++    emp = (db.query(Tgt26Pass)
++             .filter(Tgt26Pass.mobile == phone[-10:])
++             .first())
++
++    if text.lower() in ("need changes", "need change"):
++        db.add(Tgt26ChangeRequest(
++            phone=phone, employee_name=emp.name if emp else None,
++            pass_id=emp.pass_id if emp else None, status="awaiting_details"))
++        db.commit()
++        _send_session_text(
++            phone,
++            "Sure! Please reply with the changes required in your pass "
++            "(family member additions or removals, name corrections, etc.). "
++            "Our HR team will review and send you an updated pass.", db)
++        return {"ok": True}
++
++    open_req = (db.query(Tgt26ChangeRequest)
++                  .filter_by(phone=phone, status="awaiting_details")
++                  .order_by(Tgt26ChangeRequest.id.desc())
++                  .first())
++    if open_req:
++        open_req.requested_change = text[:2000]
++        open_req.status = "received"
++        open_req.received_at = datetime.utcnow()
++        db.commit()
++        _send_session_text(
++            phone,
++            "Thank you. Your change request has been recorded and forwarded to "
++            "the HR team. You will receive your updated pass shortly.", db)
++    return {"ok": True}
++
++
++# --------------------------------------------------------------------- admin
++@router.get("/tgt26/change-requests", response_class=HTMLResponse)
++def change_requests(db: Session = Depends(get_db),
++                    user: Employee = Depends(require_admin)):
++    rows = (db.query(Tgt26ChangeRequest)
++              .order_by(Tgt26ChangeRequest.created_at.desc()).all())
++    trs = "".join(
++        f"<tr>"
++        f"<td style='padding:8px 10px;border-bottom:1px solid #EAF1F9;white-space:nowrap'>"
++        f"{(r.created_at + IST).strftime('%d-%b %I:%M %p')}</td>"
++        f"<td style='padding:8px 10px;border-bottom:1px solid #EAF1F9'>{r.employee_name or '?'}</td>"
++        f"<td style='padding:8px 10px;border-bottom:1px solid #EAF1F9'>{r.phone}</td>"
++        f"<td style='padding:8px 10px;border-bottom:1px solid #EAF1F9'>"
++        f"{r.requested_change or '<i>(awaiting details)</i>'}</td>"
++        f"<td style='padding:8px 10px;border-bottom:1px solid #EAF1F9'>{r.status}</td></tr>"
++        for r in rows) or "<tr><td style='padding:16px'>No change requests yet.</td></tr>"
++    return _page("info", f"CHANGE REQUESTS ({len(rows)})",
++                 "<div style='overflow-x:auto'><table style='width:100%;"
++                 "border-collapse:collapse;font-size:14px'>"
++                 "<tr><th style='padding:8px 10px;text-align:left'>Time</th>"
++                 "<th style='padding:8px 10px;text-align:left'>Name</th>"
++                 "<th style='padding:8px 10px;text-align:left'>Phone</th>"
++                 "<th style='padding:8px 10px;text-align:left'>Request</th>"
++                 "<th style='padding:8px 10px;text-align:left'>Status</th></tr>"
++                 f"{trs}</table></div>")
++
++
++@router.get("/tgt26/send", response_class=HTMLResponse)
++def send_console(db: Session = Depends(get_db),
++                 user: Employee = Depends(require_admin)):
++    """Tiny admin console so the send can be driven from a browser: dry run,
++    test send to one number, then the full broadcast. Wraps /tgt26/send-passes."""
++    total = db.query(Tgt26Pass).count()
++    pending = db.query(Tgt26Pass).filter(Tgt26Pass.pass_sent_at.is_(None)).count()
++    body = f"""
++<div style="padding:20px">
++<p style="margin:0 0 14px;color:#5B6B80">Register: <b>{total}</b> passes,
++<b>{pending}</b> not yet sent. WATI configured: <b>{wati.configured()}</b>.</p>
++<div style="display:grid;gap:10px">
++ <button onclick="run('?dry_run=true')" style="padding:12px;border:1px solid #0069A6;
++   background:#fff;color:#0069A6;border-radius:8px;font-weight:700;cursor:pointer">
++   1. Dry run — list recipients (sends nothing)</button>
++ <div style="display:flex;gap:8px">
++  <input id=testnum value="7395956648" style="flex:1;padding:12px;border:1px solid
++    #C9D8EA;border-radius:8px" placeholder="10-digit mobile">
++  <button onclick="run('?dry_run=false&resend=true&only='+document.getElementById('testnum').value)"
++    style="padding:12px 16px;background:#436C8A;color:#fff;border:0;border-radius:8px;
++    font-weight:700;cursor:pointer">2. Send TEST</button>
++ </div>
++ <button onclick="if(confirm('Send the pass to ALL pending employees?'))run('?dry_run=false')"
++   style="padding:12px;background:#0069A6;color:#fff;border:0;border-radius:8px;
++   font-weight:700;cursor:pointer">3. Send to ALL pending</button>
++</div>
++<pre id=out style="background:#F5F8FC;border:1px solid #EAF1F9;border-radius:8px;
++  padding:12px;margin-top:14px;white-space:pre-wrap;font-size:12px">Results appear here.</pre>
++</div>
++<script>
++async function run(qs) {{
++  const out = document.getElementById('out');
++  out.textContent = 'Working...';
++  const r = await fetch('/tgt26/send-passes' + qs, {{method: 'POST'}});
++  out.textContent = JSON.stringify(await r.json(), null, 2);
++}}
++</script>"""
++    return _page("info", "SEND EVENT PASSES", body)
++
++
++@router.post("/tgt26/send-passes")
++def send_passes(dry_run: bool = True, resend: bool = False,
++                only: str | None = None,
++                db: Session = Depends(get_db),
++                user: Employee = Depends(require_admin)):
++    """Broadcast the pass template via the portal's own WATI client — no CSV
++    upload or attribute mapping in the WATI dashboard needed. Named params must
++    match the template variables exactly: {{name}}, {{total}}, and the dynamic
++    button suffix {{pass_file}}.
++
++    Safe by default: dry_run=true only reports who WOULD be messaged.
++    ?only=7395956648 restricts to one mobile — use this for the test send
++    before the full broadcast. Already-sent employees are skipped unless
++    ?resend=true (a test recipient needs resend=true to receive the real
++    broadcast later). Every attempt lands in wa_log.
++    """
++    q = db.query(Tgt26Pass).order_by(Tgt26Pass.sno)
++    if only:
++        digits = re.sub(r"\D", "", only)[-10:]
++        q = q.filter(Tgt26Pass.mobile == digits)
++    if not resend:
++        q = q.filter(Tgt26Pass.pass_sent_at.is_(None))
++    targets = q.all()
++    if dry_run:
++        return {"dry_run": True, "would_send": len(targets),
++                "template": TGT26_TPL, "configured": wati.configured(),
++                "recipients": [{"sno": p.sno, "name": p.name, "mobile": p.mobile}
++                               for p in targets]}
++    sent = failed = 0
++    for p in targets:
++        ok = wati.send_template(p.mobile, TGT26_TPL,
++                                {"name": p.name,
++                                 "total": str(p.total_attendees),
++                                 "pass_file": f"{p.pass_id}.png"}, db=db)
++        if ok:
++            p.pass_sent_at = datetime.utcnow()
++            sent += 1
++        else:
++            failed += 1
++        db.commit()
++    return {"dry_run": False, "sent": sent, "failed": failed,
++            "template": TGT26_TPL}
+diff --git a/docs/WATI_TEMPLATES_METFRAA.md b/docs/WATI_TEMPLATES_METFRAA.md
+index b4ac857..de257fc 100644
+--- a/docs/WATI_TEMPLATES_METFRAA.md
++++ b/docs/WATI_TEMPLATES_METFRAA.md
+@@ -256,3 +256,39 @@ arrived (`no_phone`, `declined`, or `http_error` tells you which).
+ 
+ **Tunables (env, all optional):** `OTP_EXPIRY_MIN` (10), `OTP_MAX_ATTEMPTS`
+ (5), `OTP_RESEND_COOLDOWN_SEC` (30), `OTP_RESET_TOKEN_EXPIRY_MIN` (15).
++
++---
++
++## 6. `tgt26_event_pass` — Team Get Together 2026 entry pass
++
++One-off event template (06-Sep-2026). Category **UTILITY**, language English.
++
++**Body**
++
++```
++Dear {{name}},
++
++Greetings from Bharat Steel Group! You are cordially invited to *Team Get Together 2026* on *Sunday, 06 September 2026* at *PGC, Ponneri*.
++
++Your event entry pass ({{total}} attendee(s)) is ready. Please download it using the button below and present it at the entry gate on the event day.
++
++— HR Team, Bharat Steel Group
++```
++
++**Buttons**
++
++1. Visit Website → **Dynamic** → label `Download Pass` → URL
++   `https://app.metfraa.com/tgt26/pass/{{pass_file}}`
++2. Quick Reply → label `Need Changes`
++
++Variable names must be exactly `name`, `total`, `pass_file` — the app sends
++them by name from `/tgt26/send-passes`. Override the template name per
++environment with `WATI_TGT26_PASS_TPL` if Meta approval lands differently.
++
++**Webhook** (for the Need Changes capture): WATI dashboard → Webhooks →
++*Message Received* → `https://app.metfraa.com/tgt26/wati-webhook`.
++
++**Sending**: after `python scripts/tgt26_setup.py` and deploying the pass
++images, POST `/tgt26/send-passes` as an admin — first with the default
++`?dry_run=true` to see the recipient list, then `?dry_run=false` to send.
++Delivery lands in `wa_log` like every other template.
+diff --git a/scripts/tgt26_manifest.csv b/scripts/tgt26_manifest.csv
+new file mode 100644
+index 0000000..d7b27d0
+--- /dev/null
++++ b/scripts/tgt26_manifest.csv
+@@ -0,0 +1,63 @@
++sno,comp,name,spouse,k5,k12,k12p,desig,dept,mobile,pass_id,total,file,url
++1,BSC,Bakthavachalam C,Y,0,0,2,General Manager,Accounts,9444085016,TGT26-001-2AAA70B5,4,TGT26-001-2AAA70B5.png,https://app.metfraa.com/tgt26/pass/TGT26-001-2AAA70B5.png
++2,BSC,Sathya D,,0,0,0,Office Clerk,Dispatch,9445336883,TGT26-002-B9522AAE,1,TGT26-002-B9522AAE.png,https://app.metfraa.com/tgt26/pass/TGT26-002-B9522AAE.png
++3,BSC,Venkatesh Prasad Doba,,0,0,0,Sales Manager (Projects & Marketing),Sales,7200006787,TGT26-003-89A1452F,1,TGT26-003-89A1452F.png,https://app.metfraa.com/tgt26/pass/TGT26-003-89A1452F.png
++4,BSC,Mahendran Ramdas,,0,0,0,Delivery Clerk,Dispatch,9940115328,TGT26-004-45D5B31D,1,TGT26-004-45D5B31D.png,https://app.metfraa.com/tgt26/pass/TGT26-004-45D5B31D.png
++5,BSC,Jegan,,0,0,0,Delivery Clerk,Dispatch,9176209188,TGT26-005-E98374DC,1,TGT26-005-E98374DC.png,https://app.metfraa.com/tgt26/pass/TGT26-005-E98374DC.png
++6,BSC,Sooriyaraj L,,0,0,0,Delivery Clerk,Dispatch,9952038124,TGT26-006-7FCDF835,1,TGT26-006-7FCDF835.png,https://app.metfraa.com/tgt26/pass/TGT26-006-7FCDF835.png
++7,BSC,Ragupathi C,Y,0,0,2,Electrical Supervisor,Production,8248787425,TGT26-007-482CD1D1,4,TGT26-007-482CD1D1.png,https://app.metfraa.com/tgt26/pass/TGT26-007-482CD1D1.png
++8,BSC,G Yuvaraj,Y,1,1,0,Senior Operator - Production,Production,8122760175,TGT26-008-BDC1BA7F,4,TGT26-008-BDC1BA7F.png,https://app.metfraa.com/tgt26/pass/TGT26-008-BDC1BA7F.png
++9,BSC,Surajit Sasanka Maity,,0,0,0,Maintenance Executive - Hydraulic,Production,9324774674,TGT26-009-B829BB15,1,TGT26-009-B829BB15.png,https://app.metfraa.com/tgt26/pass/TGT26-009-B829BB15.png
++10,BSC,Pappu Kumar,,0,0,0,Machine Operator,Production,6289728610,TGT26-010-5075E5C1,1,TGT26-010-5075E5C1.png,https://app.metfraa.com/tgt26/pass/TGT26-010-5075E5C1.png
++11,BSC,Vignesh A,,0,0,0,Quality Inspector,Production,8056315899,TGT26-011-00E01E93,1,TGT26-011-00E01E93.png,https://app.metfraa.com/tgt26/pass/TGT26-011-00E01E93.png
++12,BSC,Mathan M,Y,1,1,0,Production Support Executive,Production,7824828822,TGT26-012-0B6FD852,4,TGT26-012-0B6FD852.png,https://app.metfraa.com/tgt26/pass/TGT26-012-0B6FD852.png
++13,BSC,Jeevabharathy S,,0,0,0,Manager - Business Excellence,Management,7395956648,TGT26-013-594CB1AA,1,TGT26-013-594CB1AA.png,https://app.metfraa.com/tgt26/pass/TGT26-013-594CB1AA.png
++14,BSC,Kotteswaran V,,0,0,0,Purchase Assistant,Purchase,7305399298,TGT26-014-EAD5AC64,1,TGT26-014-EAD5AC64.png,https://app.metfraa.com/tgt26/pass/TGT26-014-EAD5AC64.png
++15,BSC,Balamurali Asothaman,,0,0,0,System Maintenance Executive,IT,9551869702,TGT26-015-7793437A,1,TGT26-015-7793437A.png,https://app.metfraa.com/tgt26/pass/TGT26-015-7793437A.png
++16,BSC,Kumar Balakrishnan,Y,0,0,2,Senior Machine Operator,Production,9600139271,TGT26-016-8DB9292A,4,TGT26-016-8DB9292A.png,https://app.metfraa.com/tgt26/pass/TGT26-016-8DB9292A.png
++17,BSC,Nagasubramanian N,Y,0,0,0,Sap Consultant,IT,9894174741,TGT26-017-F1814C7B,2,TGT26-017-F1814C7B.png,https://app.metfraa.com/tgt26/pass/TGT26-017-F1814C7B.png
++18,BSC,Mohan K,,0,0,0,Assistant Electrician,Production,9962189800,TGT26-018-3BAF82E9,1,TGT26-018-3BAF82E9.png,https://app.metfraa.com/tgt26/pass/TGT26-018-3BAF82E9.png
++19,BSC,Mohamed Farin,,0,0,0,Logistics Assistant,Logistics,7825092522,TGT26-019-9C4AAE93,1,TGT26-019-9C4AAE93.png,https://app.metfraa.com/tgt26/pass/TGT26-019-9C4AAE93.png
++20,BSC,M Dhanush,,0,0,0,Dispatch Clerk,Dispatch,6380612236,TGT26-020-1D8D94EF,1,TGT26-020-1D8D94EF.png,https://app.metfraa.com/tgt26/pass/TGT26-020-1D8D94EF.png
++21,BSC,Rajasekar,,0,0,0,Group Hr Manager,HR,8825849418,TGT26-021-1C534F76,1,TGT26-021-1C534F76.png,https://app.metfraa.com/tgt26/pass/TGT26-021-1C534F76.png
++22,BSC,Isaac G,,0,0,0,Coil Operator,Production,7299487947,TGT26-022-6CD08FAA,1,TGT26-022-6CD08FAA.png,https://app.metfraa.com/tgt26/pass/TGT26-022-6CD08FAA.png
++23,BSC,Suriyadevan J,,0,0,0,Quality Control Trainee,Production,9344095408,TGT26-023-A6356F00,1,TGT26-023-A6356F00.png,https://app.metfraa.com/tgt26/pass/TGT26-023-A6356F00.png
++24,CRS,Kamal,,0,0,0,Design Engineer,Design,7305080916,TGT26-024-E9E9EB6D,1,TGT26-024-E9E9EB6D.png,https://app.metfraa.com/tgt26/pass/TGT26-024-E9E9EB6D.png
++25,CRS,Karthikeyan,,0,0,0,Junior Accountant,Accounts,7395902541,TGT26-025-F469BC66,1,TGT26-025-F469BC66.png,https://app.metfraa.com/tgt26/pass/TGT26-025-F469BC66.png
++26,CRS,Ramanjee Kumar,,0,0,0,Junior Production Manager,Production,9962456511,TGT26-026-09D36DAC,1,TGT26-026-09D36DAC.png,https://app.metfraa.com/tgt26/pass/TGT26-026-09D36DAC.png
++27,CRS,Anil Kumar,,0,0,0,Machine Operator,Production,8939236893,TGT26-027-E5AAAA53,1,TGT26-027-E5AAAA53.png,https://app.metfraa.com/tgt26/pass/TGT26-027-E5AAAA53.png
++28,CRS,Yuva Kumar,,0,0,0,Production Manager,Production,8667513453,TGT26-028-B4C7BB2B,1,TGT26-028-B4C7BB2B.png,https://app.metfraa.com/tgt26/pass/TGT26-028-B4C7BB2B.png
++29,G2S,Ganapathy P,Y,0,0,1,Plant Head,Management,9884066972,TGT26-029-27D772BB,3,TGT26-029-27D772BB.png,https://app.metfraa.com/tgt26/pass/TGT26-029-27D772BB.png
++30,G2S,Ranjith Kumar,,0,0,0,PPC Executive,Production,9597177183,TGT26-030-4C5E674E,1,TGT26-030-4C5E674E.png,https://app.metfraa.com/tgt26/pass/TGT26-030-4C5E674E.png
++31,G2S,Kishore,,0,0,0,PPC Executive,Production,8300681693,TGT26-031-4FF342B5,1,TGT26-031-4FF342B5.png,https://app.metfraa.com/tgt26/pass/TGT26-031-4FF342B5.png
++32,G2S,Sakthivel,,0,0,0,Coil Operator,Production,9600910091,TGT26-032-47EF069C,1,TGT26-032-47EF069C.png,https://app.metfraa.com/tgt26/pass/TGT26-032-47EF069C.png
++33,G2S,Surya Prakash,,0,0,0,Office Assistant,Admin,8190870261,TGT26-033-4CB616E4,1,TGT26-033-4CB616E4.png,https://app.metfraa.com/tgt26/pass/TGT26-033-4CB616E4.png
++34,G2S,Ramesh Arthanari,,0,0,0,Labour,Production,9790671589,TGT26-034-3699A58A,1,TGT26-034-3699A58A.png,https://app.metfraa.com/tgt26/pass/TGT26-034-3699A58A.png
++35,G2S,Venkatesh,,0,0,0,Coil Operator,Production,9943576189,TGT26-035-2491CF25,1,TGT26-035-2491CF25.png,https://app.metfraa.com/tgt26/pass/TGT26-035-2491CF25.png
++36,G2S,Ramesh,Y,0,2,0,Billing Clerk,Dispatch,9994071493,TGT26-036-CD050A59,4,TGT26-036-CD050A59.png,https://app.metfraa.com/tgt26/pass/TGT26-036-CD050A59.png
++37,G2S,Soundarajan,Y,1,1,0,Dispatch Clerk,Dispatch,9952649565,TGT26-037-C3FD4055,4,TGT26-037-C3FD4055.png,https://app.metfraa.com/tgt26/pass/TGT26-037-C3FD4055.png
++38,MET,Ganesh Raja,,0,0,0,PPC Executive,Production,9360585411,TGT26-038-F5832BD2,1,TGT26-038-F5832BD2.png,https://app.metfraa.com/tgt26/pass/TGT26-038-F5832BD2.png
++39,MET,Gopi Mahendiran M,Y,0,0,0,Detailer,Production,9094860619,TGT26-039-1A1C481A,2,TGT26-039-1A1C481A.png,https://app.metfraa.com/tgt26/pass/TGT26-039-1A1C481A.png
++40,MET,Balaji,Y,1,0,0,Accounts Manager,Production,8637466998,TGT26-040-7A705DEC,3,TGT26-040-7A705DEC.png,https://app.metfraa.com/tgt26/pass/TGT26-040-7A705DEC.png
++41,MET,Santhoshraj,,0,0,0,Production Engineer,Production,8122664323,TGT26-041-F93073A2,1,TGT26-041-F93073A2.png,https://app.metfraa.com/tgt26/pass/TGT26-041-F93073A2.png
++42,MET,Ajoy Kumar Khatua,,0,0,0,Assistant Manager - Maintenance,Production,9002039036,TGT26-042-1CD2A99F,1,TGT26-042-1CD2A99F.png,https://app.metfraa.com/tgt26/pass/TGT26-042-1CD2A99F.png
++43,MET,Nanda Kumar,Y,2,0,0,Project Engineer,Project,9003010828,TGT26-043-A15B4E35,4,TGT26-043-A15B4E35.png,https://app.metfraa.com/tgt26/pass/TGT26-043-A15B4E35.png
++44,MET,Thangaraj,Y,1,1,0,Plant Head,Production,9994086097,TGT26-044-5CCD48AD,4,TGT26-044-5CCD48AD.png,https://app.metfraa.com/tgt26/pass/TGT26-044-5CCD48AD.png
++45,MET,Suresh S,,0,0,0,Quality Inspector,Production,9790055831,TGT26-045-BF74C5D2,1,TGT26-045-BF74C5D2.png,https://app.metfraa.com/tgt26/pass/TGT26-045-BF74C5D2.png
++46,MET,Gopi,,1,0,0,Production Manager,Production,9790040021,TGT26-046-A955012B,2,TGT26-046-A955012B.png,https://app.metfraa.com/tgt26/pass/TGT26-046-A955012B.png
++47,BSC,Lakshmi Srinivasan,,0,0,1,Accountant,Accounts,9840215573,TGT26-047-C82E9EEE,2,TGT26-047-C82E9EEE.png,https://app.metfraa.com/tgt26/pass/TGT26-047-C82E9EEE.png
++48,BSC,Inbarasi V,Y,0,1,0,Receptionist,Admin,9003138688,TGT26-048-C561C405,3,TGT26-048-C561C405.png,https://app.metfraa.com/tgt26/pass/TGT26-048-C561C405.png
++49,BSC,Meena K,Y,0,0,2,Accounts Executive,Accounts,7397398819,TGT26-049-1BFE0AD7,4,TGT26-049-1BFE0AD7.png,https://app.metfraa.com/tgt26/pass/TGT26-049-1BFE0AD7.png
++50,BSC,Susmitha Avula,,1,0,0,Digital Marketing Manager,Marketing,6281867026,TGT26-050-827D1406,2,TGT26-050-827D1406.png,https://app.metfraa.com/tgt26/pass/TGT26-050-827D1406.png
++51,BSC,Nalini B,Y,0,2,0,Assistant Accountant,Accounts,7200109548,TGT26-051-96ECC3C0,4,TGT26-051-96ECC3C0.png,https://app.metfraa.com/tgt26/pass/TGT26-051-96ECC3C0.png
++52,BSC,Aarthi S,,0,0,0,Sales Trainee,Sales,9025598213,TGT26-052-DB9CF19C,1,TGT26-052-DB9CF19C.png,https://app.metfraa.com/tgt26/pass/TGT26-052-DB9CF19C.png
++53,BSC,Varsha K,Y,1,0,0,Senior Sales Executive,Sales,7448468474,TGT26-053-FACC9AB6,3,TGT26-053-FACC9AB6.png,https://app.metfraa.com/tgt26/pass/TGT26-053-FACC9AB6.png
++54,BSC,Aswini R,Y,1,1,0,Accounts Assistant,Accounts,8939669356,TGT26-054-E88C4591,4,TGT26-054-E88C4591.png,https://app.metfraa.com/tgt26/pass/TGT26-054-E88C4591.png
++55,BSC,Divya A,,0,0,0,Billing Clerk,Production,7200298311,TGT26-055-55EED860,1,TGT26-055-55EED860.png,https://app.metfraa.com/tgt26/pass/TGT26-055-55EED860.png
++56,BSC,Nandhini Princy,Y,0,2,0,Admin Executive,Admin,9080349659,TGT26-056-A93C8D82,4,TGT26-056-A93C8D82.png,https://app.metfraa.com/tgt26/pass/TGT26-056-A93C8D82.png
++57,MET,Sheela,,0,0,0,HR Assistant,HR,9347369676,TGT26-057-24590CBE,1,TGT26-057-24590CBE.png,https://app.metfraa.com/tgt26/pass/TGT26-057-24590CBE.png
++58,MET,Sathya,,0,0,0,Accounts Assistant,Accounts,7305176574,TGT26-058-3C718C46,1,TGT26-058-3C718C46.png,https://app.metfraa.com/tgt26/pass/TGT26-058-3C718C46.png
++59,MET,Thilagavathy,,0,0,0,Office Assistant,Admin,9677040429,TGT26-059-C9385480,1,TGT26-059-C9385480.png,https://app.metfraa.com/tgt26/pass/TGT26-059-C9385480.png
++60,MET,Salma,Y,0,0,0,Costing & Est Engineer,Projects,9994862550,TGT26-060-A4B966CA,2,TGT26-060-A4B966CA.png,https://app.metfraa.com/tgt26/pass/TGT26-060-A4B966CA.png
++61,CRS,Pavithra,,0,0,0,Sales Assistant,Sales,9342761384,TGT26-061-DF428657,1,TGT26-061-DF428657.png,https://app.metfraa.com/tgt26/pass/TGT26-061-DF428657.png
++62,MET,Kalai Brindha,,0,0,0,Vice President (Ops & Projects),Projects,9600068189,TGT26-062-29E1D7EC,1,TGT26-062-29E1D7EC.png,https://app.metfraa.com/tgt26/pass/TGT26-062-29E1D7EC.png
+diff --git a/scripts/tgt26_setup.py b/scripts/tgt26_setup.py
+new file mode 100644
+index 0000000..cad1f9e
+--- /dev/null
++++ b/scripts/tgt26_setup.py
+@@ -0,0 +1,54 @@
++#!/usr/bin/env python3
++"""Team Get Together 2026 — one-shot setup: create tables + seed the register.
++
++Run from the repo root with DATABASE_URL pointing at Neon (the POOLED endpoint):
++
++    DATABASE_URL=postgresql://... python scripts/tgt26_setup.py
++
++Idempotent: re-running upserts family counts without touching check-ins or
++sent stamps, so it's also how a pass CHANGE gets applied after regeneration.
++"""
++import csv
++import os
++import pathlib
++import sys
++
++sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
++
++from app.database import engine, SessionLocal  # noqa: E402
++from app.models import Base, Tgt26Pass         # noqa: E402
++
++
++def main() -> None:
++    Base.metadata.create_all(
++        bind=engine,
++        tables=[Tgt26Pass.__table__,
++                Base.metadata.tables["tgt26_change_requests"]])
++    rows = list(csv.DictReader(
++        open(pathlib.Path(__file__).parent / "tgt26_manifest.csv")))
++    db = SessionLocal()
++    created = updated = 0
++    try:
++        for m in rows:
++            p = db.query(Tgt26Pass).filter_by(pass_id=m["pass_id"]).first()
++            vals = dict(sno=int(m["sno"]), company=m["comp"], name=m["name"],
++                        designation=m["desig"], department=m["dept"],
++                        spouse=m["spouse"] == "Y", k5=int(m["k5"]),
++                        k12=int(m["k12"]), k12p=int(m["k12p"]),
++                        total_attendees=int(m["total"]), mobile=m["mobile"])
++            if p:
++                for k, v in vals.items():
++                    setattr(p, k, v)
++                updated += 1
++            else:
++                db.add(Tgt26Pass(pass_id=m["pass_id"], **vals))
++                created += 1
++        db.commit()
++    finally:
++        db.close()
++    print(f"tgt26_passes: {created} created, {updated} updated "
++          f"({len(rows)} rows in manifest)")
++
++
++if __name__ == "__main__":
++    main()
