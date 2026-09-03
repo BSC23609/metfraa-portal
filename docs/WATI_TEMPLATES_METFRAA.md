@@ -279,7 +279,10 @@ Your event entry pass ({{total}} attendee(s)) is ready. Please download it using
 
 1. Visit Website → **Dynamic** → label `Download Pass` → URL
    `https://app.metfraa.com/tgt26/pass/{{pass_file}}`
-2. Quick Reply → label `Need Changes`
+2. Visit Website → URL type **Static** → button text `Need Changes` → URL
+   `https://app.metfraa.com/tgt26/changes`
+   (opens a register-validated webform — no webhook dependency; requests land
+   directly in tgt26_change_requests and on /tgt26/change-requests)
 
 Variable names must be exactly `name`, `total`, `pass_file` — the app sends
 them by name from `/tgt26/send-passes`. Override the template name per

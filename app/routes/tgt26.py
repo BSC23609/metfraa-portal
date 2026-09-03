@@ -24,7 +24,7 @@ import re
 from datetime import datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy.orm import Session
 
@@ -254,6 +254,87 @@ async def wati_webhook(request: Request, db: Session = Depends(get_db)):
             "Thank you. Your change request has been recorded and forwarded to "
             "the HR team. You will receive your updated pass shortly.", db)
     return {"ok": True}
+
+
+
+# ------------------------------------------------------------- change webform
+# The WhatsApp template's "Need Changes" button opens this form directly (URL
+# button) — no webhook dependency. Public by design: an event attendee at a
+# WhatsApp button has no portal login. Submissions are validated against the
+# register by mobile number (or prefilled pass id) before a row is stored.
+
+def _changes_form(p=None, error: str = "", mobile: str = "", text: str = "") -> HTMLResponse:
+    who = ""
+    if p is not None:
+        who = f"""<div style="background:#F5F8FC;border:1px solid #EAF1F9;border-radius:8px;
+padding:12px 14px;margin-bottom:14px">
+<b>{p.name}</b><br><span style="color:#5B6B80;font-size:13px">{p.designation or ''} &bull;
+{COMPANY_FULL.get(p.company, p.company)}</span><br>
+<span style="font-size:13px">Current pass: Spouse {'Yes' if p.spouse else 'No'} &bull;
+Kids {p.k5} / {p.k12} / {p.k12p} &bull; Total <b>{p.total_attendees}</b></span></div>
+<input type="hidden" name="pid" value="{p.pass_id}">"""
+    else:
+        who = f"""<label style="font-size:13px;color:#5B6B80">Your WhatsApp mobile number
+(10 digits, as registered)</label>
+<input name="mobile" value="{mobile}" inputmode="numeric" maxlength="14"
+placeholder="e.g. 9876543210" required style="width:100%;box-sizing:border-box;
+padding:12px;border:1px solid #C9D8EA;border-radius:8px;margin:6px 0 14px;font-size:16px">"""
+    err = (f'<div style="background:#FDECEA;color:#C5221F;border-radius:8px;'
+           f'padding:10px 14px;margin-bottom:14px;font-size:14px">{error}</div>') if error else ""
+    body = f"""<form method="post" action="/tgt26/changes" style="padding:20px">
+{err}{who}
+<label style="font-size:13px;color:#5B6B80">What should be changed in your pass?</label>
+<textarea name="change_text" rows="4" required maxlength="2000"
+placeholder="e.g. Add my spouse, remove 1 kid under 12, correct my name spelling..."
+style="width:100%;box-sizing:border-box;padding:12px;border:1px solid #C9D8EA;
+border-radius:8px;margin:6px 0 14px;font-size:16px">{text}</textarea>
+<button type="submit" style="width:100%;padding:14px;background:#0069A6;color:#fff;
+border:0;border-radius:8px;font-weight:700;font-size:16px;cursor:pointer">
+Submit Change Request</button>
+<p style="color:#5B6B80;font-size:12px;margin-top:12px;text-align:center">
+The HR team will review and send your updated pass on WhatsApp.<br>
+Queries: Mr. Jeevabharathy S &ndash; 73959 56648</p></form>"""
+    return _page("info", "REQUEST PASS CHANGES", body)
+
+
+@router.get("/tgt26/changes", response_class=HTMLResponse)
+def changes_form(db: Session = Depends(get_db)):
+    return _changes_form()
+
+
+@router.get("/tgt26/changes/{pid}", response_class=HTMLResponse)
+def changes_form_prefilled(pid: str, db: Session = Depends(get_db)):
+    p = db.query(Tgt26Pass).filter_by(pass_id=pid).first() if PID_RE.match(pid) else None
+    return _changes_form(p) if p else _changes_form()
+
+
+@router.post("/tgt26/changes", response_class=HTMLResponse)
+def changes_submit(mobile: str = Form(""), pid: str = Form(""),
+                   change_text: str = Form(""), db: Session = Depends(get_db)):
+    change_text = change_text.strip()
+    p = None
+    if pid and PID_RE.match(pid):
+        p = db.query(Tgt26Pass).filter_by(pass_id=pid).first()
+    digits = re.sub(r"\D", "", mobile)[-10:]
+    if p is None and len(digits) == 10:
+        p = db.query(Tgt26Pass).filter_by(mobile=digits).first()
+    if p is None:
+        return _changes_form(None,
+            error="This mobile number is not in the event register. Please enter the "
+                  "10-digit number your pass was sent to, or contact Mr. Jeevabharathy S.",
+            mobile=mobile, text=change_text)
+    if not change_text:
+        return _changes_form(p, error="Please describe the change you need.")
+    db.add(Tgt26ChangeRequest(
+        phone=p.mobile, employee_name=p.name, pass_id=p.pass_id,
+        requested_change=change_text[:2000], status="received",
+        received_at=datetime.utcnow()))
+    db.commit()
+    return _page("ok", "\u2714 REQUEST RECORDED",
+        f"<div style='padding:20px;text-align:center'>Thank you, <b>{p.name}</b>.<br>"
+        f"Your change request has been recorded and forwarded to the HR team.<br><br>"
+        f"<span style='color:#5B6B80;font-size:14px'>You will receive your updated pass "
+        f"on WhatsApp before the event.</span></div>")
 
 
 # --------------------------------------------------------------------- admin
