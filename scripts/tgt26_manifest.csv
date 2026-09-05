@@ -5,7 +5,7 @@ sno,comp,name,spouse,k5,k12,k12p,desig,dept,mobile,pass_id,total,file,url
 4,BSC,Mahendran Ramdas,,0,0,0,Delivery Clerk,Dispatch,9940115328,TGT26-004-45D5B31D,1,TGT26-004-45D5B31D.png,https://app.metfraa.com/tgt26/pass/TGT26-004-45D5B31D.png
 5,BSC,Jegan,,0,0,0,Delivery Clerk,Dispatch,9176209188,TGT26-005-E98374DC,1,TGT26-005-E98374DC.png,https://app.metfraa.com/tgt26/pass/TGT26-005-E98374DC.png
 6,BSC,Sooriyaraj L,,0,0,0,Delivery Clerk,Dispatch,9952038124,TGT26-006-7FCDF835,1,TGT26-006-7FCDF835.png,https://app.metfraa.com/tgt26/pass/TGT26-006-7FCDF835.png
-7,BSC,Ragupathi C,Y,0,0,2,Electrical Supervisor,Production,8248787425,TGT26-007-482CD1D1,4,TGT26-007-482CD1D1.png,https://app.metfraa.com/tgt26/pass/TGT26-007-482CD1D1.png
+7,BSC,Ragupathi C,,0,0,2,Electrical Supervisor,Production,8248787425,TGT26-007-482CD1D1,3,TGT26-007-482CD1D1.png,https://app.metfraa.com/tgt26/pass/TGT26-007-482CD1D1.png
 8,BSC,G Yuvaraj,Y,1,1,0,Senior Operator - Production,Production,8122760175,TGT26-008-BDC1BA7F,4,TGT26-008-BDC1BA7F.png,https://app.metfraa.com/tgt26/pass/TGT26-008-BDC1BA7F.png
 9,BSC,Surajit Sasanka Maity,,0,0,0,Maintenance Executive - Hydraulic,Production,9324774674,TGT26-009-B829BB15,1,TGT26-009-B829BB15.png,https://app.metfraa.com/tgt26/pass/TGT26-009-B829BB15.png
 10,BSC,Pappu Kumar,,0,0,0,Machine Operator,Production,6289728610,TGT26-010-5075E5C1,1,TGT26-010-5075E5C1.png,https://app.metfraa.com/tgt26/pass/TGT26-010-5075E5C1.png
@@ -14,7 +14,7 @@ sno,comp,name,spouse,k5,k12,k12p,desig,dept,mobile,pass_id,total,file,url
 13,BSC,Jeevabharathy S,,0,0,0,Manager - Business Excellence,Management,7395956648,TGT26-013-594CB1AA,1,TGT26-013-594CB1AA.png,https://app.metfraa.com/tgt26/pass/TGT26-013-594CB1AA.png
 14,BSC,Kotteswaran V,,0,0,0,Purchase Assistant,Purchase,7305399298,TGT26-014-EAD5AC64,1,TGT26-014-EAD5AC64.png,https://app.metfraa.com/tgt26/pass/TGT26-014-EAD5AC64.png
 15,BSC,Balamurali Asothaman,,0,0,0,System Maintenance Executive,IT,9551869702,TGT26-015-7793437A,1,TGT26-015-7793437A.png,https://app.metfraa.com/tgt26/pass/TGT26-015-7793437A.png
-16,BSC,Kumar Balakrishnan,Y,0,0,2,Senior Machine Operator,Production,9600139271,TGT26-016-8DB9292A,4,TGT26-016-8DB9292A.png,https://app.metfraa.com/tgt26/pass/TGT26-016-8DB9292A.png
+16,BSC,Kumar Balakrishnan,,0,0,2,Senior Machine Operator,Production,9600139271,TGT26-016-8DB9292A,3,TGT26-016-8DB9292A.png,https://app.metfraa.com/tgt26/pass/TGT26-016-8DB9292A.png
 17,BSC,Nagasubramanian N,Y,0,0,0,Sap Consultant,IT,9894174741,TGT26-017-F1814C7B,2,TGT26-017-F1814C7B.png,https://app.metfraa.com/tgt26/pass/TGT26-017-F1814C7B.png
 18,BSC,Mohan K,,0,0,0,Assistant Electrician,Production,9962189800,TGT26-018-3BAF82E9,1,TGT26-018-3BAF82E9.png,https://app.metfraa.com/tgt26/pass/TGT26-018-3BAF82E9.png
 19,BSC,Mohamed Farin,,0,0,0,Logistics Assistant,Logistics,7825092522,TGT26-019-9C4AAE93,1,TGT26-019-9C4AAE93.png,https://app.metfraa.com/tgt26/pass/TGT26-019-9C4AAE93.png
@@ -26,7 +26,7 @@ sno,comp,name,spouse,k5,k12,k12p,desig,dept,mobile,pass_id,total,file,url
 25,CRS,Karthikeyan,,0,0,0,Junior Accountant,Accounts,7395902541,TGT26-025-F469BC66,1,TGT26-025-F469BC66.png,https://app.metfraa.com/tgt26/pass/TGT26-025-F469BC66.png
 26,CRS,Ramanjee Kumar,,0,0,0,Junior Production Manager,Production,9962456511,TGT26-026-09D36DAC,1,TGT26-026-09D36DAC.png,https://app.metfraa.com/tgt26/pass/TGT26-026-09D36DAC.png
 27,CRS,Anil Kumar,,0,0,0,Machine Operator,Production,8939236893,TGT26-027-E5AAAA53,1,TGT26-027-E5AAAA53.png,https://app.metfraa.com/tgt26/pass/TGT26-027-E5AAAA53.png
-28,CRS,Yuva Kumar,,0,0,0,Production Manager,Production,8667513453,TGT26-028-B4C7BB2B,1,TGT26-028-B4C7BB2B.png,https://app.metfraa.com/tgt26/pass/TGT26-028-B4C7BB2B.png
+28,CRS,Yuva Kumar,Y,1,1,0,Production Manager,Production,8667513453,TGT26-028-B4C7BB2B,4,TGT26-028-B4C7BB2B.png,https://app.metfraa.com/tgt26/pass/TGT26-028-B4C7BB2B.png
 29,G2S,Ganapathy P,Y,0,0,1,Plant Head,Management,9884066972,TGT26-029-27D772BB,3,TGT26-029-27D772BB.png,https://app.metfraa.com/tgt26/pass/TGT26-029-27D772BB.png
 30,G2S,Ranjith Kumar,,0,0,0,PPC Executive,Production,9597177183,TGT26-030-4C5E674E,1,TGT26-030-4C5E674E.png,https://app.metfraa.com/tgt26/pass/TGT26-030-4C5E674E.png
 31,G2S,Kishore,,0,0,0,PPC Executive,Production,8300681693,TGT26-031-4FF342B5,1,TGT26-031-4FF342B5.png,https://app.metfraa.com/tgt26/pass/TGT26-031-4FF342B5.png
@@ -35,7 +35,7 @@ sno,comp,name,spouse,k5,k12,k12p,desig,dept,mobile,pass_id,total,file,url
 34,G2S,Ramesh Arthanari,,0,0,0,Labour,Production,9790671589,TGT26-034-3699A58A,1,TGT26-034-3699A58A.png,https://app.metfraa.com/tgt26/pass/TGT26-034-3699A58A.png
 35,G2S,Venkatesh,,0,0,0,Coil Operator,Production,9943576189,TGT26-035-2491CF25,1,TGT26-035-2491CF25.png,https://app.metfraa.com/tgt26/pass/TGT26-035-2491CF25.png
 36,G2S,Ramesh,Y,0,2,0,Billing Clerk,Dispatch,9994071493,TGT26-036-CD050A59,4,TGT26-036-CD050A59.png,https://app.metfraa.com/tgt26/pass/TGT26-036-CD050A59.png
-37,G2S,Soundarajan,Y,1,1,0,Dispatch Clerk,Dispatch,9952649565,TGT26-037-C3FD4055,4,TGT26-037-C3FD4055.png,https://app.metfraa.com/tgt26/pass/TGT26-037-C3FD4055.png
+37,G2S,Soundarajan,Y,1,0,0,Dispatch Clerk,Dispatch,9952649565,TGT26-037-C3FD4055,3,TGT26-037-C3FD4055.png,https://app.metfraa.com/tgt26/pass/TGT26-037-C3FD4055.png
 38,MET,Ganesh Raja,,0,0,0,PPC Executive,Production,9360585411,TGT26-038-F5832BD2,1,TGT26-038-F5832BD2.png,https://app.metfraa.com/tgt26/pass/TGT26-038-F5832BD2.png
 39,MET,Gopi Mahendiran M,Y,0,0,0,Detailer,Production,9094860619,TGT26-039-1A1C481A,2,TGT26-039-1A1C481A.png,https://app.metfraa.com/tgt26/pass/TGT26-039-1A1C481A.png
 40,MET,Balaji,Y,1,0,0,Accounts Manager,Production,8637466998,TGT26-040-7A705DEC,3,TGT26-040-7A705DEC.png,https://app.metfraa.com/tgt26/pass/TGT26-040-7A705DEC.png
@@ -49,7 +49,7 @@ sno,comp,name,spouse,k5,k12,k12p,desig,dept,mobile,pass_id,total,file,url
 48,BSC,Inbarasi V,Y,0,1,0,Receptionist,Admin,9003138688,TGT26-048-C561C405,3,TGT26-048-C561C405.png,https://app.metfraa.com/tgt26/pass/TGT26-048-C561C405.png
 49,BSC,Meena K,Y,0,0,2,Accounts Executive,Accounts,7397398819,TGT26-049-1BFE0AD7,4,TGT26-049-1BFE0AD7.png,https://app.metfraa.com/tgt26/pass/TGT26-049-1BFE0AD7.png
 50,BSC,Susmitha Avula,,1,0,0,Digital Marketing Manager,Marketing,6281867026,TGT26-050-827D1406,2,TGT26-050-827D1406.png,https://app.metfraa.com/tgt26/pass/TGT26-050-827D1406.png
-51,BSC,Nalini B,Y,0,2,0,Assistant Accountant,Accounts,7200109548,TGT26-051-96ECC3C0,4,TGT26-051-96ECC3C0.png,https://app.metfraa.com/tgt26/pass/TGT26-051-96ECC3C0.png
+51,BSC,Nalini B,,0,2,0,Assistant Accountant,Accounts,7200109548,TGT26-051-96ECC3C0,3,TGT26-051-96ECC3C0.png,https://app.metfraa.com/tgt26/pass/TGT26-051-96ECC3C0.png
 52,BSC,Aarthi S,,0,0,0,Sales Trainee,Sales,9025598213,TGT26-052-DB9CF19C,1,TGT26-052-DB9CF19C.png,https://app.metfraa.com/tgt26/pass/TGT26-052-DB9CF19C.png
 53,BSC,Varsha K,Y,1,0,0,Senior Sales Executive,Sales,7448468474,TGT26-053-FACC9AB6,3,TGT26-053-FACC9AB6.png,https://app.metfraa.com/tgt26/pass/TGT26-053-FACC9AB6.png
 54,BSC,Aswini R,Y,1,1,0,Accounts Assistant,Accounts,8939669356,TGT26-054-E88C4591,4,TGT26-054-E88C4591.png,https://app.metfraa.com/tgt26/pass/TGT26-054-E88C4591.png
@@ -65,3 +65,5 @@ sno,comp,name,spouse,k5,k12,k12p,desig,dept,mobile,pass_id,total,file,url
 64,MET,Sewag Prabhu,,0,0,0,Pre Sales Engineer,Sales,8667862428,TGT26-064-2D56EFAF,1,TGT26-064-2D56EFAF.png,https://app.metfraa.com/tgt26/pass/TGT26-064-2D56EFAF.png
 65,MET,Sudha G,,0,0,0,Admin Executive,Admin,9363105172,TGT26-065-0D3AD1E0,1,TGT26-065-0D3AD1E0.png,https://app.metfraa.com/tgt26/pass/TGT26-065-0D3AD1E0.png
 66,BSC,Kumar N,,0,0,0,Dispatch Executive,Dispatch,9444085014,TGT26-066-5115CBF1,1,TGT26-066-5115CBF1.png,https://app.metfraa.com/tgt26/pass/TGT26-066-5115CBF1.png
+67,CRS,Arun Prakash D,,0,0,0,Machine Operator,Production,9384792503,TGT26-067-2AD86C40,1,TGT26-067-2AD86C40.png,https://app.metfraa.com/tgt26/pass/TGT26-067-2AD86C40.png
+68,BSC,Vignesh,,0,0,0,SEO Executive,Marketing,9176310946,TGT26-068-1BA8A701,1,TGT26-068-1BA8A701.png,https://app.metfraa.com/tgt26/pass/TGT26-068-1BA8A701.png
