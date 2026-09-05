@@ -4,7 +4,7 @@ sno,comp,name,spouse,k5,k12,k12p,desig,dept,mobile,pass_id,total,file,url
 4,BSC,Mahendran Ramdas,,0,0,0,Delivery Clerk,Dispatch,9940115328,TGT26-004-45D5B31D,1,TGT26-004-45D5B31D.png,https://app.metfraa.com/tgt26/pass/TGT26-004-45D5B31D.png
 5,BSC,Jegan,,0,0,0,Delivery Clerk,Dispatch,9176209188,TGT26-005-E98374DC,1,TGT26-005-E98374DC.png,https://app.metfraa.com/tgt26/pass/TGT26-005-E98374DC.png
 6,BSC,Sooriyaraj L,,0,0,0,Delivery Clerk,Dispatch,9952038124,TGT26-006-7FCDF835,1,TGT26-006-7FCDF835.png,https://app.metfraa.com/tgt26/pass/TGT26-006-7FCDF835.png
-7,BSC,Ragupathi C,,0,1,2,Electrical Supervisor,Production,8248787425,TGT26-007-482CD1D1,4,TGT26-007-482CD1D1.png,https://app.metfraa.com/tgt26/pass/TGT26-007-482CD1D1.png
+7,BSC,Ragupathi C,Y,0,1,2,Electrical Supervisor,Production,8248787425,TGT26-007-482CD1D1,5,TGT26-007-482CD1D1.png,https://app.metfraa.com/tgt26/pass/TGT26-007-482CD1D1.png
 8,BSC,G Yuvaraj,Y,1,1,0,Senior Operator - Production,Production,8122760175,TGT26-008-BDC1BA7F,4,TGT26-008-BDC1BA7F.png,https://app.metfraa.com/tgt26/pass/TGT26-008-BDC1BA7F.png
 9,BSC,Surajit Sasanka Maity,,0,0,0,Maintenance Executive - Hydraulic,Production,9324774674,TGT26-009-B829BB15,1,TGT26-009-B829BB15.png,https://app.metfraa.com/tgt26/pass/TGT26-009-B829BB15.png
 10,BSC,Pappu Kumar,,0,0,0,Machine Operator,Production,6289728610,TGT26-010-5075E5C1,1,TGT26-010-5075E5C1.png,https://app.metfraa.com/tgt26/pass/TGT26-010-5075E5C1.png
@@ -52,7 +52,7 @@ sno,comp,name,spouse,k5,k12,k12p,desig,dept,mobile,pass_id,total,file,url
 52,BSC,Aarthi S,,0,0,0,Sales Trainee,Sales,9025598213,TGT26-052-DB9CF19C,1,TGT26-052-DB9CF19C.png,https://app.metfraa.com/tgt26/pass/TGT26-052-DB9CF19C.png
 53,BSC,Varsha K,Y,1,0,0,Senior Sales Executive,Sales,7448468474,TGT26-053-FACC9AB6,3,TGT26-053-FACC9AB6.png,https://app.metfraa.com/tgt26/pass/TGT26-053-FACC9AB6.png
 54,BSC,Aswini R,Y,1,1,0,Accounts Assistant,Accounts,8939669356,TGT26-054-E88C4591,4,TGT26-054-E88C4591.png,https://app.metfraa.com/tgt26/pass/TGT26-054-E88C4591.png
-55,BSC,Divya A,,0,0,0,Billing Clerk,Production,7200298311,TGT26-055-55EED860,1,TGT26-055-55EED860.png,https://app.metfraa.com/tgt26/pass/TGT26-055-55EED860.png
+55,BSC,Divya A,,0,0,1,Billing Clerk,Production,7200298311,TGT26-055-55EED860,2,TGT26-055-55EED860.png,https://app.metfraa.com/tgt26/pass/TGT26-055-55EED860.png
 56,BSC,Nandhini Princy,Y,0,2,0,Admin Executive,Admin,9080349659,TGT26-056-A93C8D82,4,TGT26-056-A93C8D82.png,https://app.metfraa.com/tgt26/pass/TGT26-056-A93C8D82.png
 58,MET,Sathya,,0,0,0,Accounts Assistant,Accounts,7305176574,TGT26-058-3C718C46,1,TGT26-058-3C718C46.png,https://app.metfraa.com/tgt26/pass/TGT26-058-3C718C46.png
 59,MET,Thilagavathy,,0,0,0,Office Assistant,Admin,9677040429,TGT26-059-C9385480,1,TGT26-059-C9385480.png,https://app.metfraa.com/tgt26/pass/TGT26-059-C9385480.png
