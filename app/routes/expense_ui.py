@@ -1944,9 +1944,15 @@ def _rollup_for_period(db: Session, period: str) -> list[dict]:
     return out
 
 
-def _report_json(r: ExpenseConsolidatedReport) -> dict:
+def _report_json(r: ExpenseConsolidatedReport, emp=None) -> dict:
     return {
         "id": r.id, "employee_id": r.employee_id, "period": r.period,
+        # The review modal titles itself with these; without them it showed
+        # "UNDEFINED · <period> · Management Review".
+        "employee_name": (emp.name if emp else None)
+                         or (r.employee.name if r.employee else None),
+        "employee_email": (emp.email if emp else None)
+                          or (r.employee.email if r.employee else None),
         "status": r.status, "total_amount": r.total_amount,
         "submission_count": r.submission_count,
         "submission_ids": list(r.submission_ids or []),
@@ -2481,16 +2487,66 @@ def api_consolidated_pdf(report_id: int, request: Request,
          .filter(ExpenseConsolidatedReport.id == report_id).first())
     if not r:
         return _err(404, "Not found")
-    if not r.pdf_web_url:
-        return _err(404, "No PDF has been generated for this report yet.")
-    path = r.pdf_web_url
-    if path.startswith("http"):
-        # Stored as a share URL — the caller can open it directly.
-        return {"pdf_path": path}
-    data = _od.download_from_path(path)
-    if data is None:
-        return _err(404, "PDF not found in OneDrive")
     from fastapi.responses import Response as _R
+
+    # Always serve the PDF BYTES. pdf_web_url may hold either a drive-relative
+    # path (new reports) or a full SharePoint webUrl (older ones). Returning
+    # the URL as JSON — as this did — made the review iframe render the raw
+    # JSON instead of the document, which is what the reviewer saw. Rebuild the
+    # relative path so we can always download the actual file.
+    from ..routes.expense import _artifacts
+    art = _artifacts()
+    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+    safe = (emp.employee_code if emp and emp.employee_code else str(r.employee_id))
+    rel = f"{art.expense_root()}/{r.period}/_Consolidated/{safe}_{r.period}.pdf"
+
+    candidates = []
+    if r.pdf_web_url and not r.pdf_web_url.startswith("http"):
+        candidates.append(r.pdf_web_url)
+    candidates.append(rel)
+    # code punctuation may have shifted post-migration (MET-029 <-> MET029)
+    _cv = globals().get("_code_variants")
+    if emp and emp.employee_code and _cv:
+        for alt in _cv(emp.employee_code):
+            candidates.append(f"{art.expense_root()}/{r.period}/_Consolidated/"
+                              f"{alt}_{r.period}.pdf")
+    elif emp and emp.employee_code:
+        code = emp.employee_code
+        alts = [code.replace("-", "")]
+        if "-" not in code and len(code) > 3 and code[:3].isalpha():
+            alts.append(code[:3] + "-" + code[3:])   # MET56 -> MET-56
+        for alt in alts:
+            if alt and alt != code:
+                candidates.append(f"{art.expense_root()}/{r.period}/_Consolidated/"
+                                  f"{alt}_{r.period}.pdf")
+
+    data = None
+    for cand in candidates:
+        try:
+            data = _od.download_from_path(cand)
+        except Exception:
+            data = None
+        if data:
+            break
+
+    if data is None:
+        # Not on disk anywhere — regenerate it so the review never dead-ends.
+        try:
+            _build_consolidated(db, r)
+            db.commit()
+            if r.pdf_web_url and not r.pdf_web_url.startswith("http"):
+                data = _od.download_from_path(r.pdf_web_url)
+            if data is None:
+                data = _od.download_from_path(rel)
+        except Exception:
+            data = None
+
+    if data is None:
+        log.warning("[consolidated] pdf not found for report %s; tried: %s",
+                    r.id, candidates)
+        return _err(404, "The consolidated PDF could not be found or rebuilt.",
+                    tried=candidates)
     return _R(content=data, media_type="application/pdf",
               headers={"Content-Disposition":
-                       f'inline; filename="consolidated-{r.period}.pdf"'})
+                       f'inline; filename="consolidated-{r.period}.pdf"',
+                       "Cache-Control": "private, max-age=300"})
