@@ -1954,7 +1954,10 @@ def _build_consolidated(db: Session, r: ExpenseConsolidatedReport) -> str | None
         r.pdf_web_url = (info or {}).get("webUrl") or path
         r.pdf_page_count = pages or None
         from ..services.expense_consolidated_pdf import RENDER_VERSION
-        r.pdf_render_version = RENDER_VERSION
+        try:
+            r.pdf_render_version = RENDER_VERSION
+        except Exception:
+            pass   # column not migrated yet — the build still succeeded
         return r.pdf_web_url
     except Exception as e:
         log.error("[consolidated-pdf] build failed for report %s: %s", r.id, e,
@@ -2179,6 +2182,17 @@ async def api_send_for_approval(request: Request, bg: BackgroundTasks,
     return {"ok": True, "report_id": r.id, "email_ok": err is None, "email_error": err}
 
 
+def _render_version_of(db, r) -> int:
+    """r.pdf_render_version, but resilient to an un-migrated DB. A missing
+    column would otherwise 500 the whole endpoint; here it just means 'unknown
+    version', and we fall back to serving the stored file."""
+    try:
+        return int(r.pdf_render_version or 0)
+    except Exception:
+        db.rollback()
+        return -1   # unknown -> don't force a rebuild, serve what's stored
+
+
 def _consolidated_pdf_bytes(db: Session, r) -> bytes | None:
     """Return the consolidated PDF bytes for a report: the stored OneDrive copy
     if it was built by the CURRENT renderer, otherwise a fresh build. This is
@@ -2191,7 +2205,8 @@ def _consolidated_pdf_bytes(db: Session, r) -> bytes | None:
     safe = (emp.employee_code if emp and emp.employee_code else str(r.employee_id))
     rel = f"{art.expense_root()}/{r.period}/_Consolidated/{safe}_{r.period}.pdf"
 
-    stored_ok = (r.pdf_render_version or 0) >= RENDER_VERSION
+    ver = _render_version_of(db, r)
+    stored_ok = ver < 0 or ver >= RENDER_VERSION  # unknown or current -> use stored
     if stored_ok:
         for cand in ([r.pdf_web_url] if (r.pdf_web_url and not r.pdf_web_url.startswith("http")) else []) + [rel]:
             try:
@@ -2627,7 +2642,8 @@ def api_consolidated_pdf(report_id: int, request: Request,
     rel = f"{art.expense_root()}/{r.period}/_Consolidated/{safe}_{r.period}.pdf"
 
     from ..services.expense_consolidated_pdf import RENDER_VERSION
-    stored_ok = (r.pdf_render_version or 0) >= RENDER_VERSION
+    ver = _render_version_of(db, r)
+    stored_ok = ver < 0 or ver >= RENDER_VERSION  # unknown or current -> use stored
     candidates = []
     if stored_ok and r.pdf_web_url and not r.pdf_web_url.startswith("http"):
         candidates.append(r.pdf_web_url)
