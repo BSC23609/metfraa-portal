@@ -2177,6 +2177,48 @@ async def api_send_for_approval(request: Request, bg: BackgroundTasks,
     return {"ok": True, "report_id": r.id, "email_ok": err is None, "email_error": err}
 
 
+def _consolidated_pdf_bytes(db: Session, r) -> bytes | None:
+    """Return the consolidated PDF bytes for a report: the stored OneDrive copy,
+    or a fresh build. Used to attach it to the accounts email."""
+    from ..routes.expense import _artifacts
+    art = _artifacts()
+    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+    safe = (emp.employee_code if emp and emp.employee_code else str(r.employee_id))
+    rel = f"{art.expense_root()}/{r.period}/_Consolidated/{safe}_{r.period}.pdf"
+    for cand in ([r.pdf_web_url] if (r.pdf_web_url and not r.pdf_web_url.startswith("http")) else []) + [rel]:
+        try:
+            data = _od.download_from_path(cand)
+        except Exception:
+            data = None
+        if data:
+            return data
+    # rebuild as a last resort
+    try:
+        _build_consolidated(db, r)
+        db.commit()
+        for cand in ([r.pdf_web_url] if (r.pdf_web_url and not r.pdf_web_url.startswith("http")) else []) + [rel]:
+            data = _od.download_from_path(cand)
+            if data:
+                return data
+    except Exception:
+        pass
+    return None
+
+
+def _email_accounts_with_pdf(db: Session, r) -> dict:
+    """Send the branded APPROVED FOR PAYMENT email with the consolidated PDF
+    attached. Fail-soft: returns {ok, error}."""
+    from ..services.portal_notify import send_consolidated_to_accounts_pdf
+    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+    pdf = _consolidated_pdf_bytes(db, r)
+    if not pdf:
+        return {"ok": False, "error": "consolidated PDF unavailable — regenerate it and try again"}
+    res = send_consolidated_to_accounts_pdf(
+        r, {"name": emp.name if emp else "", "email": emp.email if emp else "",
+            "code": emp.employee_code if emp else ""}, pdf)
+    return res
+
+
 @router.post("/api/admin/consolidated/{report_id}/approve-mgmt")
 def api_approve_mgmt(report_id: int, request: Request, bg: BackgroundTasks,
                      user=Depends(get_optional_user), db: Session = Depends(get_db)):
@@ -2195,14 +2237,13 @@ def api_approve_mgmt(report_id: int, request: Request, bg: BackgroundTasks,
     r.mgmt_approved_at = now
     r.accounts_sent_at = r.accounts_sent_at or now
     db.commit()
-    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
-    try:
-        notify_consolidated_to_accounts(bg, r, emp.name if emp else "")
-    except Exception as e:
-        r.accounts_email_error = str(e)[:480]
+    res = _email_accounts_with_pdf(db, r)
+    if not res["ok"]:
+        r.accounts_email_error = (res.get("error") or "send failed")[:480]
         db.commit()
-        log.warning("[consolidated] accounts email failed: %s", e)
-    return {"ok": True, "report_id": r.id, "status": "approved"}
+        log.warning("[consolidated] accounts email failed: %s", res.get("error"))
+    return {"ok": True, "report_id": r.id, "status": "approved",
+            "email_sent": res["ok"], "email_error": res.get("error")}
 
 
 @router.post("/api/admin/consolidated/{report_id}/reject")
@@ -2291,7 +2332,9 @@ def api_resend_email(report_id: int, request: Request, bg: BackgroundTasks,
             notify_consolidated_for_review(bg, r, name)
             target = "management"
         elif r.status == "approved":
-            notify_consolidated_to_accounts(bg, r, name)
+            res = _email_accounts_with_pdf(db, r)
+            if not res["ok"]:
+                return _err(502, f"Resend failed: {res.get('error')}")
             target = "accounts"
         else:
             return _err(400, f"Nothing to resend for a report in '{r.status}'.")

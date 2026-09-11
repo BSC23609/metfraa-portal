@@ -278,3 +278,94 @@ def notify_gatepass_overdue(o, to: str | None, who: str) -> None:
                 _pass_lines(o, ["This pass is past its declared in-time and no "
                                 "return has been recorded."]),
                 f"{BASE()}/gatepass/", "Open Gatepass"))
+
+
+def _send_with_pdf(to: str, subject: str, html: str, pdf_bytes: bytes | None,
+                   pdf_name: str, cc: list | None = None) -> bool:
+    """Send an email with an optional PDF attachment. Returns True on send.
+
+    Uses the async email service (the only one that supports attachments) via
+    a fresh event loop so it works from a background task or a request thread.
+    """
+    if not to:
+        return False
+    atts = [(pdf_name, pdf_bytes, "application/pdf")] if pdf_bytes else None
+    try:
+        import asyncio
+        from .email_service import send_email_async
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        coro = send_email_async(to, subject, html, cc=cc, attachments=atts)
+        if loop and loop.is_running():
+            # already inside a loop (rare for bg tasks) — schedule and wait
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                return ex.submit(lambda: asyncio.run(coro)).result()
+        return asyncio.run(coro)
+    except Exception as e:
+        log.warning(f"[notify] pdf email to {to} failed: {e}")
+        return False
+
+
+def _approved_for_payment_html(employee_name, employee_email, employee_code,
+                               period, claims, total) -> str:
+    """The old app's 'APPROVED FOR PAYMENT' body, reproduced."""
+    from datetime import datetime
+    try:
+        y, m = period.split("-")
+        month = datetime(int(y), int(m), 1).strftime("%B %Y")
+    except Exception:
+        month = period
+    total_s = f"INR {float(total or 0):,.2f}"
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family: Arial, sans-serif; color:#1a2332; max-width:640px; margin:0 auto; padding:24px;">
+  <div style="border-top:4px solid #059669; padding-top:16px;">
+    <div style="font-family:monospace; font-size:11px; letter-spacing:0.2em; color:#6b7689; text-transform:uppercase;">Metfraa · Expense Portal</div>
+    <h2 style="margin:8px 0 0; font-size:22px; color:#0d1421; text-transform:uppercase;">Approved for Payment</h2>
+  </div>
+  <p style="font-size:14px; line-height:1.6;">Please process reimbursement for the following consolidated claim.</p>
+  <div style="background:#ecfdf5; border-left:4px solid #059669; padding:18px 22px; margin:22px 0; border-radius:3px;">
+    <div style="font-size:11px; font-family:monospace; letter-spacing:0.1em; color:#065f46; text-transform:uppercase; margin-bottom:6px;">Payment</div>
+    <div style="font-size:16px; color:#0d1421; font-weight:700;">{employee_name}</div>
+    <div style="font-size:12px; color:#6b7689;">{employee_email or ''}{(' · ' + employee_code) if employee_code else ''}</div>
+    <table style="width:100%; margin-top:14px; font-size:13px; border-collapse:collapse;">
+      <tr><td style="color:#6b7689;padding:3px 0;">Period</td><td style="text-align:right;font-weight:600;">{month}</td></tr>
+      <tr><td style="color:#6b7689;padding:3px 0;">Claims</td><td style="text-align:right;font-weight:600;">{claims}</td></tr>
+      <tr><td style="color:#6b7689;padding:3px 0;">Total to pay</td><td style="text-align:right;font-weight:700;font-size:15px;">{total_s}</td></tr>
+    </table>
+  </div>
+  <p style="font-size:13px; color:#6b7689; line-height:1.6;">
+    The full consolidated report (with all bills + approval sign-offs) is attached.
+    Every claim is clickable from the table of contents on page 2.
+  </p>
+  <hr style="border:none; border-top:1px dashed #d6dde6; margin:32px 0 16px;" />
+  <p style="font-size:11px; color:#6b7689; font-family:monospace; letter-spacing:0.05em;">
+    METFRAA · EXPENSE PORTAL · AUTOMATED MESSAGE
+  </p>
+</body></html>"""
+
+
+def send_consolidated_to_accounts_pdf(report, employee: dict, pdf_bytes: bytes) -> dict:
+    """Send the branded APPROVED FOR PAYMENT email to accounts with the
+    consolidated PDF attached, CC HR. Returns {ok, to, error}."""
+    to = _accounts_email()
+    cc = [_hr_email()] if _hr_email() else None
+    from datetime import datetime
+    try:
+        y, m = (report.period or "").split("-")
+        month = datetime(int(y), int(m), 1).strftime("%B %Y")
+    except Exception:
+        month = report.period
+    subject = (f"[Metfraa] Reimbursement Approved · {month} · {employee.get('name','')} "
+               f"· INR {float(report.total_amount or 0):,.2f}")
+    html = _approved_for_payment_html(
+        employee.get("name", ""), employee.get("email", ""), employee.get("code", ""),
+        report.period, report.submission_count, report.total_amount)
+    safe = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in (employee.get("name") or "employee"))
+    fname = f"{report.period}_{safe}_consolidated.pdf"
+    ok = _send_with_pdf(to, subject, html, pdf_bytes, fname, cc=cc)
+    return {"ok": ok, "to": to, "cc": cc,
+            "error": None if ok else "send failed (check SMTP config / logs)"}
