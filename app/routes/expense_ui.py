@@ -889,6 +889,46 @@ async def api_settle(sub_id: int, request: Request,
         "message": "Settlement filed — awaiting review."}}
 
 
+def _code_variants(code):
+    """Employee-code punctuation variants (MET-029 <-> MET029) for resolving
+    legacy OneDrive paths whose folder kept the original code form."""
+    if not code:
+        return []
+    out, seen = [], {code}
+    cands = [code.replace("-", "")]
+    if "-" not in code and len(code) > 3 and code[:3].isalpha():
+        cands.append(code[:3] + "-" + code[3:])
+    for v in cands:
+        if v and v not in seen:
+            seen.add(v); out.append(v)
+    return out
+
+
+def _load_bill_bytes(db, sub) -> list:
+    """Pull a submission's bill files from OneDrive so they can be embedded in
+    the regenerated PDF. Best-effort: a bill that can't be fetched is skipped,
+    never fatal."""
+    from ..models import ExpenseAttachment
+    from ..routes.expense import _artifacts
+    art = _artifacts()
+    name, code = _emp_name_code(db, sub)
+    out = []
+    for a in (db.query(ExpenseAttachment)
+              .filter(ExpenseAttachment.submission_id == sub.id)
+              .order_by(ExpenseAttachment.row_idx, ExpenseAttachment.id).all()):
+        cands = [a.onedrive_path,
+                 art.legacy_bill_path(name, code, sub.reference, a.filename)]
+        for alt in _code_variants(code):
+            cands.append(art.legacy_bill_path(name, alt, sub.reference, a.filename))
+        data = _od_fetch(cands)
+        if data:
+            out.append({"label": a.label or a.filename, "filename": a.filename,
+                        "category": getattr(a, "category", None) or "general",
+                        "mime_type": a.mime_type, "size_bytes": a.size_bytes or len(data),
+                        "_bytes": data})
+    return out
+
+
 def _od_fetch(paths: list) -> bytes | None:
     """Try each candidate OneDrive path in turn; return the first that exists.
 
@@ -959,8 +999,13 @@ def api_submission_pdf(sub_id: int, request: Request, download: str | None = Non
 
     # 2. regenerate on the fly so the button never dead-ends
     try:
-        meta = FORM_META.get(sub.form_type) or {}
-        pdf = art.generate_expense_pdf(sub, meta.get("title", sub.form_type))
+        from ..services.expense_pdf import build_from_submission
+        # Branded renderer + the claim's own bills embedded, matching the
+        # original design. Bills are downloaded from OneDrive so the
+        # regenerated report is complete, not just the form page.
+        atts = _load_bill_bytes(db, sub)
+        pdf = build_from_submission(db, sub, attachments=atts,
+                                    suppress_attachments=not atts)
     except Exception as e:
         log.error("[expense] pdf regen failed for %s: %s", sub.reference, e, exc_info=True)
         return _err(502, "Could not produce the report just now — please try again.")
