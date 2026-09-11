@@ -686,9 +686,15 @@ def _render_all(d, sub, emp, payload, attachments, suppress_attachments):
         d.y = sigY + 40
 
     # -- bills (only when NOT merging externally) --
+    # In the consolidated merge, PDF bills are spliced in as REAL pages by the
+    # merger (pypdf can copy PDF pages; this renderer can't). So here we render
+    # image bills inline and, for standalone reports, a placeholder page for PDF
+    # bills. The merger passes image-only attachment lists, so PDF placeholders
+    # never appear in the consolidated document.
     if attachments and not suppress_attachments:
+        n = len(attachments)
         for idx, att in enumerate(attachments):
-            _render_bill(d, att, idx + 1, len(attachments))
+            _render_bill(d, att, idx + 1, n)
 
 
 def _render_bill(d, att, idx, total):

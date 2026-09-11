@@ -1,0 +1,182 @@
+diff --git a/app/services/expense_consolidated_pdf.py b/app/services/expense_consolidated_pdf.py
+index 6661e66..c0d0143 100644
+--- a/app/services/expense_consolidated_pdf.py
++++ b/app/services/expense_consolidated_pdf.py
+@@ -21,11 +21,12 @@ from reportlab.pdfbase import pdfmetrics
+ from reportlab.pdfgen import canvas as _canvas
+ 
+ from .expense_pdf import (_ensure_fonts, _font, BLUE, INK, LINE, MUTED, SOFT,
+-                          build_claim_pdf)
++                          build_claim_pdf, GROUP_LOGO, COMPANY_LOGOS)
++from reportlab.lib.utils import ImageReader
+ 
+ PAGE_W, PAGE_H = A4
+ MARGIN = 40
+-RENDER_VERSION = 2   # bump when the layout changes
++RENDER_VERSION = 3   # bump when the layout changes (v3: PDF bills embedded + cover logos)
+ 
+ FORM_LABEL = {
+     "met_local": "Local Travel", "met_cab": "Cab Reimbursement",
+@@ -84,8 +85,28 @@ def _hex(c):
+     return HexColor(c)
+ 
+ 
++def _draw_logos(c):
++    """Group logo (left) + Metfraa logo (right) at the top — matches the
++    individual claim headers so the cover is branded too."""
++    top = 30
++    try:
++        g = ImageReader(GROUP_LOGO); gw, gh = g.getSize(); h = 22
++        c.drawImage(g, 50, PAGE_H - top - h, width=h * gw / gh, height=h, mask="auto")
++    except Exception:
++        pass
++    co = COMPANY_LOGOS.get("metfraa")
++    if co:
++        try:
++            im = ImageReader(co); iw, ih = im.getSize()
++            bw, bh = 110, 26; sc = min(bw / iw, bh / ih); w, hh = iw * sc, ih * sc
++            c.drawImage(im, PAGE_W - 50 - w, PAGE_H - top - hh, width=w, height=hh, mask="auto")
++        except Exception:
++            pass
++
++
+ def _draw_cover(c, employee, period, total, count, generated_at, signoffs):
+     W, H = PAGE_W, PAGE_H
++    _draw_logos(c)
+     c.setFillColor(_hex(BLUE))
+     c.rect(0, H - 6, W, 6, fill=1, stroke=0)
+ 
+@@ -199,6 +220,7 @@ def _draw_toc_pages(subs):
+     header_period = subs[0]["_period"] if subs else ""
+ 
+     def header():
++        _draw_logos(c)
+         c.setFillColor(_hex(BLUE)); c.rect(0, H - 6, W, 6, fill=1, stroke=0)
+         c.setFont(_font(bold=True), 9); c.setFillColor(_hex(MUTED))
+         c.drawString(MARGIN, H - 70, "TABLE OF CONTENTS")
+@@ -289,6 +311,33 @@ def _link_annot(rect, target_page_index):
+     })
+ 
+ 
++
++
++def _bill_band_pdf(idx, total, label, meta):
++    """A one-page overlay: 'BILL n OF m' + label + meta at the top of a PDF-bill
++    page, plus the HOME pill. Matches the image-bill header style."""
++    buf = io.BytesIO()
++    c = _canvas.Canvas(buf, pagesize=A4)
++    W, H = PAGE_W, PAGE_H
++    c.setFont(_font(bold=True), 8); c.setFillColor(_hex(MUTED))
++    c.setCharSpace = None
++    c.drawString(50, H - 44, f"BILL {idx} OF {total}")
++    c.setFont(_font(bold=True), 13); c.setFillColor(_hex(INK))
++    c.drawString(50, H - 62, (label or "Bill")[:90])
++    c.setFont(_font(), 9); c.setFillColor(_hex(MUTED))
++    c.drawString(50, H - 78, meta)
++    # HOME pill
++    lab = "HOME ^"
++    pw = pdfmetrics.stringWidth(lab, _font(bold=True), 8) + 16
++    x = W - MARGIN - pw; y = H - MARGIN + 4
++    c.setFillColor(_hex(SOFT)); c.setStrokeColor(_hex(LINE)); c.setLineWidth(0.5)
++    c.roundRect(x, y, pw, 16, 2, fill=1, stroke=1)
++    c.setFillColor(_hex(BLUE)); c.setFont(_font(bold=True), 8)
++    c.drawString(x + 8, y + 4.5, lab)
++    c.save()
++    return buf.getvalue(), [x, y, x + pw, y + 16]
++
++
+ def build_consolidated(claims: list, employee: dict, period: str, total,
+                        generated_at, signoffs=None) -> tuple[bytes, int]:
+     """claims: ordered list of dicts, each:
+@@ -298,13 +347,31 @@ def build_consolidated(claims: list, employee: dict, period: str, total,
+     Returns (pdf_bytes, page_count)."""
+     _ensure_fonts()
+ 
+-    # 1. render each claim to its own PDF (with bills embedded)
++    # 1. render each claim. Image bills go INSIDE the claim PDF; PDF bills are
++    #    kept aside to be spliced as real pages after the claim (pypdf can copy
++    #    PDF pages, which the claim renderer cannot).
+     claim_pdfs = []
++    claim_pdf_bills = []   # per claim: list of (att, PdfReader) for PDF bills
+     for cl in claims:
++        atts = cl.get("attachments") or []
++        image_atts, pdf_atts = [], []
++        for a in atts:
++            if (a.get("mime_type") or "").startswith("image/") and a.get("_bytes"):
++                image_atts.append(a)
++            elif (a.get("mime_type") == "application/pdf") and a.get("_bytes"):
++                pdf_atts.append(a)
++            else:
++                image_atts.append(a)   # unknown -> let the renderer note it
+         pdf = build_claim_pdf(cl["sub"], cl["emp"], cl["payload"],
+-                              attachments=cl.get("attachments") or [],
+-                              suppress_attachments=False)
++                              attachments=image_atts, suppress_attachments=False)
+         claim_pdfs.append(PdfReader(io.BytesIO(pdf)))
++        readers = []
++        for a in pdf_atts:
++            try:
++                readers.append((a, PdfReader(io.BytesIO(a["_bytes"]))))
++            except Exception:
++                pass
++        claim_pdf_bills.append(readers)
+ 
+     # 2. cover
+     cover_buf = io.BytesIO()
+@@ -336,15 +403,33 @@ def build_consolidated(claims: list, employee: dict, period: str, total,
+     home_reader = PdfReader(io.BytesIO(home_overlay))
+     home_page = home_reader.pages[0]
+ 
+-    for reader in claim_pdfs:
++    for ci, reader in enumerate(claim_pdfs):
+         claim_start.append(len(writer.pages))
+         for p in reader.pages:
+-            # stamp the HOME pill and add its link back to the first TOC page
+             try:
+                 p.merge_page(home_page)
+             except Exception:
+                 pass
+             writer.add_page(p)
++        # splice this claim's PDF bills as real pages, each with a title band
++        pdf_bills = claim_pdf_bills[ci]
++        for bi, (att, breader) in enumerate(pdf_bills):
++            meta = (f"Category: {att.get('category') or 'general'} · "
++                    f"application/pdf · {round((att.get('size_bytes') or 0) / 1024)} KB")
++            band_bytes, _ = _bill_band_pdf(bi + 1, len(pdf_bills),
++                                           att.get("label") or att.get("filename"), meta)
++            band_page = PdfReader(io.BytesIO(band_bytes)).pages[0]
++            for bpi, bp in enumerate(breader.pages):
++                # stamp the band+HOME only on the FIRST page of each PDF bill,
++                # HOME on the rest, so multi-page bills stay legible.
++                try:
++                    if bpi == 0:
++                        bp.merge_page(band_page)
++                    else:
++                        bp.merge_page(home_page)
++                except Exception:
++                    pass
++                writer.add_page(bp)
+ 
+     # 5. TOC row links -> each claim's first page
+     for (toc_pg, rect, claim_idx) in row_targets:
+diff --git a/app/services/expense_pdf.py b/app/services/expense_pdf.py
+index 9512494..840bfa0 100644
+--- a/app/services/expense_pdf.py
++++ b/app/services/expense_pdf.py
+@@ -686,9 +686,15 @@ def _render_all(d, sub, emp, payload, attachments, suppress_attachments):
+         d.y = sigY + 40
+ 
+     # -- bills (only when NOT merging externally) --
++    # In the consolidated merge, PDF bills are spliced in as REAL pages by the
++    # merger (pypdf can copy PDF pages; this renderer can't). So here we render
++    # image bills inline and, for standalone reports, a placeholder page for PDF
++    # bills. The merger passes image-only attachment lists, so PDF placeholders
++    # never appear in the consolidated document.
+     if attachments and not suppress_attachments:
++        n = len(attachments)
+         for idx, att in enumerate(attachments):
+-            _render_bill(d, att, idx + 1, len(attachments))
++            _render_bill(d, att, idx + 1, n)
+ 
+ 
+ def _render_bill(d, att, idx, total):
