@@ -597,6 +597,10 @@ class ExpenseConsolidatedReport(Base):
     submission_ids = Column(JSON, default=list)
     pdf_web_url = Column(Text, nullable=True)      # OneDrive path (Vercel has no disk)
     pdf_page_count = Column(Integer, nullable=True)
+    # Which renderer built the stored PDF. Bumped when the layout changes, so a
+    # report whose file predates the current renderer is rebuilt on next send
+    # instead of serving a stale, differently-styled document.
+    pdf_render_version = Column(Integer, nullable=True)
     generated_at = Column(String(32), nullable=False)
     generated_by = Column(String(200), nullable=True)   # 'cron' or an admin email
 

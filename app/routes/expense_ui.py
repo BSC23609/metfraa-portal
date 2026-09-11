@@ -1953,6 +1953,8 @@ def _build_consolidated(db: Session, r: ExpenseConsolidatedReport) -> str | None
         info = _od.upload_to_path(pdf, path, "application/pdf")
         r.pdf_web_url = (info or {}).get("webUrl") or path
         r.pdf_page_count = pages or None
+        from ..services.expense_consolidated_pdf import RENDER_VERSION
+        r.pdf_render_version = RENDER_VERSION
         return r.pdf_web_url
     except Exception as e:
         log.error("[consolidated-pdf] build failed for report %s: %s", r.id, e,
@@ -2178,21 +2180,27 @@ async def api_send_for_approval(request: Request, bg: BackgroundTasks,
 
 
 def _consolidated_pdf_bytes(db: Session, r) -> bytes | None:
-    """Return the consolidated PDF bytes for a report: the stored OneDrive copy,
-    or a fresh build. Used to attach it to the accounts email."""
+    """Return the consolidated PDF bytes for a report: the stored OneDrive copy
+    if it was built by the CURRENT renderer, otherwise a fresh build. This is
+    what stops a stale, old-style PDF from being emailed after a renderer
+    upgrade."""
     from ..routes.expense import _artifacts
+    from ..services.expense_consolidated_pdf import RENDER_VERSION
     art = _artifacts()
     emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
     safe = (emp.employee_code if emp and emp.employee_code else str(r.employee_id))
     rel = f"{art.expense_root()}/{r.period}/_Consolidated/{safe}_{r.period}.pdf"
-    for cand in ([r.pdf_web_url] if (r.pdf_web_url and not r.pdf_web_url.startswith("http")) else []) + [rel]:
-        try:
-            data = _od.download_from_path(cand)
-        except Exception:
-            data = None
-        if data:
-            return data
-    # rebuild as a last resort
+
+    stored_ok = (r.pdf_render_version or 0) >= RENDER_VERSION
+    if stored_ok:
+        for cand in ([r.pdf_web_url] if (r.pdf_web_url and not r.pdf_web_url.startswith("http")) else []) + [rel]:
+            try:
+                data = _od.download_from_path(cand)
+            except Exception:
+                data = None
+            if data:
+                return data
+    # rebuild — either the stored file is stale, missing, or predates this renderer
     try:
         _build_consolidated(db, r)
         db.commit()
@@ -2618,10 +2626,13 @@ def api_consolidated_pdf(report_id: int, request: Request,
     safe = (emp.employee_code if emp and emp.employee_code else str(r.employee_id))
     rel = f"{art.expense_root()}/{r.period}/_Consolidated/{safe}_{r.period}.pdf"
 
+    from ..services.expense_consolidated_pdf import RENDER_VERSION
+    stored_ok = (r.pdf_render_version or 0) >= RENDER_VERSION
     candidates = []
-    if r.pdf_web_url and not r.pdf_web_url.startswith("http"):
+    if stored_ok and r.pdf_web_url and not r.pdf_web_url.startswith("http"):
         candidates.append(r.pdf_web_url)
-    candidates.append(rel)
+    if stored_ok:
+        candidates.append(rel)
     # code punctuation may have shifted post-migration (MET-029 <-> MET029)
     _cv = globals().get("_code_variants")
     if emp and emp.employee_code and _cv:

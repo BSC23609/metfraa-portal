@@ -25,6 +25,7 @@ from .expense_pdf import (_ensure_fonts, _font, BLUE, INK, LINE, MUTED, SOFT,
 
 PAGE_W, PAGE_H = A4
 MARGIN = 40
+RENDER_VERSION = 2   # bump when the layout changes
 
 FORM_LABEL = {
     "met_local": "Local Travel", "met_cab": "Cab Reimbursement",
