@@ -1906,17 +1906,47 @@ def api_admin_employees(request: Request, all: str | None = None,
 TERMINAL_GOOD = ("approved", "settled", "settled_offline", "archived")
 
 def _build_consolidated(db: Session, r: ExpenseConsolidatedReport) -> str | None:
-    """Render the consolidated PDF and push it to OneDrive. Fail-soft."""
+    """Render the branded consolidated PDF (cover + navigable TOC + each claim
+    with its bills merged in) and push it to OneDrive. Fail-soft."""
     try:
         from ..routes.expense import _artifacts
+        from ..services import expense_pdf as _epdf
+        from ..services.expense_consolidated_pdf import build_consolidated
         art = _artifacts()
         emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
         rows = (db.query(ExpenseSubmission)
                 .filter(ExpenseSubmission.id.in_(list(r.submission_ids or [])))
                 .order_by(ExpenseSubmission.submitted_at_ist).all())
-        pdf, pages = art.build_consolidated_pdf(
-            r, {"name": emp.name if emp else "", "email": emp.email if emp else "",
-                "code": emp.employee_code if emp else ""}, rows)
+
+        # Build the per-claim inputs, resolving each claim's employee, project
+        # lookup and bill bytes exactly as the standalone renderer does.
+        claims = []
+        for sub in rows:
+            # reuse the adapter to shape sub/emp/payload, then attach bills
+            atts = _load_bill_bytes(db, sub)
+            s_dict, e_dict, payload = _epdf.shape_submission(db, sub)
+            s_dict["_employee_name"] = e_dict.get("name") or sub.employee_name
+            s_dict["_period"] = sub.period
+            s_dict["submitted_at"] = sub.submitted_at_ist
+            s_dict["late_settlement"] = bool(getattr(sub, "late_settlement", False))
+            s_dict["differential_amount"] = getattr(sub, "differential_amount", None)
+            s_dict["actuals"] = getattr(sub, "actuals", None)
+            claims.append({"sub": s_dict, "emp": e_dict, "payload": payload,
+                           "attachments": atts})
+
+        signoffs = {}
+        if r.hr_approved_by:
+            signoffs["hr"] = {"by": r.hr_approved_by, "at": r.hr_approved_at}
+        if r.mgmt_approved_by:
+            signoffs["mgmt"] = {"by": r.mgmt_approved_by, "at": r.mgmt_approved_at}
+
+        cover_emp = {"name": emp.name if emp else "",
+                     "email": emp.email if emp else "",
+                     "code": emp.employee_code if emp else ""}
+        pdf, pages = build_consolidated(
+            claims, cover_emp, r.period, r.total_amount,
+            r.generated_at or _ist_now(), signoffs=signoffs)
+
         safe = (emp.employee_code if emp and emp.employee_code else str(r.employee_id))
         path = (f"{art.expense_root()}/{r.period}/_Consolidated/"
                 f"{safe}_{r.period}.pdf")

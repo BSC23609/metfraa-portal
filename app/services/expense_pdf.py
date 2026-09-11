@@ -760,15 +760,9 @@ def build_claim_pdf(sub: dict, emp: dict, payload: dict, attachments=None,
 #  Adapter: portal ORM -> the dicts build_claim_pdf expects.
 # ===========================================================================
 
-def build_from_submission(db, sub, attachments=None, suppress_attachments=False) -> bytes:
-    """Render a portal ExpenseSubmission with the branded renderer.
-
-    db: SQLAlchemy session (to resolve the employee + DTR project lookup).
-    sub: ExpenseSubmission ORM object.
-    attachments: optional list of dicts each with the keys build_claim_pdf
-                 needs plus _bytes; if None and not suppressed, the caller is
-                 expected to have merged bills separately.
-    """
+def shape_submission(db, sub):
+    """Map a portal ExpenseSubmission to (sub_dict, emp_dict, payload) for the
+    renderer. Shared by the standalone and consolidated builders."""
     from ..models import Employee, ExpenseEmployeeMeta, ExpenseProject
 
     emp_row = db.query(Employee).filter(Employee.id == sub.employee_id).first()
@@ -819,5 +813,11 @@ def build_from_submission(db, sub, attachments=None, suppress_attachments=False)
         "client_name": payload.get("client_name"),
         "project": project, "project_lookup": project_lookup,
     }
+    return s, emp, payload
+
+
+def build_from_submission(db, sub, attachments=None, suppress_attachments=False) -> bytes:
+    """Render one submission's branded PDF (adapter + renderer in one call)."""
+    s, emp, payload = shape_submission(db, sub)
     return build_claim_pdf(s, emp, payload, attachments=attachments,
                            suppress_attachments=suppress_attachments)
