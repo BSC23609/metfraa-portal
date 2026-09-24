@@ -78,6 +78,8 @@ EXPENSE_PARITY_MIGRATIONS += [
 # today, but any query loading the whole model would fail on Postgres — the
 # same class of break that took out the gatepass page.
 MISC_MIGRATIONS = [
+    "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS plant_admin "
+    "BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE expense_consolidated_reports ADD COLUMN IF NOT EXISTS "
     "pdf_render_version INTEGER",
     "ALTER TABLE monthly_reports ADD COLUMN IF NOT EXISTS payload JSONB",

@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+{% block title %}Plant Operations — Metfraa{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="plantApp()" x-init="init()" x-cloak>
+
+  <div class="mb-8">
+    <div class="lbl mb-2">Metfraa Portal</div>
+    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">Plant Operations</h1>
+    <div class="flex items-center gap-3 mt-3">
+      <span class="h-px w-10 bg-metfraa-blue"></span>
+      <p class="text-sm text-metfraa-gray-500">Daily labour &amp; contractor attendance.</p>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex gap-1 mb-6 border-b border-metfraa-gray-200 flex-wrap">
+    <template x-for="t in tabs" :key="t.id">
+      <button @click="tab = t.id; onTab()"
+        :class="tab === t.id ? 'border-metfraa-blue text-metfraa-ink'
+                             : 'border-transparent text-metfraa-gray-500 hover:text-metfraa-ink'"
+        class="px-4 py-2 text-sm font-bold border-b-2" x-text="t.label"></button>
+    </template>
+  </div>
+
+  <!-- ============ ATTENDANCE ============ -->
+  <div x-show="tab === 'day'">
+    <div class="flex items-center justify-between flex-wrap gap-3 mb-5">
+      <div class="flex items-center gap-3">
+        <label class="lbl">Date</label>
+        <input type="date" x-model="day" @change="loadDay()"
+               class="rounded-lg border-metfraa-gray-300 text-sm">
+        <span x-show="saved" class="text-xs text-green-700">saved earlier · editable</span>
+      </div>
+      <button @click="saveDay()" :disabled="saving"
+        class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
+        <span x-text="saving ? 'Saving…' : 'Save attendance'"></span>
+      </button>
+    </div>
+
+    <!-- Own labour -->
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center justify-between mb-3">
+        <div class="lbl">Own labour</div>
+        <div class="text-xs text-metfraa-gray-500">
+          Present <span class="font-semibold" x-text="presentCount"></span> ·
+          Half <span class="font-semibold" x-text="halfCount"></span> ·
+          Absent <span class="font-semibold" x-text="absentCount"></span>
+        </div>
+      </div>
+      <template x-if="!labour.length">
+        <div class="text-sm text-metfraa-gray-400 py-4">No labour in the roster. Add them under Labour Master.</div>
+      </template>
+      <div class="divide-y divide-metfraa-gray-100">
+        <template x-for="l in labour" :key="l.id">
+          <div class="flex items-center justify-between py-2.5">
+            <div>
+              <div class="font-semibold text-metfraa-ink" x-text="l.name"></div>
+              <div class="text-xs text-metfraa-gray-500" x-text="l.designation"></div>
+            </div>
+            <div class="flex gap-1">
+              <template x-for="opt in ['P','H','A']" :key="opt">
+                <button @click="l.status = opt"
+                  :class="l.status === opt ? statusClass(opt) : 'bg-white ring-1 ring-metfraa-gray-300 text-metfraa-gray-500'"
+                  class="w-11 h-9 rounded-lg text-sm font-bold" x-text="opt"></button>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Contractors -->
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="lbl mb-3">Contractor teams — headcount</div>
+      <template x-if="!contractors.length">
+        <div class="text-sm text-metfraa-gray-400 py-4">No contractors. Add them under Contractor Master.</div>
+      </template>
+      <table x-show="contractors.length" class="w-full text-sm">
+        <thead>
+          <tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-2">Team</th><th class="py-2 w-28">Skilled</th>
+            <th class="py-2 w-28">Helper</th><th class="py-2 w-20 text-right">Total</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-metfraa-gray-100">
+          <template x-for="c in contractors" :key="c.id">
+            <tr>
+              <td class="py-2 font-semibold" x-text="c.name"></td>
+              <td class="py-2"><input type="number" min="0" x-model.number="c.skilled"
+                    class="w-20 rounded border-metfraa-gray-300 text-sm"></td>
+              <td class="py-2"><input type="number" min="0" x-model.number="c.helper"
+                    class="w-20 rounded border-metfraa-gray-300 text-sm"></td>
+              <td class="py-2 text-right font-semibold" x-text="(+c.skilled||0)+(+c.helper||0)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============ LABOUR MASTER ============ -->
+  <div x-show="tab === 'labour'">
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div class="lbl">Labour Master</div>
+        <button @click="editLabour(null)"
+          class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add labour</button>
+      </div>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-2">Name</th><th class="py-2">Designation</th>
+            <th class="py-2 text-right">Per-day salary</th><th class="py-2">Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-metfraa-gray-100">
+          <template x-for="l in labourAll" :key="l.id">
+            <tr :class="!l.active && 'opacity-50'">
+              <td class="py-2 font-semibold" x-text="l.name"></td>
+              <td class="py-2 text-metfraa-gray-600" x-text="l.designation || '—'"></td>
+              <td class="py-2 text-right mono" x-text="'₹ ' + (l.per_day_salary||0).toLocaleString('en-IN')"></td>
+              <td class="py-2"><span x-text="l.active ? 'Active' : 'Inactive'"
+                    :class="l.active ? 'text-green-700' : 'text-metfraa-gray-400'" class="text-xs font-semibold"></span></td>
+              <td class="py-2 text-right whitespace-nowrap">
+                <button @click="editLabour(l)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
+                <button @click="delLabour(l)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <label class="flex items-center gap-2 text-xs text-metfraa-gray-500 mt-3">
+        <input type="checkbox" x-model="showInactiveLabour" @change="loadLabour()" class="rounded border-metfraa-gray-300">
+        Show inactive
+      </label>
+    </div>
+  </div>
+
+  <!-- ============ CONTRACTOR MASTER ============ -->
+  <div x-show="tab === 'contractors'">
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div class="lbl">Contractor Master</div>
+        <button @click="editContractor(null)"
+          class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add contractor</button>
+      </div>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-2">Name</th><th class="py-2 text-right">Per-day rate</th>
+            <th class="py-2">Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-metfraa-gray-100">
+          <template x-for="c in contractorsAll" :key="c.id">
+            <tr :class="!c.active && 'opacity-50'">
+              <td class="py-2 font-semibold" x-text="c.name"></td>
+              <td class="py-2 text-right mono" x-text="'₹ ' + (c.per_day_rate||0).toLocaleString('en-IN')"></td>
+              <td class="py-2"><span x-text="c.active ? 'Active' : 'Inactive'"
+                    :class="c.active ? 'text-green-700' : 'text-metfraa-gray-400'" class="text-xs font-semibold"></span></td>
+              <td class="py-2 text-right whitespace-nowrap">
+                <button @click="editContractor(c)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
+                <button @click="delContractor(c)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <label class="flex items-center gap-2 text-xs text-metfraa-gray-500 mt-3">
+        <input type="checkbox" x-model="showInactiveContr" @change="loadContractors()" class="rounded border-metfraa-gray-300">
+        Show inactive
+      </label>
+    </div>
+  </div>
+
+  <!-- edit drawer -->
+  <div x-show="drawer" x-cloak class="fixed inset-0 bg-black/30 flex justify-end z-50" @click.self="drawer=null">
+    <div class="bg-white w-full max-w-sm h-full p-6 overflow-y-auto">
+      <div class="flex items-center justify-between mb-5">
+        <div class="display text-lg font-bold" x-text="drawerTitle"></div>
+        <button @click="drawer=null" class="text-metfraa-gray-400 text-xl">&times;</button>
+      </div>
+      <template x-if="drawer === 'labour'">
+        <div class="space-y-4">
+          <div><label class="lbl block mb-1">Name</label>
+            <input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div><label class="lbl block mb-1">Designation</label>
+            <input x-model="form.designation" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div><label class="lbl block mb-1">Per-day salary (₹)</label>
+            <input type="number" min="0" x-model.number="form.per_day_salary"
+                   class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
+          <button @click="saveLabour()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+        </div>
+      </template>
+      <template x-if="drawer === 'contractor'">
+        <div class="space-y-4">
+          <div><label class="lbl block mb-1">Name</label>
+            <input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div><label class="lbl block mb-1">Per-day rate (₹)</label>
+            <input type="number" min="0" x-model.number="form.per_day_rate"
+                   class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
+          <button @click="saveContractor()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<script>
+function plantApp() {
+  return {
+    tab: 'day', day: new Date().toISOString().slice(0, 10),
+    labour: [], contractors: [], saved: false, saving: false,
+    labourAll: [], contractorsAll: [], showInactiveLabour: false, showInactiveContr: false,
+    drawer: null, form: {},
+
+    tabs: [{ id: 'day', label: 'Attendance' }, { id: 'labour', label: 'Labour Master' },
+           { id: 'contractors', label: 'Contractor Master' }],
+
+    get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
+    get halfCount() { return this.labour.filter(l => l.status === 'H').length; },
+    get absentCount() { return this.labour.filter(l => l.status === 'A').length; },
+
+    statusClass(o) {
+      return { P: 'bg-green-600 text-white', H: 'bg-amber-500 text-white',
+               A: 'bg-red-500 text-white' }[o];
+    },
+
+    init() { this.loadDay(); },
+    onTab() {
+      if (this.tab === 'day') this.loadDay();
+      if (this.tab === 'labour') this.loadLabour();
+      if (this.tab === 'contractors') this.loadContractors();
+    },
+
+    async loadDay() {
+      const r = await fetch(`/plant/api/day?date=${this.day}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      this.labour = d.labour; this.contractors = d.contractors; this.saved = d.saved;
+    },
+    async saveDay() {
+      this.saving = true;
+      try {
+        const r = await fetch('/plant/api/day', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date: this.day,
+            labour: this.labour.map(l => ({ id: l.id, status: l.status })),
+            contractors: this.contractors.map(c => ({ id: c.id,
+              skilled: +c.skilled || 0, helper: +c.helper || 0 })) }),
+        });
+        if (!r.ok) { alert('Save failed'); return; }
+        this.saved = true;
+      } finally { this.saving = false; }
+    },
+
+    async loadLabour() {
+      const r = await fetch('/plant/api/labour?include_inactive=' + (this.showInactiveLabour ? 1 : 0));
+      if (r.ok) this.labourAll = (await r.json()).labour;
+    },
+    editLabour(l) {
+      this.form = l ? { ...l } : { name: '', designation: '', per_day_salary: 0, active: true };
+      this.drawer = 'labour';
+    },
+    async saveLabour() {
+      const r = await fetch('/plant/api/labour', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(this.form),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
+      this.drawer = null; this.loadLabour();
+    },
+    async delLabour(l) {
+      if (!confirm(`Remove ${l.name}? If they have attendance history they'll be deactivated, not deleted.`)) return;
+      const r = await fetch(`/plant/api/labour/${l.id}`, { method: 'DELETE' });
+      if (!r.ok) { alert('Failed'); return; }
+      this.loadLabour();
+    },
+
+    async loadContractors() {
+      const r = await fetch('/plant/api/contractors?include_inactive=' + (this.showInactiveContr ? 1 : 0));
+      if (r.ok) this.contractorsAll = (await r.json()).contractors;
+    },
+    editContractor(c) {
+      this.form = c ? { ...c } : { name: '', per_day_rate: 0, active: true };
+      this.drawer = 'contractor';
+    },
+    async saveContractor() {
+      const r = await fetch('/plant/api/contractors', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(this.form),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
+      this.drawer = null; this.loadContractors();
+    },
+    async delContractor(c) {
+      if (!confirm(`Remove ${c.name}? If they have attendance history they'll be deactivated, not deleted.`)) return;
+      const r = await fetch(`/plant/api/contractors/${c.id}`, { method: 'DELETE' });
+      if (!r.ok) { alert('Failed'); return; }
+      this.loadContractors();
+    },
+  };
+}
+</script>
+{% endblock %}

@@ -1,0 +1,275 @@
+"""Plant Operations — labour & contractor daily attendance.
+
+First feature of the Plant Operations module in the Metfraa portal. Records:
+  * own labour — named present/absent/half per day (P / A / H)
+  * contractor teams — a split skilled+helper headcount per day (no names)
+
+Admin masters manage the labour roster (name, designation, per-day salary) and
+the contractor list (name, per-day rate). Salary/rate are stored now so the
+payable report the user will build later needs no schema change.
+"""
+from datetime import date, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+
+from ..access import get_access
+from ..database import get_db
+from ..deps import get_current_user
+from ..models import (Employee, PlantContractor, PlantContractorAttendance,
+                      PlantLabour, PlantLabourAttendance)
+
+router = APIRouter(prefix="/plant", tags=["plant"])
+templates = Jinja2Templates(directory="app/templates")
+
+VALID = {"P", "A", "H"}
+
+
+def _guard(db: Session, user: Employee):
+    if not get_access(db, user).can_admin_plant:
+        raise HTTPException(status_code=403, detail="Plant Operations access only")
+
+
+def _parse_date(s: str | None) -> date:
+    if not s:
+        return datetime.utcnow().date()
+    try:
+        return datetime.strptime(s[:10], "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date (YYYY-MM-DD)")
+
+
+# ------------------------------------------------------------------ page
+
+@router.get("/", response_class=HTMLResponse)
+def page(request: Request, user: Employee = Depends(get_current_user),
+         db: Session = Depends(get_db)):
+    _guard(db, user)
+    return templates.TemplateResponse(request, "plant.html", {"user": user})
+
+
+# ---------------------------------------------------------- daily attendance
+
+@router.get("/api/day")
+def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
+            db: Session = Depends(get_db)):
+    """The roster + contractor list for one day, pre-filled with any saved marks.
+    Absent labour defaults to P (present) in the UI; unsaved contractors to 0."""
+    _guard(db, user)
+    d = _parse_date(date)
+
+    labour = (db.query(PlantLabour).filter(PlantLabour.active == True)  # noqa: E712
+              .order_by(PlantLabour.id).all())
+    lmarks = {a.labour_id: a.status for a in
+              db.query(PlantLabourAttendance)
+              .filter(PlantLabourAttendance.att_date == d).all()}
+    contractors = (db.query(PlantContractor).filter(PlantContractor.active == True)  # noqa: E712
+                   .order_by(PlantContractor.id).all())
+    cmarks = {a.contractor_id: a for a in
+              db.query(PlantContractorAttendance)
+              .filter(PlantContractorAttendance.att_date == d).all()}
+
+    return {
+        "date": d.isoformat(),
+        "labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
+                    "status": lmarks.get(l.id, "P")} for l in labour],
+        "contractors": [{"id": c.id, "name": c.name,
+                         "skilled": cmarks[c.id].skilled if c.id in cmarks else 0,
+                         "helper": cmarks[c.id].helper if c.id in cmarks else 0}
+                        for c in contractors],
+        "saved": bool(lmarks or cmarks),
+    }
+
+
+@router.post("/api/day")
+async def api_save_day(request: Request, user: Employee = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    """Upsert a whole day's marks. Body:
+       { date, labour: [{id, status}], contractors: [{id, skilled, helper}] }"""
+    _guard(db, user)
+    b = await request.json()
+    d = _parse_date(b.get("date"))
+    now = datetime.utcnow()
+
+    valid_labour = {row[0] for row in db.query(PlantLabour.id).all()}
+    valid_contr = {row[0] for row in db.query(PlantContractor.id).all()}
+
+    for row in (b.get("labour") or []):
+        lid = row.get("id")
+        st = (row.get("status") or "P").upper()
+        if lid not in valid_labour:
+            continue
+        if st not in VALID:
+            raise HTTPException(status_code=400, detail=f"Bad status {st!r}")
+        rec = (db.query(PlantLabourAttendance)
+               .filter(PlantLabourAttendance.labour_id == lid,
+                       PlantLabourAttendance.att_date == d).first())
+        if rec:
+            rec.status = st
+            rec.marked_by = user.employee_code
+            rec.updated_at = now
+        else:
+            db.add(PlantLabourAttendance(labour_id=lid, att_date=d, status=st,
+                                         marked_by=user.employee_code))
+
+    def _int(v):
+        try:
+            return max(0, int(v))
+        except (TypeError, ValueError):
+            return 0
+
+    for row in (b.get("contractors") or []):
+        cid = row.get("id")
+        if cid not in valid_contr:
+            continue
+        sk, hp = _int(row.get("skilled")), _int(row.get("helper"))
+        rec = (db.query(PlantContractorAttendance)
+               .filter(PlantContractorAttendance.contractor_id == cid,
+                       PlantContractorAttendance.att_date == d).first())
+        if rec:
+            rec.skilled, rec.helper = sk, hp
+            rec.marked_by = user.employee_code
+            rec.updated_at = now
+        elif sk or hp:
+            db.add(PlantContractorAttendance(contractor_id=cid, att_date=d,
+                                             skilled=sk, helper=hp,
+                                             marked_by=user.employee_code))
+    db.commit()
+    return {"ok": True, "date": d.isoformat()}
+
+
+# --------------------------------------------------------------- masters
+
+@router.get("/api/labour")
+def api_labour_list(include_inactive: str | None = None,
+                    user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    _guard(db, user)
+    q = db.query(PlantLabour)
+    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
+        q = q.filter(PlantLabour.active == True)  # noqa: E712
+    rows = q.order_by(PlantLabour.active.desc(), PlantLabour.id).all()
+    return {"labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
+                        "per_day_salary": l.per_day_salary, "active": l.active}
+                       for l in rows]}
+
+
+@router.post("/api/labour")
+async def api_labour_save(request: Request, user: Employee = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    _guard(db, user)
+    b = await request.json()
+    name = (b.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    def _sal(v):
+        try:
+            return max(0.0, float(v or 0))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid salary")
+
+    lid = b.get("id")
+    if lid:
+        l = db.query(PlantLabour).filter(PlantLabour.id == lid).first()
+        if not l:
+            raise HTTPException(status_code=404, detail="Labour not found")
+        l.name = name
+        l.designation = (b.get("designation") or "").strip() or None
+        l.per_day_salary = _sal(b.get("per_day_salary"))
+        if "active" in b:
+            l.active = bool(b["active"])
+    else:
+        db.add(PlantLabour(name=name,
+                           designation=(b.get("designation") or "").strip() or None,
+                           per_day_salary=_sal(b.get("per_day_salary")),
+                           active=bool(b.get("active", True))))
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/labour/{lid}")
+def api_labour_delete(lid: int, user: Employee = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    """Soft-delete: deactivate so historic attendance is preserved. A labourer
+    with no attendance at all is removed outright."""
+    _guard(db, user)
+    l = db.query(PlantLabour).filter(PlantLabour.id == lid).first()
+    if not l:
+        raise HTTPException(status_code=404, detail="Not found")
+    has_history = (db.query(PlantLabourAttendance)
+                   .filter(PlantLabourAttendance.labour_id == lid).first() is not None)
+    if has_history:
+        l.active = False
+        db.commit()
+        return {"ok": True, "deactivated": True}
+    db.delete(l)
+    db.commit()
+    return {"ok": True, "deleted": True}
+
+
+@router.get("/api/contractors")
+def api_contractor_list(include_inactive: str | None = None,
+                        user: Employee = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    _guard(db, user)
+    q = db.query(PlantContractor)
+    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
+        q = q.filter(PlantContractor.active == True)  # noqa: E712
+    rows = q.order_by(PlantContractor.active.desc(), PlantContractor.id).all()
+    return {"contractors": [{"id": c.id, "name": c.name,
+                             "per_day_rate": c.per_day_rate, "active": c.active}
+                            for c in rows]}
+
+
+@router.post("/api/contractors")
+async def api_contractor_save(request: Request,
+                              user: Employee = Depends(get_current_user),
+                              db: Session = Depends(get_db)):
+    _guard(db, user)
+    b = await request.json()
+    name = (b.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    def _rate(v):
+        try:
+            return max(0.0, float(v or 0))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid rate")
+
+    cid = b.get("id")
+    if cid:
+        c = db.query(PlantContractor).filter(PlantContractor.id == cid).first()
+        if not c:
+            raise HTTPException(status_code=404, detail="Contractor not found")
+        c.name = name
+        c.per_day_rate = _rate(b.get("per_day_rate"))
+        if "active" in b:
+            c.active = bool(b["active"])
+    else:
+        db.add(PlantContractor(name=name, per_day_rate=_rate(b.get("per_day_rate")),
+                               active=bool(b.get("active", True))))
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/contractors/{cid}")
+def api_contractor_delete(cid: int, user: Employee = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    _guard(db, user)
+    c = db.query(PlantContractor).filter(PlantContractor.id == cid).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Not found")
+    has_history = (db.query(PlantContractorAttendance)
+                   .filter(PlantContractorAttendance.contractor_id == cid)
+                   .first() is not None)
+    if has_history:
+        c.active = False
+        db.commit()
+        return {"ok": True, "deactivated": True}
+    db.delete(c)
+    db.commit()
+    return {"ok": True, "deleted": True}

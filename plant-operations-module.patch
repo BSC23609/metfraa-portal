@@ -1,0 +1,836 @@
+diff --git a/app/access.py b/app/access.py
+index ded1aed..88515de 100644
+--- a/app/access.py
++++ b/app/access.py
+@@ -23,6 +23,7 @@ class Access:
+     expense_admin: bool = False
+     ehs_admin: bool = False
+     gatepass_admin: bool = False
++    plant_admin: bool = False
+     kpi_access: bool = True
+     expense_access: bool = True
+     ehs_access: bool = True
+@@ -30,7 +31,8 @@ class Access:
+     @property
+     def any_admin(self) -> bool:
+         return (self.superadmin or self.hr_admin or self.kpi_admin
+-                or self.expense_admin or self.ehs_admin or self.gatepass_admin)
++                or self.expense_admin or self.ehs_admin or self.gatepass_admin
++                or self.plant_admin)
+ 
+     @property
+     def can_manage_employees(self) -> bool:
+@@ -54,6 +56,12 @@ class Access:
+         # dedicated flag lets someone run gatepass WITHOUT the rest of HR.
+         return self.superadmin or self.hr_admin or self.gatepass_admin
+ 
++    @property
++    def can_admin_plant(self) -> bool:
++        # Plant-team attendance. superadmin implies it; the flag lets the plant
++        # team run it without any other admin rights.
++        return self.superadmin or self.plant_admin
++
+ 
+ def get_access(db: Session, user: Employee) -> Access:
+     row = db.query(EmployeeAccess).filter(EmployeeAccess.employee_id == user.id).first()
+@@ -67,6 +75,7 @@ def get_access(db: Session, user: Employee) -> Access:
+         expense_admin=row.expense_admin,
+         ehs_admin=row.ehs_admin,
+         gatepass_admin=row.gatepass_admin,
++        plant_admin=getattr(row, 'plant_admin', False),
+         kpi_access=row.kpi_access,
+         expense_access=row.expense_access,
+         ehs_access=row.ehs_access,
+diff --git a/app/main.py b/app/main.py
+index 3c7cc09..70e904d 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -26,6 +26,7 @@ from .routes import monthly_kpi as monthly_kpi_routes
+ from .routes import site_visits as site_visits_routes
+ from .routes import cron as cron_routes
+ from .routes import gatepass as gatepass_routes
++from .routes import plant as plant_routes
+ from .routes import gatepass_public as gatepass_public_routes
+ from .routes import tgt26 as tgt26_routes
+ from .routes import ehs as ehs_routes
+@@ -115,6 +116,7 @@ app.include_router(monthly_kpi_routes.router)
+ app.include_router(site_visits_routes.router)
+ app.include_router(cron_routes.router)
+ app.include_router(gatepass_routes.router)
++app.include_router(plant_routes.router)
+ # Root-mounted: WhatsApp button URLs may only vary in the last path segment.
+ app.include_router(gatepass_public_routes.router)
+ app.include_router(tgt26_routes.router)   # Team Get Together 2026 passes (same rationale)
+diff --git a/app/models.py b/app/models.py
+index 8475bbe..d9afd6f 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -548,6 +548,7 @@ class EmployeeAccess(Base):
+     expense_admin = Column(Boolean, default=False, nullable=False)
+     ehs_admin = Column(Boolean, default=False, nullable=False)
+     gatepass_admin = Column(Boolean, default=False, nullable=False)
++    plant_admin = Column(Boolean, default=False, nullable=False)
+     kpi_access = Column(Boolean, default=True, nullable=False)
+     expense_access = Column(Boolean, default=True, nullable=False)
+     ehs_access = Column(Boolean, default=True, nullable=False)
+@@ -815,3 +816,67 @@ class Tgt26ChangeRequest(Base):
+                     index=True)  # awaiting_details | received | actioned
+     received_at = Column(DateTime, nullable=True)
+     action_note = Column(Text)
++
++
++# ===================== Plant Operations — Attendance =====================
++
++class PlantLabour(Base):
++    """Own-labour roster for daily attendance. per_day_salary drives the
++    payable report (built later); kept here so no schema change is needed then."""
++    __tablename__ = "plant_labour"
++
++    id = Column(Integer, primary_key=True)
++    name = Column(String(255), nullable=False)
++    designation = Column(String(120), nullable=True)
++    per_day_salary = Column(Float, nullable=False, default=0)
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++
++class PlantContractor(Base):
++    """Contractor teams — only a headcount is recorded per day, not names.
++    per_day_rate drives the payable report (built later)."""
++    __tablename__ = "plant_contractors"
++
++    id = Column(Integer, primary_key=True)
++    name = Column(String(255), nullable=False)
++    per_day_rate = Column(Float, nullable=False, default=0)
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++
++class PlantLabourAttendance(Base):
++    """One row per labourer per day. status: P (present), A (absent), H (half)."""
++    __tablename__ = "plant_labour_attendance"
++
++    id = Column(Integer, primary_key=True)
++    labour_id = Column(Integer, ForeignKey("plant_labour.id", ondelete="CASCADE"),
++                       nullable=False, index=True)
++    att_date = Column(Date, nullable=False, index=True)
++    status = Column(String(1), nullable=False, default="P")   # P | A | H
++    marked_by = Column(String(255), nullable=True)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    labour = relationship("PlantLabour")
++    __table_args__ = (UniqueConstraint("labour_id", "att_date",
++                                       name="uq_plant_labour_day"),)
++
++
++class PlantContractorAttendance(Base):
++    """One row per contractor team per day — split skilled/helper headcount."""
++    __tablename__ = "plant_contractor_attendance"
++
++    id = Column(Integer, primary_key=True)
++    contractor_id = Column(Integer, ForeignKey("plant_contractors.id", ondelete="CASCADE"),
++                           nullable=False, index=True)
++    att_date = Column(Date, nullable=False, index=True)
++    skilled = Column(Integer, nullable=False, default=0)
++    helper = Column(Integer, nullable=False, default=0)
++    marked_by = Column(String(255), nullable=True)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    contractor = relationship("PlantContractor")
++    __table_args__ = (UniqueConstraint("contractor_id", "att_date",
++                                       name="uq_plant_contractor_day"),)
+diff --git a/app/routes/people.py b/app/routes/people.py
+index 1a994c5..7239170 100644
+--- a/app/routes/people.py
++++ b/app/routes/people.py
+@@ -39,7 +39,7 @@ router = APIRouter(prefix="/people", tags=["people"])
+ templates = Jinja2Templates(directory="app/templates")
+ 
+ ROLE_FIELDS = ["is_superadmin", "is_hr_admin", "kpi_admin", "expense_admin",
+-               "ehs_admin", "gatepass_admin"]
++               "ehs_admin", "gatepass_admin", "plant_admin"]
+ ACCESS_FIELDS = ["kpi_access", "expense_access", "ehs_access"]
+ 
+ 
+diff --git a/app/routes/plant.py b/app/routes/plant.py
+new file mode 100644
+index 0000000..1bfa00b
+--- /dev/null
++++ b/app/routes/plant.py
+@@ -0,0 +1,275 @@
++"""Plant Operations — labour & contractor daily attendance.
++
++First feature of the Plant Operations module in the Metfraa portal. Records:
++  * own labour — named present/absent/half per day (P / A / H)
++  * contractor teams — a split skilled+helper headcount per day (no names)
++
++Admin masters manage the labour roster (name, designation, per-day salary) and
++the contractor list (name, per-day rate). Salary/rate are stored now so the
++payable report the user will build later needs no schema change.
++"""
++from datetime import date, datetime
++
++from fastapi import APIRouter, Depends, HTTPException, Request
++from fastapi.responses import HTMLResponse
++from fastapi.templating import Jinja2Templates
++from sqlalchemy.orm import Session
++
++from ..access import get_access
++from ..database import get_db
++from ..deps import get_current_user
++from ..models import (Employee, PlantContractor, PlantContractorAttendance,
++                      PlantLabour, PlantLabourAttendance)
++
++router = APIRouter(prefix="/plant", tags=["plant"])
++templates = Jinja2Templates(directory="app/templates")
++
++VALID = {"P", "A", "H"}
++
++
++def _guard(db: Session, user: Employee):
++    if not get_access(db, user).can_admin_plant:
++        raise HTTPException(status_code=403, detail="Plant Operations access only")
++
++
++def _parse_date(s: str | None) -> date:
++    if not s:
++        return datetime.utcnow().date()
++    try:
++        return datetime.strptime(s[:10], "%Y-%m-%d").date()
++    except ValueError:
++        raise HTTPException(status_code=400, detail="Invalid date (YYYY-MM-DD)")
++
++
++# ------------------------------------------------------------------ page
++
++@router.get("/", response_class=HTMLResponse)
++def page(request: Request, user: Employee = Depends(get_current_user),
++         db: Session = Depends(get_db)):
++    _guard(db, user)
++    return templates.TemplateResponse(request, "plant.html", {"user": user})
++
++
++# ---------------------------------------------------------- daily attendance
++
++@router.get("/api/day")
++def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
++            db: Session = Depends(get_db)):
++    """The roster + contractor list for one day, pre-filled with any saved marks.
++    Absent labour defaults to P (present) in the UI; unsaved contractors to 0."""
++    _guard(db, user)
++    d = _parse_date(date)
++
++    labour = (db.query(PlantLabour).filter(PlantLabour.active == True)  # noqa: E712
++              .order_by(PlantLabour.id).all())
++    lmarks = {a.labour_id: a.status for a in
++              db.query(PlantLabourAttendance)
++              .filter(PlantLabourAttendance.att_date == d).all()}
++    contractors = (db.query(PlantContractor).filter(PlantContractor.active == True)  # noqa: E712
++                   .order_by(PlantContractor.id).all())
++    cmarks = {a.contractor_id: a for a in
++              db.query(PlantContractorAttendance)
++              .filter(PlantContractorAttendance.att_date == d).all()}
++
++    return {
++        "date": d.isoformat(),
++        "labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
++                    "status": lmarks.get(l.id, "P")} for l in labour],
++        "contractors": [{"id": c.id, "name": c.name,
++                         "skilled": cmarks[c.id].skilled if c.id in cmarks else 0,
++                         "helper": cmarks[c.id].helper if c.id in cmarks else 0}
++                        for c in contractors],
++        "saved": bool(lmarks or cmarks),
++    }
++
++
++@router.post("/api/day")
++async def api_save_day(request: Request, user: Employee = Depends(get_current_user),
++                       db: Session = Depends(get_db)):
++    """Upsert a whole day's marks. Body:
++       { date, labour: [{id, status}], contractors: [{id, skilled, helper}] }"""
++    _guard(db, user)
++    b = await request.json()
++    d = _parse_date(b.get("date"))
++    now = datetime.utcnow()
++
++    valid_labour = {row[0] for row in db.query(PlantLabour.id).all()}
++    valid_contr = {row[0] for row in db.query(PlantContractor.id).all()}
++
++    for row in (b.get("labour") or []):
++        lid = row.get("id")
++        st = (row.get("status") or "P").upper()
++        if lid not in valid_labour:
++            continue
++        if st not in VALID:
++            raise HTTPException(status_code=400, detail=f"Bad status {st!r}")
++        rec = (db.query(PlantLabourAttendance)
++               .filter(PlantLabourAttendance.labour_id == lid,
++                       PlantLabourAttendance.att_date == d).first())
++        if rec:
++            rec.status = st
++            rec.marked_by = user.employee_code
++            rec.updated_at = now
++        else:
++            db.add(PlantLabourAttendance(labour_id=lid, att_date=d, status=st,
++                                         marked_by=user.employee_code))
++
++    def _int(v):
++        try:
++            return max(0, int(v))
++        except (TypeError, ValueError):
++            return 0
++
++    for row in (b.get("contractors") or []):
++        cid = row.get("id")
++        if cid not in valid_contr:
++            continue
++        sk, hp = _int(row.get("skilled")), _int(row.get("helper"))
++        rec = (db.query(PlantContractorAttendance)
++               .filter(PlantContractorAttendance.contractor_id == cid,
++                       PlantContractorAttendance.att_date == d).first())
++        if rec:
++            rec.skilled, rec.helper = sk, hp
++            rec.marked_by = user.employee_code
++            rec.updated_at = now
++        elif sk or hp:
++            db.add(PlantContractorAttendance(contractor_id=cid, att_date=d,
++                                             skilled=sk, helper=hp,
++                                             marked_by=user.employee_code))
++    db.commit()
++    return {"ok": True, "date": d.isoformat()}
++
++
++# --------------------------------------------------------------- masters
++
++@router.get("/api/labour")
++def api_labour_list(include_inactive: str | None = None,
++                    user: Employee = Depends(get_current_user),
++                    db: Session = Depends(get_db)):
++    _guard(db, user)
++    q = db.query(PlantLabour)
++    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
++        q = q.filter(PlantLabour.active == True)  # noqa: E712
++    rows = q.order_by(PlantLabour.active.desc(), PlantLabour.id).all()
++    return {"labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
++                        "per_day_salary": l.per_day_salary, "active": l.active}
++                       for l in rows]}
++
++
++@router.post("/api/labour")
++async def api_labour_save(request: Request, user: Employee = Depends(get_current_user),
++                          db: Session = Depends(get_db)):
++    _guard(db, user)
++    b = await request.json()
++    name = (b.get("name") or "").strip()
++    if not name:
++        raise HTTPException(status_code=400, detail="Name is required")
++
++    def _sal(v):
++        try:
++            return max(0.0, float(v or 0))
++        except (TypeError, ValueError):
++            raise HTTPException(status_code=400, detail="Invalid salary")
++
++    lid = b.get("id")
++    if lid:
++        l = db.query(PlantLabour).filter(PlantLabour.id == lid).first()
++        if not l:
++            raise HTTPException(status_code=404, detail="Labour not found")
++        l.name = name
++        l.designation = (b.get("designation") or "").strip() or None
++        l.per_day_salary = _sal(b.get("per_day_salary"))
++        if "active" in b:
++            l.active = bool(b["active"])
++    else:
++        db.add(PlantLabour(name=name,
++                           designation=(b.get("designation") or "").strip() or None,
++                           per_day_salary=_sal(b.get("per_day_salary")),
++                           active=bool(b.get("active", True))))
++    db.commit()
++    return {"ok": True}
++
++
++@router.delete("/api/labour/{lid}")
++def api_labour_delete(lid: int, user: Employee = Depends(get_current_user),
++                      db: Session = Depends(get_db)):
++    """Soft-delete: deactivate so historic attendance is preserved. A labourer
++    with no attendance at all is removed outright."""
++    _guard(db, user)
++    l = db.query(PlantLabour).filter(PlantLabour.id == lid).first()
++    if not l:
++        raise HTTPException(status_code=404, detail="Not found")
++    has_history = (db.query(PlantLabourAttendance)
++                   .filter(PlantLabourAttendance.labour_id == lid).first() is not None)
++    if has_history:
++        l.active = False
++        db.commit()
++        return {"ok": True, "deactivated": True}
++    db.delete(l)
++    db.commit()
++    return {"ok": True, "deleted": True}
++
++
++@router.get("/api/contractors")
++def api_contractor_list(include_inactive: str | None = None,
++                        user: Employee = Depends(get_current_user),
++                        db: Session = Depends(get_db)):
++    _guard(db, user)
++    q = db.query(PlantContractor)
++    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
++        q = q.filter(PlantContractor.active == True)  # noqa: E712
++    rows = q.order_by(PlantContractor.active.desc(), PlantContractor.id).all()
++    return {"contractors": [{"id": c.id, "name": c.name,
++                             "per_day_rate": c.per_day_rate, "active": c.active}
++                            for c in rows]}
++
++
++@router.post("/api/contractors")
++async def api_contractor_save(request: Request,
++                              user: Employee = Depends(get_current_user),
++                              db: Session = Depends(get_db)):
++    _guard(db, user)
++    b = await request.json()
++    name = (b.get("name") or "").strip()
++    if not name:
++        raise HTTPException(status_code=400, detail="Name is required")
++
++    def _rate(v):
++        try:
++            return max(0.0, float(v or 0))
++        except (TypeError, ValueError):
++            raise HTTPException(status_code=400, detail="Invalid rate")
++
++    cid = b.get("id")
++    if cid:
++        c = db.query(PlantContractor).filter(PlantContractor.id == cid).first()
++        if not c:
++            raise HTTPException(status_code=404, detail="Contractor not found")
++        c.name = name
++        c.per_day_rate = _rate(b.get("per_day_rate"))
++        if "active" in b:
++            c.active = bool(b["active"])
++    else:
++        db.add(PlantContractor(name=name, per_day_rate=_rate(b.get("per_day_rate")),
++                               active=bool(b.get("active", True))))
++    db.commit()
++    return {"ok": True}
++
++
++@router.delete("/api/contractors/{cid}")
++def api_contractor_delete(cid: int, user: Employee = Depends(get_current_user),
++                          db: Session = Depends(get_db)):
++    _guard(db, user)
++    c = db.query(PlantContractor).filter(PlantContractor.id == cid).first()
++    if not c:
++        raise HTTPException(status_code=404, detail="Not found")
++    has_history = (db.query(PlantContractorAttendance)
++                   .filter(PlantContractorAttendance.contractor_id == cid)
++                   .first() is not None)
++    if has_history:
++        c.active = False
++        db.commit()
++        return {"ok": True, "deactivated": True}
++    db.delete(c)
++    db.commit()
++    return {"ok": True, "deleted": True}
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index c1733a6..ee0a0c1 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -78,6 +78,8 @@ EXPENSE_PARITY_MIGRATIONS += [
+ # today, but any query loading the whole model would fail on Postgres — the
+ # same class of break that took out the gatepass page.
+ MISC_MIGRATIONS = [
++    "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS plant_admin "
++    "BOOLEAN NOT NULL DEFAULT FALSE",
+     "ALTER TABLE expense_consolidated_reports ADD COLUMN IF NOT EXISTS "
+     "pdf_render_version INTEGER",
+     "ALTER TABLE monthly_reports ADD COLUMN IF NOT EXISTS payload JSONB",
+diff --git a/app/templates/base.html b/app/templates/base.html
+index 70de055..ed6b969 100644
+--- a/app/templates/base.html
++++ b/app/templates/base.html
+@@ -205,7 +205,7 @@
+                class="h-9 w-auto"
+                onerror="this.outerHTML='<div class=&quot;flex items-baseline gap-1.5&quot;><div class=&quot;font-display font-bold text-white text-xl tracking-tight&quot;>METFRAA</div><div class=&quot;text-metfraa-blue text-[10px] uppercase tracking-widest&quot;>Steel</div></div>'" />
+           <span class="text-metfraa-gray-400 text-xs hidden sm:block">|</span>
+-          <span class="mono text-[10px] uppercase tracking-[0.18em] text-metfraa-gray-400 border border-white/15 rounded px-2 py-1 hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/gatepass') %}Outpass / Gatepass{% elif _p.startswith('/people') %}Employees{% elif _p.startswith('/site-visits') %}Site Visits{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
++          <span class="mono text-[10px] uppercase tracking-[0.18em] text-metfraa-gray-400 border border-white/15 rounded px-2 py-1 hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/gatepass') %}Outpass / Gatepass{% elif _p.startswith('/plant') %}Plant Operations{% elif _p.startswith('/people') %}Employees{% elif _p.startswith('/site-visits') %}Site Visits{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
+         </a>
+ 
+         <nav class="flex items-center gap-1">
+@@ -219,6 +219,8 @@
+           {% elif _p.startswith('/gatepass') %}
+             <a href="/gatepass/" class="{{ _navcls }}">Gatepass Home</a>
+             <a href="/" class="{{ _navcls }} hidden sm:block">Portal Home</a>
++          {% elif _p.startswith('/plant') %}
++            <a href="/" class="{{ _navcls }}">Portal Home</a>
+           {% elif _p.startswith('/people') %}
+             <a href="/" class="{{ _navcls }}">Portal Home</a>
+           {% elif _p.startswith('/site-visits') %}
+diff --git a/app/templates/home.html b/app/templates/home.html
+index a7f97c0..003fd29 100644
+--- a/app/templates/home.html
++++ b/app/templates/home.html
+@@ -189,6 +189,16 @@
+       </div>
+     </a>
+ 
++    <a href="/plant/"
++       class="tile card-hover group relative bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-6 flex flex-col min-h-[220px] overflow-hidden">
++      <div class="icon-tile mb-4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 9h.01M15 9h.01M9 13h.01M15 13h.01M9 17h6"/></svg></div>
++      <div class="display text-lg font-semibold text-metfraa-ink tracking-wide">Plant Operations</div>
++      <p class="text-sm text-metfraa-gray-500 mt-1 flex-1">Labour & contractor daily attendance.</p>
++      <div class="mt-4 flex items-center gap-1.5 text-sm font-semibold text-metfraa-blue">
++        Open <svg class="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12l-7.5 7.5M21 12H3"/></svg>
++      </div>
++    </a>
++
+     {% endif %}
+   </div>
+ 
+diff --git a/app/templates/people.html b/app/templates/people.html
+index a13c565..756627b 100644
+--- a/app/templates/people.html
++++ b/app/templates/people.html
+@@ -106,6 +106,7 @@
+           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-expense_admin"> Expense Admin</label>
+           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-ehs_admin"> EHS Admin</label>
+           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-gatepass_admin"> Gatepass Admin</label>
++          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-plant_admin"> Plant Admin</label>
+         </div>
+       </div>
+ 
+@@ -126,7 +127,7 @@
+ </style>
+ <script>
+ let EMPS = [], editing = null;
+-const ROLE_KEYS = ["is_superadmin","is_hr_admin","kpi_admin","expense_admin","ehs_admin","gatepass_admin"];
++const ROLE_KEYS = ["is_superadmin","is_hr_admin","kpi_admin","expense_admin","ehs_admin","gatepass_admin","plant_admin"];
+ const ACCESS_KEYS = ["kpi_access","expense_access","ehs_access"];
+ 
+ async function load() {
+@@ -171,6 +172,7 @@ function render() {
+         ${e.expense_admin?badge('EXP-A','bg-emerald-50 text-emerald-700'):''}
+         ${e.ehs_admin?badge('EHS-A','bg-amber-50 text-amber-700'):''}
+         ${e.gatepass_admin?badge('GATE-A','bg-sky-50 text-sky-700'):''}
++        ${e.plant_admin?badge('PLANT-A','bg-teal-50 text-teal-700'):''}
+       </td>
+       <td class="px-3 py-3 text-xs font-bold">${e.expense_level}</td>
+       <td class="px-3 py-3 text-xs">${e.is_active?'Active':'Inactive'}</td>
+diff --git a/app/templates/plant.html b/app/templates/plant.html
+new file mode 100644
+index 0000000..dc3f922
+--- /dev/null
++++ b/app/templates/plant.html
+@@ -0,0 +1,308 @@
++{% extends "base.html" %}
++{% block title %}Plant Operations — Metfraa{% endblock %}
++
++{% block content %}
++<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="plantApp()" x-init="init()" x-cloak>
++
++  <div class="mb-8">
++    <div class="lbl mb-2">Metfraa Portal</div>
++    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">Plant Operations</h1>
++    <div class="flex items-center gap-3 mt-3">
++      <span class="h-px w-10 bg-metfraa-blue"></span>
++      <p class="text-sm text-metfraa-gray-500">Daily labour &amp; contractor attendance.</p>
++    </div>
++  </div>
++
++  <!-- Tabs -->
++  <div class="flex gap-1 mb-6 border-b border-metfraa-gray-200 flex-wrap">
++    <template x-for="t in tabs" :key="t.id">
++      <button @click="tab = t.id; onTab()"
++        :class="tab === t.id ? 'border-metfraa-blue text-metfraa-ink'
++                             : 'border-transparent text-metfraa-gray-500 hover:text-metfraa-ink'"
++        class="px-4 py-2 text-sm font-bold border-b-2" x-text="t.label"></button>
++    </template>
++  </div>
++
++  <!-- ============ ATTENDANCE ============ -->
++  <div x-show="tab === 'day'">
++    <div class="flex items-center justify-between flex-wrap gap-3 mb-5">
++      <div class="flex items-center gap-3">
++        <label class="lbl">Date</label>
++        <input type="date" x-model="day" @change="loadDay()"
++               class="rounded-lg border-metfraa-gray-300 text-sm">
++        <span x-show="saved" class="text-xs text-green-700">saved earlier · editable</span>
++      </div>
++      <button @click="saveDay()" :disabled="saving"
++        class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
++        <span x-text="saving ? 'Saving…' : 'Save attendance'"></span>
++      </button>
++    </div>
++
++    <!-- Own labour -->
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
++      <div class="flex items-center justify-between mb-3">
++        <div class="lbl">Own labour</div>
++        <div class="text-xs text-metfraa-gray-500">
++          Present <span class="font-semibold" x-text="presentCount"></span> ·
++          Half <span class="font-semibold" x-text="halfCount"></span> ·
++          Absent <span class="font-semibold" x-text="absentCount"></span>
++        </div>
++      </div>
++      <template x-if="!labour.length">
++        <div class="text-sm text-metfraa-gray-400 py-4">No labour in the roster. Add them under Labour Master.</div>
++      </template>
++      <div class="divide-y divide-metfraa-gray-100">
++        <template x-for="l in labour" :key="l.id">
++          <div class="flex items-center justify-between py-2.5">
++            <div>
++              <div class="font-semibold text-metfraa-ink" x-text="l.name"></div>
++              <div class="text-xs text-metfraa-gray-500" x-text="l.designation"></div>
++            </div>
++            <div class="flex gap-1">
++              <template x-for="opt in ['P','H','A']" :key="opt">
++                <button @click="l.status = opt"
++                  :class="l.status === opt ? statusClass(opt) : 'bg-white ring-1 ring-metfraa-gray-300 text-metfraa-gray-500'"
++                  class="w-11 h-9 rounded-lg text-sm font-bold" x-text="opt"></button>
++              </template>
++            </div>
++          </div>
++        </template>
++      </div>
++    </div>
++
++    <!-- Contractors -->
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++      <div class="lbl mb-3">Contractor teams — headcount</div>
++      <template x-if="!contractors.length">
++        <div class="text-sm text-metfraa-gray-400 py-4">No contractors. Add them under Contractor Master.</div>
++      </template>
++      <table x-show="contractors.length" class="w-full text-sm">
++        <thead>
++          <tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Team</th><th class="py-2 w-28">Skilled</th>
++            <th class="py-2 w-28">Helper</th><th class="py-2 w-20 text-right">Total</th>
++          </tr>
++        </thead>
++        <tbody class="divide-y divide-metfraa-gray-100">
++          <template x-for="c in contractors" :key="c.id">
++            <tr>
++              <td class="py-2 font-semibold" x-text="c.name"></td>
++              <td class="py-2"><input type="number" min="0" x-model.number="c.skilled"
++                    class="w-20 rounded border-metfraa-gray-300 text-sm"></td>
++              <td class="py-2"><input type="number" min="0" x-model.number="c.helper"
++                    class="w-20 rounded border-metfraa-gray-300 text-sm"></td>
++              <td class="py-2 text-right font-semibold" x-text="(+c.skilled||0)+(+c.helper||0)"></td>
++            </tr>
++          </template>
++        </tbody>
++      </table>
++    </div>
++  </div>
++
++  <!-- ============ LABOUR MASTER ============ -->
++  <div x-show="tab === 'labour'">
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++      <div class="flex items-center justify-between mb-4">
++        <div class="lbl">Labour Master</div>
++        <button @click="editLabour(null)"
++          class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add labour</button>
++      </div>
++      <table class="w-full text-sm">
++        <thead>
++          <tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Name</th><th class="py-2">Designation</th>
++            <th class="py-2 text-right">Per-day salary</th><th class="py-2">Status</th><th></th>
++          </tr>
++        </thead>
++        <tbody class="divide-y divide-metfraa-gray-100">
++          <template x-for="l in labourAll" :key="l.id">
++            <tr :class="!l.active && 'opacity-50'">
++              <td class="py-2 font-semibold" x-text="l.name"></td>
++              <td class="py-2 text-metfraa-gray-600" x-text="l.designation || '—'"></td>
++              <td class="py-2 text-right mono" x-text="'₹ ' + (l.per_day_salary||0).toLocaleString('en-IN')"></td>
++              <td class="py-2"><span x-text="l.active ? 'Active' : 'Inactive'"
++                    :class="l.active ? 'text-green-700' : 'text-metfraa-gray-400'" class="text-xs font-semibold"></span></td>
++              <td class="py-2 text-right whitespace-nowrap">
++                <button @click="editLabour(l)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
++                <button @click="delLabour(l)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
++              </td>
++            </tr>
++          </template>
++        </tbody>
++      </table>
++      <label class="flex items-center gap-2 text-xs text-metfraa-gray-500 mt-3">
++        <input type="checkbox" x-model="showInactiveLabour" @change="loadLabour()" class="rounded border-metfraa-gray-300">
++        Show inactive
++      </label>
++    </div>
++  </div>
++
++  <!-- ============ CONTRACTOR MASTER ============ -->
++  <div x-show="tab === 'contractors'">
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++      <div class="flex items-center justify-between mb-4">
++        <div class="lbl">Contractor Master</div>
++        <button @click="editContractor(null)"
++          class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add contractor</button>
++      </div>
++      <table class="w-full text-sm">
++        <thead>
++          <tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Name</th><th class="py-2 text-right">Per-day rate</th>
++            <th class="py-2">Status</th><th></th>
++          </tr>
++        </thead>
++        <tbody class="divide-y divide-metfraa-gray-100">
++          <template x-for="c in contractorsAll" :key="c.id">
++            <tr :class="!c.active && 'opacity-50'">
++              <td class="py-2 font-semibold" x-text="c.name"></td>
++              <td class="py-2 text-right mono" x-text="'₹ ' + (c.per_day_rate||0).toLocaleString('en-IN')"></td>
++              <td class="py-2"><span x-text="c.active ? 'Active' : 'Inactive'"
++                    :class="c.active ? 'text-green-700' : 'text-metfraa-gray-400'" class="text-xs font-semibold"></span></td>
++              <td class="py-2 text-right whitespace-nowrap">
++                <button @click="editContractor(c)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
++                <button @click="delContractor(c)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
++              </td>
++            </tr>
++          </template>
++        </tbody>
++      </table>
++      <label class="flex items-center gap-2 text-xs text-metfraa-gray-500 mt-3">
++        <input type="checkbox" x-model="showInactiveContr" @change="loadContractors()" class="rounded border-metfraa-gray-300">
++        Show inactive
++      </label>
++    </div>
++  </div>
++
++  <!-- edit drawer -->
++  <div x-show="drawer" x-cloak class="fixed inset-0 bg-black/30 flex justify-end z-50" @click.self="drawer=null">
++    <div class="bg-white w-full max-w-sm h-full p-6 overflow-y-auto">
++      <div class="flex items-center justify-between mb-5">
++        <div class="display text-lg font-bold" x-text="drawerTitle"></div>
++        <button @click="drawer=null" class="text-metfraa-gray-400 text-xl">&times;</button>
++      </div>
++      <template x-if="drawer === 'labour'">
++        <div class="space-y-4">
++          <div><label class="lbl block mb-1">Name</label>
++            <input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div><label class="lbl block mb-1">Designation</label>
++            <input x-model="form.designation" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div><label class="lbl block mb-1">Per-day salary (₹)</label>
++            <input type="number" min="0" x-model.number="form.per_day_salary"
++                   class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
++          <button @click="saveLabour()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
++        </div>
++      </template>
++      <template x-if="drawer === 'contractor'">
++        <div class="space-y-4">
++          <div><label class="lbl block mb-1">Name</label>
++            <input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div><label class="lbl block mb-1">Per-day rate (₹)</label>
++            <input type="number" min="0" x-model.number="form.per_day_rate"
++                   class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
++          <button @click="saveContractor()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
++        </div>
++      </template>
++    </div>
++  </div>
++</div>
++
++<script>
++function plantApp() {
++  return {
++    tab: 'day', day: new Date().toISOString().slice(0, 10),
++    labour: [], contractors: [], saved: false, saving: false,
++    labourAll: [], contractorsAll: [], showInactiveLabour: false, showInactiveContr: false,
++    drawer: null, form: {},
++
++    tabs: [{ id: 'day', label: 'Attendance' }, { id: 'labour', label: 'Labour Master' },
++           { id: 'contractors', label: 'Contractor Master' }],
++
++    get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
++    get halfCount() { return this.labour.filter(l => l.status === 'H').length; },
++    get absentCount() { return this.labour.filter(l => l.status === 'A').length; },
++
++    statusClass(o) {
++      return { P: 'bg-green-600 text-white', H: 'bg-amber-500 text-white',
++               A: 'bg-red-500 text-white' }[o];
++    },
++
++    init() { this.loadDay(); },
++    onTab() {
++      if (this.tab === 'day') this.loadDay();
++      if (this.tab === 'labour') this.loadLabour();
++      if (this.tab === 'contractors') this.loadContractors();
++    },
++
++    async loadDay() {
++      const r = await fetch(`/plant/api/day?date=${this.day}`);
++      if (!r.ok) return;
++      const d = await r.json();
++      this.labour = d.labour; this.contractors = d.contractors; this.saved = d.saved;
++    },
++    async saveDay() {
++      this.saving = true;
++      try {
++        const r = await fetch('/plant/api/day', {
++          method: 'POST', headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify({ date: this.day,
++            labour: this.labour.map(l => ({ id: l.id, status: l.status })),
++            contractors: this.contractors.map(c => ({ id: c.id,
++              skilled: +c.skilled || 0, helper: +c.helper || 0 })) }),
++        });
++        if (!r.ok) { alert('Save failed'); return; }
++        this.saved = true;
++      } finally { this.saving = false; }
++    },
++
++    async loadLabour() {
++      const r = await fetch('/plant/api/labour?include_inactive=' + (this.showInactiveLabour ? 1 : 0));
++      if (r.ok) this.labourAll = (await r.json()).labour;
++    },
++    editLabour(l) {
++      this.form = l ? { ...l } : { name: '', designation: '', per_day_salary: 0, active: true };
++      this.drawer = 'labour';
++    },
++    async saveLabour() {
++      const r = await fetch('/plant/api/labour', {
++        method: 'POST', headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify(this.form),
++      });
++      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
++      this.drawer = null; this.loadLabour();
++    },
++    async delLabour(l) {
++      if (!confirm(`Remove ${l.name}? If they have attendance history they'll be deactivated, not deleted.`)) return;
++      const r = await fetch(`/plant/api/labour/${l.id}`, { method: 'DELETE' });
++      if (!r.ok) { alert('Failed'); return; }
++      this.loadLabour();
++    },
++
++    async loadContractors() {
++      const r = await fetch('/plant/api/contractors?include_inactive=' + (this.showInactiveContr ? 1 : 0));
++      if (r.ok) this.contractorsAll = (await r.json()).contractors;
++    },
++    editContractor(c) {
++      this.form = c ? { ...c } : { name: '', per_day_rate: 0, active: true };
++      this.drawer = 'contractor';
++    },
++    async saveContractor() {
++      const r = await fetch('/plant/api/contractors', {
++        method: 'POST', headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify(this.form),
++      });
++      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
++      this.drawer = null; this.loadContractors();
++    },
++    async delContractor(c) {
++      if (!confirm(`Remove ${c.name}? If they have attendance history they'll be deactivated, not deleted.`)) return;
++      const r = await fetch(`/plant/api/contractors/${c.id}`, { method: 'DELETE' });
++      if (!r.ok) { alert('Failed'); return; }
++      this.loadContractors();
++    },
++  };
++}
++</script>
++{% endblock %}

@@ -548,6 +548,7 @@ class EmployeeAccess(Base):
     expense_admin = Column(Boolean, default=False, nullable=False)
     ehs_admin = Column(Boolean, default=False, nullable=False)
     gatepass_admin = Column(Boolean, default=False, nullable=False)
+    plant_admin = Column(Boolean, default=False, nullable=False)
     kpi_access = Column(Boolean, default=True, nullable=False)
     expense_access = Column(Boolean, default=True, nullable=False)
     ehs_access = Column(Boolean, default=True, nullable=False)
@@ -815,3 +816,67 @@ class Tgt26ChangeRequest(Base):
                     index=True)  # awaiting_details | received | actioned
     received_at = Column(DateTime, nullable=True)
     action_note = Column(Text)
+
+
+# ===================== Plant Operations — Attendance =====================
+
+class PlantLabour(Base):
+    """Own-labour roster for daily attendance. per_day_salary drives the
+    payable report (built later); kept here so no schema change is needed then."""
+    __tablename__ = "plant_labour"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    designation = Column(String(120), nullable=True)
+    per_day_salary = Column(Float, nullable=False, default=0)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PlantContractor(Base):
+    """Contractor teams — only a headcount is recorded per day, not names.
+    per_day_rate drives the payable report (built later)."""
+    __tablename__ = "plant_contractors"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    per_day_rate = Column(Float, nullable=False, default=0)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PlantLabourAttendance(Base):
+    """One row per labourer per day. status: P (present), A (absent), H (half)."""
+    __tablename__ = "plant_labour_attendance"
+
+    id = Column(Integer, primary_key=True)
+    labour_id = Column(Integer, ForeignKey("plant_labour.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    att_date = Column(Date, nullable=False, index=True)
+    status = Column(String(1), nullable=False, default="P")   # P | A | H
+    marked_by = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    labour = relationship("PlantLabour")
+    __table_args__ = (UniqueConstraint("labour_id", "att_date",
+                                       name="uq_plant_labour_day"),)
+
+
+class PlantContractorAttendance(Base):
+    """One row per contractor team per day — split skilled/helper headcount."""
+    __tablename__ = "plant_contractor_attendance"
+
+    id = Column(Integer, primary_key=True)
+    contractor_id = Column(Integer, ForeignKey("plant_contractors.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    att_date = Column(Date, nullable=False, index=True)
+    skilled = Column(Integer, nullable=False, default=0)
+    helper = Column(Integer, nullable=False, default=0)
+    marked_by = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    contractor = relationship("PlantContractor")
+    __table_args__ = (UniqueConstraint("contractor_id", "att_date",
+                                       name="uq_plant_contractor_day"),)

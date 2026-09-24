@@ -26,6 +26,7 @@ from .routes import monthly_kpi as monthly_kpi_routes
 from .routes import site_visits as site_visits_routes
 from .routes import cron as cron_routes
 from .routes import gatepass as gatepass_routes
+from .routes import plant as plant_routes
 from .routes import gatepass_public as gatepass_public_routes
 from .routes import tgt26 as tgt26_routes
 from .routes import ehs as ehs_routes
@@ -115,6 +116,7 @@ app.include_router(monthly_kpi_routes.router)
 app.include_router(site_visits_routes.router)
 app.include_router(cron_routes.router)
 app.include_router(gatepass_routes.router)
+app.include_router(plant_routes.router)
 # Root-mounted: WhatsApp button URLs may only vary in the last path segment.
 app.include_router(gatepass_public_routes.router)
 app.include_router(tgt26_routes.router)   # Team Get Together 2026 passes (same rationale)
