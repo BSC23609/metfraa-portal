@@ -448,6 +448,52 @@
     </div>
   </div>
 
+  <!-- ============ MONTHLY REPORT ============ -->
+  <div x-show="tab === 'monthly'">
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="lbl">Month</div>
+        <input type="month" x-model="mPeriod" @change="loadMonthly()" class="rounded-lg border-metfraa-gray-300 text-sm">
+        <button @click="submitMonthly()" :disabled="mSubmitting || !m || !m.has_data"
+          class="ml-auto px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
+          <span x-text="mSubmitting ? 'Generating…' : 'Generate & Submit to OneDrive'"></span>
+        </button>
+      </div>
+      <p class="text-xs text-metfraa-gray-500 mt-2">
+        Opens on last month by default. The report has a Company attendance sheet,
+        one sheet per contractor, and a team-wise work summary — uploaded to
+        Plant Operation / Attendance and Work Log / MONTHLY REPORT.
+      </p>
+    </div>
+
+    <template x-if="m && !m.has_data">
+      <div class="bg-amber-50 ring-1 ring-amber-200 rounded-lg p-4 text-sm text-amber-800">
+        Nothing recorded for this month yet.
+      </div>
+    </template>
+
+    <div x-show="m && m.has_data" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4">
+        <div class="lbl">Company payable</div>
+        <div class="display text-2xl font-bold text-metfraa-blue mt-1" x-text="m ? '₹ '+(m.company_total||0).toLocaleString('en-IN') : ''"></div>
+        <div class="text-xs text-metfraa-gray-500 mt-1" x-text="m ? m.company_workers+' workers' : ''"></div>
+      </div>
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4">
+        <div class="lbl">Contractor payable</div>
+        <div class="display text-2xl font-bold text-metfraa-blue mt-1" x-text="m ? '₹ '+(m.contractor_total||0).toLocaleString('en-IN') : ''"></div>
+        <div class="text-xs text-metfraa-gray-500 mt-1" x-text="m ? m.contractor_count+' contractors' : ''"></div>
+      </div>
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4">
+        <div class="lbl">Total weight</div>
+        <div class="display text-2xl font-bold text-metfraa-ink mt-1" x-text="m ? (m.total_weight||0).toLocaleString('en-IN',{maximumFractionDigits:0})+' Kg' : ''"></div>
+      </div>
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4">
+        <div class="lbl">Grand total</div>
+        <div class="display text-2xl font-bold text-green-700 mt-1" x-text="m ? '₹ '+((m.company_total||0)+(m.contractor_total||0)).toLocaleString('en-IN') : ''"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ SETTINGS ============ -->
   <div x-show="tab === 'settings'">
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 max-w-md">
@@ -520,7 +566,7 @@ function plantApp() {
     drawer: null, form: {},
 
     tabs: [{ id: 'day', label: 'Attendance' }, { id: 'labour', label: 'Labour Master' },
-           { id: 'contractors', label: 'Contractor Master' }, { id: 'browse', label: 'Browse' }, { id: 'settings', label: 'Settings' }],
+           { id: 'contractors', label: 'Contractor Master' }, { id: 'browse', label: 'Browse' }, { id: 'monthly', label: 'Monthly Report' }, { id: 'settings', label: 'Settings' }],
 
     get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
     get halfCount() { return this.labour.filter(l => l.status === 'H').length; },
@@ -559,6 +605,7 @@ function plantApp() {
       if (this.tab === 'contractors') this.loadContractors();
       if (this.tab === 'settings') this.loadSettings();
       if (this.tab === 'browse') { this.loadRange(); }
+      if (this.tab === 'monthly') { this.loadMonthly(); }
     },
 
     async loadDay() {
@@ -653,6 +700,26 @@ function plantApp() {
     async openDay(date) {
       const r = await fetch(`/plant/api/browse/day?date=${date}`);
       if (r.ok) { this.brDay = await r.json(); window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); }
+    },
+    async loadMonthly() {
+      const q = this.mPeriod ? ('?period=' + this.mPeriod) : '';
+      const r = await fetch('/plant/api/monthly' + q);
+      if (!r.ok) return;
+      this.m = await r.json();
+      if (!this.mPeriod) this.mPeriod = this.m.default_period;  // default to last month
+    },
+    async submitMonthly() {
+      if (!confirm('Generate the monthly report for ' + this.mPeriod + ' and upload to OneDrive?')) return;
+      this.mSubmitting = true;
+      try {
+        const r = await fetch('/plant/api/monthly/submit', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ period: this.mPeriod }),
+        });
+        const d = await r.json();
+        if (!r.ok) { alert(d.detail || 'Failed'); return; }
+        alert(d.message || 'Done');
+      } finally { this.mSubmitting = false; }
     },
     async loadSettings() {
       const r = await fetch('/plant/api/settings');

@@ -617,3 +617,169 @@ async def api_settings_save(request: Request,
     row.updated_by = user.employee_code
     db.commit()
     return {"ok": True, "labour_ot_rate_per_half_hour": rate}
+
+# --------------------------------------------------------------- monthly
+
+def _prev_month(today=None):
+    from datetime import date as _d
+    t = today or _d.today()
+    y, m = (t.year - 1, 12) if t.month == 1 else (t.year, t.month - 1)
+    return y, m
+
+
+def _build_monthly(db: Session, year: int, month: int):
+    """Compute the monthly payroll + work figures from stored data.
+    Money: labour amount = present-day-equivalent (H=0.5) * per_day_salary + OT;
+    contractor total = man-days * per_day_rate + OT."""
+    import calendar
+    from datetime import date as _d
+    ndays = calendar.monthrange(year, month)[1]
+    start, end = _d(year, month, 1), _d(year, month, ndays)
+
+    # --- company (own labour) ---
+    lmap = {l.id: l for l in db.query(PlantLabour).all()}
+    la = (db.query(PlantLabourAttendance)
+          .filter(PlantLabourAttendance.att_date >= start,
+                  PlantLabourAttendance.att_date <= end).all())
+    per = {}   # labour_id -> {grid, present_equiv, ot_hours, ot_amount}
+    for a in la:
+        rec = per.setdefault(a.labour_id, {"grid": {}, "present_equiv": 0.0,
+                                           "ot_hours": 0, "ot_amount": 0.0})
+        rec["grid"][a.att_date.day] = a.status
+        if a.status == "P":
+            rec["present_equiv"] += 1
+        elif a.status == "H":
+            rec["present_equiv"] += 0.5
+        rec["ot_hours"] += a.ot_half_hours   # half-hour slots
+        rec["ot_amount"] += a.ot_amount
+    rows = []
+    tot = {"workers": 0, "present_days": 0.0, "ot_hours": 0, "ot_amount": 0.0,
+           "salary": 0.0, "grand": 0.0}
+    for lid, rec in sorted(per.items(), key=lambda kv: lmap[kv[0]].name if kv[0] in lmap else ""):
+        l = lmap.get(lid)
+        if not l:
+            continue
+        salary = rec["present_equiv"] * (l.per_day_salary or 0)
+        grand = salary + rec["ot_amount"]
+        rows.append({"name": l.name, "grid": rec["grid"],
+                     "days": rec["present_equiv"], "amount": salary,
+                     "ot_hours": rec["ot_hours"], "ot_amount": rec["ot_amount"]})
+        tot["workers"] += 1
+        tot["present_days"] += rec["present_equiv"]
+        tot["ot_hours"] += rec["ot_hours"]
+        tot["ot_amount"] += rec["ot_amount"]
+        tot["salary"] += salary
+        tot["grand"] += grand
+    company = {"rows": rows, "totals": tot}
+
+    # --- contractors (one sheet each, skip those with no activity) ---
+    cmap = {c.id: c for c in db.query(PlantContractor).all()}
+    ca = (db.query(PlantContractorAttendance)
+          .filter(PlantContractorAttendance.att_date >= start,
+                  PlantContractorAttendance.att_date <= end)
+          .order_by(PlantContractorAttendance.att_date).all())
+    by_c = {}
+    for a in ca:
+        by_c.setdefault(a.contractor_id, []).append(a)
+    contractors = []
+    for cid, recs in by_c.items():
+        c = cmap.get(cid)
+        if not c:
+            continue
+        crows, mandays, ot_amt = [], 0, 0.0
+        for a in sorted(recs, key=lambda r: r.att_date):
+            total = a.skilled + a.helper
+            mandays += total
+            ot_amt += a.ot_amount
+            crows.append({"date": a.att_date.strftime("%d %b %Y"),
+                          "skilled": a.skilled, "helper": a.helper, "total": total,
+                          "ot_persons": a.ot_persons if a.ot else 0,
+                          "ot_amount": a.ot_amount})
+        base = mandays * (c.per_day_rate or 0)
+        contractors.append({"name": c.name, "rows": crows,
+                            "totals": {"mandays": mandays, "base": base,
+                                       "ot_amount": ot_amt, "grand": base + ot_amt}})
+    contractors.sort(key=lambda x: x["name"])
+
+    # --- team-wise work summary ---
+    from collections import defaultdict
+    ts = defaultdict(lambda: {"work_lines": 0, "qty": 0.0, "weight": 0.0})
+    for w in (db.query(PlantLabourWorkLog)
+              .filter(PlantLabourWorkLog.log_date >= start,
+                      PlantLabourWorkLog.log_date <= end).all()):
+        ts["Own team"]["work_lines"] += 1
+        ts["Own team"]["qty"] += w.qty_nos or 0
+        ts["Own team"]["weight"] += w.weight_kg or 0
+    for w in (db.query(PlantContractorWorkLog)
+              .filter(PlantContractorWorkLog.log_date >= start,
+                      PlantContractorWorkLog.log_date <= end).all()):
+        name = cmap[w.contractor_id].name if w.contractor_id in cmap else "Unassigned"
+        ts[name]["work_lines"] += 1
+        ts[name]["qty"] += w.qty_nos or 0
+        ts[name]["weight"] += w.weight_kg or 0
+    work_summary = sorted(({"team": n, **v} for n, v in ts.items()),
+                          key=lambda r: r["weight"], reverse=True)
+    total_weight = sum(w["weight"] for w in work_summary)
+
+    has_data = bool(rows or contractors or work_summary)
+    return company, contractors, work_summary, total_weight, has_data
+
+
+@router.get("/api/monthly")
+def api_monthly_preview(period: str | None = None,
+                        user: Employee = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Headline figures for the monthly screen (no PDF). period=YYYY-MM;
+    defaults to the previous month."""
+    _guard(db, user)
+    if period:
+        try:
+            year, month = (int(x) for x in period.split("-"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="period must be YYYY-MM")
+    else:
+        year, month = _prev_month()
+    company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    return {
+        "period": f"{year:04d}-{month:02d}",
+        "default_period": f"{_prev_month()[0]:04d}-{_prev_month()[1]:02d}",
+        "has_data": has_data,
+        "company_total": company["totals"]["grand"],
+        "company_workers": company["totals"]["workers"],
+        "contractor_count": len(contractors),
+        "contractor_total": sum(c["totals"]["grand"] for c in contractors),
+        "total_weight": total_weight,
+    }
+
+
+@router.post("/api/monthly/submit")
+async def api_monthly_submit(request: Request,
+                             user: Employee = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    """Render the monthly PDF and upload to MONTHLY REPORT/<YYYY-MM> Plant Report.pdf."""
+    _guard(db, user)
+    b = await request.json()
+    period = b.get("period")
+    if period:
+        try:
+            year, month = (int(x) for x in period.split("-"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="period must be YYYY-MM")
+    else:
+        year, month = _prev_month()
+    company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    if not has_data:
+        return {"ok": True, "uploaded": False,
+                "message": "Nothing recorded for this month — nothing to submit."}
+    try:
+        from ..services.plant_pdf import build_monthly_pdf
+        pdf = build_monthly_pdf(year, month, company, contractors, work_summary, total_weight)
+        path = f"{MONTHLY_DIR}/{year:04d}-{month:02d} Plant Report.pdf"
+        info = _od.upload_to_path(pdf, path, "application/pdf")
+        return {"ok": True, "uploaded": True, "url": (info or {}).get("webUrl"),
+                "message": "Monthly report submitted to OneDrive."}
+    except Exception as e:
+        log.error("[plant] monthly submit failed for %s-%s: %s", year, month, e, exc_info=True)
+        return {"ok": True, "uploaded": False,
+                "message": f"The OneDrive upload failed: {e}"}
+
