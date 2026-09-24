@@ -312,6 +312,67 @@
     </div>
   </div>
 
+  <!-- ============ DASHBOARD ============ -->
+  <div x-show="tab === 'dashboard'">
+    <div class="flex items-center gap-3 flex-wrap mb-5">
+      <div class="lbl">From</div>
+      <input type="date" x-model="dbStart" @change="loadDashboard()" class="rounded-lg border-metfraa-gray-300 text-sm">
+      <div class="lbl">To</div>
+      <input type="date" x-model="dbEnd" @change="loadDashboard()" class="rounded-lg border-metfraa-gray-300 text-sm">
+      <div class="flex gap-1 ml-auto">
+        <template x-for="q in [[7,'7d'],[30,'30d'],[90,'90d']]" :key="q[0]">
+          <button @click="quickRange(q[0])" class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-bold text-metfraa-gray-600" x-text="q[1]"></button>
+        </template>
+      </div>
+    </div>
+
+    <!-- headline totals -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5" x-show="db">
+      <template x-for="k in kpis" :key="k.label">
+        <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4">
+          <div class="lbl" x-text="k.label"></div>
+          <div class="display text-2xl font-bold mt-1" :class="k.cls" x-text="k.val"></div>
+        </div>
+      </template>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="lbl mb-3">Attendance trend</div>
+        <canvas id="attChart" height="150"></canvas>
+      </div>
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="lbl mb-3">Work done per day</div>
+        <canvas id="workChart" height="150"></canvas>
+      </div>
+    </div>
+
+    <!-- per-team totals -->
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="lbl mb-3">Output by team</div>
+      <table class="w-full text-sm">
+        <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+          <th class="py-2">Team</th><th class="py-2 text-right">Qty (Nos)</th>
+          <th class="py-2 text-right">Weight (Kg)</th><th class="py-2 w-1/3">Share by weight</th></tr></thead>
+        <tbody class="divide-y divide-metfraa-gray-100">
+          <template x-for="t in (db ? db.teams : [])" :key="t.team">
+            <tr>
+              <td class="py-2 font-semibold" x-text="t.team"></td>
+              <td class="py-2 text-right mono" x-text="t.qty.toLocaleString('en-IN')"></td>
+              <td class="py-2 text-right mono" x-text="t.weight.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+              <td class="py-2"><div class="h-2 rounded-full bg-metfraa-gray-100 overflow-hidden">
+                <div class="h-full bg-metfraa-blue rounded-full" :style="`width:${maxWeight ? (t.weight/maxWeight*100) : 0}%`"></div>
+              </div></td>
+            </tr>
+          </template>
+          <template x-if="db && !db.teams.length">
+            <tr><td colspan="4" class="py-6 text-center text-metfraa-gray-400 text-sm">No work logged in this range.</td></tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ============ BROWSE ============ -->
   <div x-show="tab === 'browse'">
     <!-- range roll-up -->
@@ -559,13 +620,16 @@ function plantApp() {
     labour: [], contractors: [], saved: false, saving: false, submitting: false,
     labourOtRate: 50, settingsSaved: false,
     labourWork: [], contractorWork: [],
+    dbStart: new Date(Date.now()-29*864e5).toISOString().slice(0,10),
+    dbEnd: new Date().toISOString().slice(0,10),
+    db: null, attChart: null, workChart: null,
     brStart: new Date(Date.now()-13*864e5).toISOString().slice(0,10),
     brEnd: new Date().toISOString().slice(0,10),
     rangeDays: [], brDay: null,
     labourAll: [], contractorsAll: [], showInactiveLabour: false, showInactiveContr: false,
     drawer: null, form: {},
 
-    tabs: [{ id: 'day', label: 'Attendance' }, { id: 'labour', label: 'Labour Master' },
+    tabs: [{ id: 'day', label: 'Attendance' }, { id: 'dashboard', label: 'Dashboard' }, { id: 'labour', label: 'Labour Master' },
            { id: 'contractors', label: 'Contractor Master' }, { id: 'browse', label: 'Browse' }, { id: 'monthly', label: 'Monthly Report' }, { id: 'settings', label: 'Settings' }],
 
     get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
@@ -605,6 +669,7 @@ function plantApp() {
       if (this.tab === 'contractors') this.loadContractors();
       if (this.tab === 'settings') this.loadSettings();
       if (this.tab === 'browse') { this.loadRange(); }
+      if (this.tab === 'dashboard') { this.loadDashboard(); }
       if (this.tab === 'monthly') { this.loadMonthly(); }
     },
 
@@ -691,6 +756,59 @@ function plantApp() {
     editContractor(c) {
       this.form = c ? { ...c } : { name: '', per_day_rate: 0, ot_rate_per_half_hour: 50, active: true };
       this.drawer = 'contractor';
+    },
+    get kpis() {
+      if (!this.db) return [];
+      const t = this.db.totals;
+      return [
+        { label: 'Present (man-days)', val: t.present, cls: 'text-green-700' },
+        { label: 'Half days', val: t.half, cls: 'text-amber-600' },
+        { label: 'Absent', val: t.absent, cls: 'text-red-600' },
+        { label: 'Contractor man-days', val: t.contractor_mandays, cls: 'text-metfraa-ink' },
+        { label: 'Total Qty', val: (t.qty||0).toLocaleString('en-IN'), cls: 'text-metfraa-blue' },
+        { label: 'Total Weight (Kg)', val: (t.weight||0).toLocaleString('en-IN',{maximumFractionDigits:0}), cls: 'text-metfraa-blue' },
+      ];
+    },
+    get maxWeight() { return this.db && this.db.teams.length ? Math.max(...this.db.teams.map(t=>t.weight)) : 0; },
+    quickRange(n) {
+      this.dbEnd = new Date().toISOString().slice(0,10);
+      this.dbStart = new Date(Date.now()-(n-1)*864e5).toISOString().slice(0,10);
+      this.loadDashboard();
+    },
+    async loadDashboard() {
+      const r = await fetch(`/plant/api/dashboard?start=${this.dbStart}&end=${this.dbEnd}`);
+      if (!r.ok) return;
+      this.db = await r.json();
+      this.$nextTick(() => this.drawCharts());
+    },
+    drawCharts() {
+      if (typeof Chart === 'undefined') { setTimeout(() => this.drawCharts(), 200); return; }
+      const labels = this.db.days.map(d => d.date.slice(5));
+      if (this.attChart) this.attChart.destroy();
+      this.attChart = new Chart(document.getElementById('attChart'), {
+        type: 'line',
+        data: { labels, datasets: [
+          { label: 'Present', data: this.db.days.map(d=>d.present), borderColor:'#059669', backgroundColor:'rgba(5,150,105,.1)', tension:.3, fill:true },
+          { label: 'Half', data: this.db.days.map(d=>d.half), borderColor:'#d97706', tension:.3 },
+          { label: 'Absent', data: this.db.days.map(d=>d.absent), borderColor:'#dc2626', tension:.3 },
+          { label: 'Contractor', data: this.db.days.map(d=>d.contractor), borderColor:'#1F7CCB', borderDash:[4,3], tension:.3 },
+        ]},
+        options: { responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+                   plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
+                   scales:{y:{beginAtZero:true,ticks:{precision:0}}} }
+      });
+      if (this.workChart) this.workChart.destroy();
+      this.workChart = new Chart(document.getElementById('workChart'), {
+        type: 'bar',
+        data: { labels, datasets: [
+          { label:'Weight (Kg)', data:this.db.days.map(d=>d.weight), backgroundColor:'#1F7CCB', yAxisID:'y' },
+          { label:'Qty (Nos)', type:'line', data:this.db.days.map(d=>d.qty), borderColor:'#0d1421', tension:.3, yAxisID:'y1' },
+        ]},
+        options: { responsive:true, maintainAspectRatio:false,
+                   plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
+                   scales:{ y:{beginAtZero:true,position:'left',title:{display:true,text:'Kg'}},
+                            y1:{beginAtZero:true,position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'Nos'}} } }
+      });
     },
     fmtDate(iso) { return new Date(iso+'T00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); },
     async loadRange() {

@@ -618,6 +618,88 @@ async def api_settings_save(request: Request,
     db.commit()
     return {"ok": True, "labour_ot_rate_per_half_hour": rate}
 
+# --------------------------------------------------------------- dashboard
+
+@router.get("/api/dashboard")
+def api_dashboard(start: str | None = None, end: str | None = None,
+                  user: Employee = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    """Aggregates for the dashboard over a date range:
+      * daily attendance trend (present/half/absent + contractor headcount)
+      * qty & weight produced per day (own team + contractors combined)
+      * qty & weight totals per contractor team (own team shown as 'Own team')
+      * headline totals for the range."""
+    _guard(db, user)
+    e = _parse_date(end)
+    s_ = _parse_date(start)
+    if s_ > e:
+        s_, e = e, s_
+
+    from collections import defaultdict
+    trend = defaultdict(lambda: {"present": 0, "half": 0, "absent": 0,
+                                 "contractor": 0, "qty": 0.0, "weight": 0.0})
+
+    for a in (db.query(PlantLabourAttendance)
+              .filter(PlantLabourAttendance.att_date >= s_,
+                      PlantLabourAttendance.att_date <= e).all()):
+        k = a.att_date.isoformat()
+        if a.status == "P": trend[k]["present"] += 1
+        elif a.status == "H": trend[k]["half"] += 1
+        elif a.status == "A": trend[k]["absent"] += 1
+    for a in (db.query(PlantContractorAttendance)
+              .filter(PlantContractorAttendance.att_date >= s_,
+                      PlantContractorAttendance.att_date <= e).all()):
+        trend[a.att_date.isoformat()]["contractor"] += a.skilled + a.helper
+
+    cmap = {c.id: c.name for c in db.query(PlantContractor).all()}
+    per_team = defaultdict(lambda: {"qty": 0.0, "weight": 0.0})
+
+    for w in (db.query(PlantLabourWorkLog)
+              .filter(PlantLabourWorkLog.log_date >= s_,
+                      PlantLabourWorkLog.log_date <= e).all()):
+        k = w.log_date.isoformat()
+        trend[k]["qty"] += w.qty_nos or 0
+        trend[k]["weight"] += w.weight_kg or 0
+        per_team["Own team"]["qty"] += w.qty_nos or 0
+        per_team["Own team"]["weight"] += w.weight_kg or 0
+    for w in (db.query(PlantContractorWorkLog)
+              .filter(PlantContractorWorkLog.log_date >= s_,
+                      PlantContractorWorkLog.log_date <= e).all()):
+        k = w.log_date.isoformat()
+        trend[k]["qty"] += w.qty_nos or 0
+        trend[k]["weight"] += w.weight_kg or 0
+        name = cmap.get(w.contractor_id, "Unassigned")
+        per_team[name]["qty"] += w.qty_nos or 0
+        per_team[name]["weight"] += w.weight_kg or 0
+
+    # fill every calendar day in range so the trend line has no gaps
+    from datetime import timedelta
+    days = []
+    cur = s_
+    while cur <= e:
+        k = cur.isoformat()
+        t = trend.get(k, {"present": 0, "half": 0, "absent": 0,
+                          "contractor": 0, "qty": 0.0, "weight": 0.0})
+        days.append({"date": k, **t})
+        cur += timedelta(days=1)
+
+    teams = sorted(({"team": n, "qty": round(v["qty"], 2),
+                     "weight": round(v["weight"], 2)}
+                    for n, v in per_team.items()),
+                   key=lambda r: r["weight"], reverse=True)
+
+    totals = {
+        "present": sum(d["present"] for d in days),
+        "half": sum(d["half"] for d in days),
+        "absent": sum(d["absent"] for d in days),
+        "contractor_mandays": sum(d["contractor"] for d in days),
+        "qty": round(sum(d["qty"] for d in days), 2),
+        "weight": round(sum(d["weight"] for d in days), 2),
+    }
+    return {"start": s_.isoformat(), "end": e.isoformat(),
+            "days": days, "teams": teams, "totals": totals}
+
+
 # --------------------------------------------------------------- monthly
 
 def _prev_month(today=None):
