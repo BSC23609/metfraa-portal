@@ -32,10 +32,16 @@
                class="rounded-lg border-metfraa-gray-300 text-sm">
         <span x-show="saved" class="text-xs text-green-700">saved earlier · editable</span>
       </div>
-      <button @click="saveDay()" :disabled="saving"
-        class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
-        <span x-text="saving ? 'Saving…' : 'Save attendance'"></span>
-      </button>
+      <div class="flex gap-2">
+        <button @click="saveDay()" :disabled="saving || submitting"
+          class="px-5 py-2.5 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold disabled:opacity-50">
+          <span x-text="saving ? 'Saving…' : 'Save'"></span>
+        </button>
+        <button @click="submitDay()" :disabled="saving || submitting"
+          class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
+          <span x-text="submitting ? 'Submitting…' : 'Save & Submit to OneDrive'"></span>
+        </button>
+      </div>
     </div>
 
     <!-- Own labour -->
@@ -504,7 +510,7 @@
 function plantApp() {
   return {
     tab: 'day', day: new Date().toISOString().slice(0, 10),
-    labour: [], contractors: [], saved: false, saving: false,
+    labour: [], contractors: [], saved: false, saving: false, submitting: false,
     labourOtRate: 50, settingsSaved: false,
     labourWork: [], contractorWork: [],
     brStart: new Date(Date.now()-13*864e5).toISOString().slice(0,10),
@@ -563,6 +569,30 @@ function plantApp() {
       this.labourOtRate = d.labour_ot_rate;
       this.labourWork = d.labour_worklog || [];
       this.contractorWork = d.contractor_worklog || [];
+    },
+    _dayBody() {
+      return { date: this.day,
+        labour: this.labour.map(l => ({ id: l.id, status: l.status,
+          half_part: l.status === 'H' ? (l.half_part || null) : null,
+          ot: !!l.ot, ot_till: l.ot_till || '' })),
+        contractors: this.contractors.map(c => ({ id: c.id,
+          skilled: +c.skilled || 0, helper: +c.helper || 0,
+          ot: !!c.ot, ot_persons: +c.ot_persons || 0, ot_till: c.ot_till || '' })),
+        labour_worklog: this.labourWork,
+        contractor_worklog: this.contractorWork };
+    },
+    async submitDay() {
+      this.submitting = true;
+      try {
+        const r = await fetch('/plant/api/day/submit', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this._dayBody()),
+        });
+        const d = await r.json();
+        if (!r.ok) { alert(d.detail || 'Submit failed'); return; }
+        this.saved = true;
+        alert(d.message || 'Done');
+      } finally { this.submitting = false; }
     },
     async saveDay() {
       this.saving = true;

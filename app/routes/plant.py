@@ -8,6 +8,7 @@ Admin masters manage the labour roster (name, designation, per-day salary) and
 the contractor list (name, per-day rate). Salary/rate are stored now so the
 payable report the user will build later needs no schema change.
 """
+import logging
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -21,6 +22,11 @@ from ..deps import get_current_user
 from ..models import (Employee, PlantContractor, PlantContractorAttendance,
                       PlantContractorWorkLog, PlantLabour, PlantLabourAttendance,
                       PlantLabourWorkLog, PlantSettings)
+from ..services import onedrive as _od
+
+PLANT_ROOT = "Plant Operation/Attendance and Work Log"
+DAILY_DIR = PLANT_ROOT + "/DAILY REPORT"
+MONTHLY_DIR = PLANT_ROOT + "/MONTHLY REPORT"
 
 SHIFT_END_MIN = 19 * 60   # 7:00 pm, in minutes from midnight
 
@@ -55,6 +61,7 @@ def _labour_ot_rate(db: Session) -> float:
     return row.labour_ot_rate_per_half_hour if row else 50.0
 
 router = APIRouter(prefix="/plant", tags=["plant"])
+log = logging.getLogger("plant")
 templates = Jinja2Templates(directory="app/templates")
 
 VALID = {"P", "A", "H"}
@@ -150,6 +157,10 @@ async def api_save_day(request: Request, user: Employee = Depends(get_current_us
        { date, labour: [{id, status}], contractors: [{id, skilled, helper}] }"""
     _guard(db, user)
     b = await request.json()
+    return _save_day(db, b, user)
+
+
+def _save_day(db: Session, b: dict, user: Employee) -> dict:
     d = _parse_date(b.get("date"))
     now = datetime.utcnow()
 
@@ -260,6 +271,72 @@ async def api_save_day(request: Request, user: Employee = Depends(get_current_us
 
     db.commit()
     return {"ok": True, "date": d.isoformat()}
+
+
+def _gather_day(db: Session, d):
+    """Assemble the daily report data (resolved names, computed summary)."""
+    lmap = {l.id: l for l in db.query(PlantLabour).all()}
+    la = (db.query(PlantLabourAttendance)
+          .filter(PlantLabourAttendance.att_date == d)
+          .order_by(PlantLabourAttendance.labour_id).all())
+    labour = [{"name": lmap[a.labour_id].name if a.labour_id in lmap else "—",
+               "designation": (lmap[a.labour_id].designation or "") if a.labour_id in lmap else "",
+               "status": a.status, "half_part": a.half_part, "ot": bool(a.ot),
+               "ot_till": a.ot_till or "", "ot_half_hours": a.ot_half_hours,
+               "ot_amount": a.ot_amount} for a in la]
+    cmap = {c.id: c for c in db.query(PlantContractor).all()}
+    ca = (db.query(PlantContractorAttendance)
+          .filter(PlantContractorAttendance.att_date == d)
+          .order_by(PlantContractorAttendance.contractor_id).all())
+    contractors = [{"name": cmap[a.contractor_id].name if a.contractor_id in cmap else "—",
+                    "skilled": a.skilled, "helper": a.helper, "ot": bool(a.ot),
+                    "ot_persons": a.ot_persons, "ot_till": a.ot_till or "",
+                    "ot_amount": a.ot_amount} for a in ca]
+    lwl = [{"nature_of_work": w.nature_of_work or "", "skilled": w.skilled,
+            "helper": w.helper, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
+            "remarks": w.remarks or ""}
+           for w in db.query(PlantLabourWorkLog)
+           .filter(PlantLabourWorkLog.log_date == d)
+           .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()]
+    cwl = [{"contractor": cmap[w.contractor_id].name if w.contractor_id in cmap else "—",
+            "nature_of_work": w.nature_of_work or "", "workers": w.workers,
+            "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
+           for w in db.query(PlantContractorWorkLog)
+           .filter(PlantContractorWorkLog.log_date == d)
+           .order_by(PlantContractorWorkLog.seq, PlantContractorWorkLog.id).all()]
+    summary = {"present": sum(1 for a in la if a.status == "P"),
+               "half": sum(1 for a in la if a.status == "H"),
+               "absent": sum(1 for a in la if a.status == "A"),
+               "ot_amount": sum(a.ot_amount for a in la) + sum(a.ot_amount for a in ca)}
+    return labour, contractors, lwl, cwl, summary, bool(la or ca or lwl or cwl)
+
+
+@router.post("/api/day/submit")
+async def api_submit_day(request: Request, user: Employee = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    """Save the day then render its PDF and upload to OneDrive under
+    DAILY REPORT/YYYY-MM/YYYY-MM-DD.pdf."""
+    _guard(db, user)
+    b = await request.json()
+    save_res = _save_day(db, b, user)   # commits the day
+    d = _parse_date(save_res["date"])
+
+    labour, contractors, lwl, cwl, summary, has_data = _gather_day(db, d)
+    if not has_data:
+        return {"ok": True, "date": d.isoformat(), "uploaded": False,
+                "message": "Saved. Nothing to submit — the day is empty."}
+    try:
+        from ..services.plant_pdf import build_daily_pdf
+        pdf = build_daily_pdf(d, labour, contractors, lwl, cwl, summary)
+        path = f"{DAILY_DIR}/{d.strftime('%Y-%m')}/{d.isoformat()}.pdf"
+        info = _od.upload_to_path(pdf, path, "application/pdf")
+        url = (info or {}).get("webUrl")
+        return {"ok": True, "date": d.isoformat(), "uploaded": True,
+                "url": url, "message": "Saved and submitted to OneDrive."}
+    except Exception as e:
+        log.error("[plant] daily submit failed for %s: %s", d, e, exc_info=True)
+        return {"ok": True, "date": d.isoformat(), "uploaded": False,
+                "message": f"Saved, but the OneDrive upload failed: {e}"}
 
 
 # --------------------------------------------------------------- masters
