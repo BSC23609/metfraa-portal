@@ -1,0 +1,309 @@
+diff --git a/app/routes/plant.py b/app/routes/plant.py
+index 0c36431..4b63315 100644
+--- a/app/routes/plant.py
++++ b/app/routes/plant.py
+@@ -402,6 +402,117 @@ def api_contractor_delete(cid: int, user: Employee = Depends(get_current_user),
+     return {"ok": True, "deleted": True}
+ 
+ 
++# --------------------------------------------------------------- browse
++
++@router.get("/api/browse/day")
++def api_browse_day(date: str | None = None,
++                   user: Employee = Depends(get_current_user),
++                   db: Session = Depends(get_db)):
++    """Read-only view of one day: attendance (labour + contractors) and both
++    work logs, with names resolved and OT/half shown."""
++    _guard(db, user)
++    d = _parse_date(date)
++
++    lmap = {l.id: l for l in db.query(PlantLabour).all()}
++    la = (db.query(PlantLabourAttendance)
++          .filter(PlantLabourAttendance.att_date == d)
++          .order_by(PlantLabourAttendance.labour_id).all())
++    labour = [{"name": lmap[a.labour_id].name if a.labour_id in lmap else "—",
++               "designation": (lmap[a.labour_id].designation or "") if a.labour_id in lmap else "",
++               "status": a.status, "half_part": a.half_part,
++               "ot": bool(a.ot), "ot_till": a.ot_till or "",
++               "ot_half_hours": a.ot_half_hours, "ot_amount": a.ot_amount}
++              for a in la]
++
++    cmap = {c.id: c for c in db.query(PlantContractor).all()}
++    ca = (db.query(PlantContractorAttendance)
++          .filter(PlantContractorAttendance.att_date == d)
++          .order_by(PlantContractorAttendance.contractor_id).all())
++    contractors = [{"name": cmap[a.contractor_id].name if a.contractor_id in cmap else "—",
++                    "skilled": a.skilled, "helper": a.helper,
++                    "ot": bool(a.ot), "ot_persons": a.ot_persons, "ot_till": a.ot_till or "",
++                    "ot_half_hours": a.ot_half_hours, "ot_amount": a.ot_amount}
++                   for a in ca]
++
++    lwl = [{"nature_of_work": w.nature_of_work or "", "skilled": w.skilled,
++            "helper": w.helper, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
++            "remarks": w.remarks or ""}
++           for w in db.query(PlantLabourWorkLog)
++           .filter(PlantLabourWorkLog.log_date == d)
++           .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()]
++    cwl = [{"contractor": cmap[w.contractor_id].name if w.contractor_id in cmap else "—",
++            "nature_of_work": w.nature_of_work or "", "workers": w.workers,
++            "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
++           for w in db.query(PlantContractorWorkLog)
++           .filter(PlantContractorWorkLog.log_date == d)
++           .order_by(PlantContractorWorkLog.seq, PlantContractorWorkLog.id).all()]
++
++    present = sum(1 for a in la if a.status == "P")
++    half = sum(1 for a in la if a.status == "H")
++    absent = sum(1 for a in la if a.status == "A")
++    ot_total = sum(a.ot_amount for a in la) + sum(a.ot_amount for a in ca)
++    contr_head = sum(a.skilled + a.helper for a in ca)
++
++    return {
++        "date": d.isoformat(),
++        "summary": {"present": present, "half": half, "absent": absent,
++                    "contractor_headcount": contr_head, "ot_amount": ot_total,
++                    "has_data": bool(la or ca or lwl or cwl)},
++        "labour": labour, "contractors": contractors,
++        "labour_worklog": lwl, "contractor_worklog": cwl,
++    }
++
++
++@router.get("/api/browse/range")
++def api_browse_range(start: str | None = None, end: str | None = None,
++                     user: Employee = Depends(get_current_user),
++                     db: Session = Depends(get_db)):
++    """A per-day roll-up across a date range: attendance counts, contractor
++    headcount, and total qty/weight of work done. Newest day first."""
++    _guard(db, user)
++    e = _parse_date(end)
++    s_ = _parse_date(start)
++    if s_ > e:
++        s_, e = e, s_
++
++    from collections import defaultdict
++    days = defaultdict(lambda: {"present": 0, "half": 0, "absent": 0,
++                                "contractor_headcount": 0, "qty_nos": 0.0,
++                                "weight_kg": 0.0, "work_lines": 0})
++
++    for a in (db.query(PlantLabourAttendance)
++              .filter(PlantLabourAttendance.att_date >= s_,
++                      PlantLabourAttendance.att_date <= e).all()):
++        k = a.att_date.isoformat()
++        if a.status == "P": days[k]["present"] += 1
++        elif a.status == "H": days[k]["half"] += 1
++        elif a.status == "A": days[k]["absent"] += 1
++
++    for a in (db.query(PlantContractorAttendance)
++              .filter(PlantContractorAttendance.att_date >= s_,
++                      PlantContractorAttendance.att_date <= e).all()):
++        days[a.att_date.isoformat()]["contractor_headcount"] += a.skilled + a.helper
++
++    for w in (db.query(PlantLabourWorkLog)
++              .filter(PlantLabourWorkLog.log_date >= s_,
++                      PlantLabourWorkLog.log_date <= e).all()):
++        k = w.log_date.isoformat()
++        days[k]["qty_nos"] += w.qty_nos or 0
++        days[k]["weight_kg"] += w.weight_kg or 0
++        days[k]["work_lines"] += 1
++    for w in (db.query(PlantContractorWorkLog)
++              .filter(PlantContractorWorkLog.log_date >= s_,
++                      PlantContractorWorkLog.log_date <= e).all()):
++        k = w.log_date.isoformat()
++        days[k]["qty_nos"] += w.qty_nos or 0
++        days[k]["weight_kg"] += w.weight_kg or 0
++        days[k]["work_lines"] += 1
++
++    rows = [{"date": k, **v} for k, v in days.items()]
++    rows.sort(key=lambda r: r["date"], reverse=True)
++    return {"start": s_.isoformat(), "end": e.isoformat(), "days": rows}
++
++
+ # --------------------------------------------------------------- settings
+ 
+ @router.get("/api/settings")
+diff --git a/app/templates/plant.html b/app/templates/plant.html
+index bd5665a..256879b 100644
+--- a/app/templates/plant.html
++++ b/app/templates/plant.html
+@@ -306,6 +306,142 @@
+     </div>
+   </div>
+ 
++  <!-- ============ BROWSE ============ -->
++  <div x-show="tab === 'browse'">
++    <!-- range roll-up -->
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
++      <div class="flex items-center gap-3 flex-wrap mb-4">
++        <div class="lbl">From</div>
++        <input type="date" x-model="brStart" @change="loadRange()" class="rounded-lg border-metfraa-gray-300 text-sm">
++        <div class="lbl">To</div>
++        <input type="date" x-model="brEnd" @change="loadRange()" class="rounded-lg border-metfraa-gray-300 text-sm">
++      </div>
++      <div class="overflow-x-auto">
++        <table class="w-full text-sm">
++          <thead>
++            <tr class="text-left lbl border-b border-metfraa-gray-100">
++              <th class="py-2">Date</th><th class="py-2 text-center">Present</th>
++              <th class="py-2 text-center">Half</th><th class="py-2 text-center">Absent</th>
++              <th class="py-2 text-center">Contractor</th><th class="py-2 text-center">Work lines</th>
++              <th class="py-2 text-right">Qty</th><th class="py-2 text-right">Weight (Kg)</th><th class="py-2"></th>
++            </tr>
++          </thead>
++          <tbody class="divide-y divide-metfraa-gray-100">
++            <template x-for="r in rangeDays" :key="r.date">
++              <tr class="hover:bg-metfraa-gray-50 cursor-pointer" @click="openDay(r.date)">
++                <td class="py-2 font-semibold" x-text="fmtDate(r.date)"></td>
++                <td class="py-2 text-center text-green-700 font-semibold" x-text="r.present"></td>
++                <td class="py-2 text-center text-amber-600" x-text="r.half"></td>
++                <td class="py-2 text-center text-red-600" x-text="r.absent"></td>
++                <td class="py-2 text-center" x-text="r.contractor_headcount"></td>
++                <td class="py-2 text-center" x-text="r.work_lines"></td>
++                <td class="py-2 text-right mono" x-text="(r.qty_nos||0).toLocaleString('en-IN')"></td>
++                <td class="py-2 text-right mono" x-text="(r.weight_kg||0).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
++                <td class="py-2 text-right text-metfraa-blue text-xs font-bold">View →</td>
++              </tr>
++            </template>
++            <template x-if="!rangeDays.length">
++              <tr><td colspan="9" class="py-6 text-center text-metfraa-gray-400 text-sm">No records in this range.</td></tr>
++            </template>
++          </tbody>
++        </table>
++      </div>
++    </div>
++
++    <!-- single day detail -->
++    <div x-show="brDay" class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++      <div class="flex items-center justify-between mb-4">
++        <div class="display text-lg font-bold" x-text="brDay ? fmtDate(brDay.date) : ''"></div>
++        <div class="text-xs text-metfraa-gray-500" x-show="brDay">
++          <span class="text-green-700 font-semibold" x-text="brDay.summary.present"></span> present ·
++          <span class="text-amber-600 font-semibold" x-text="brDay.summary.half"></span> half ·
++          <span class="text-red-600 font-semibold" x-text="brDay.summary.absent"></span> absent ·
++          OT ₹ <span class="font-semibold" x-text="(brDay.summary.ot_amount||0).toLocaleString('en-IN')"></span>
++        </div>
++      </div>
++      <template x-if="brDay && !brDay.summary.has_data">
++        <div class="text-sm text-metfraa-gray-400 py-4">Nothing recorded on this day.</div>
++      </template>
++
++      <template x-if="brDay && brDay.labour.length">
++        <div class="mb-5">
++          <div class="lbl mb-2">Own labour</div>
++          <div class="flex flex-wrap gap-1.5">
++            <template x-for="l in brDay.labour" :key="l.name">
++              <span class="px-2 py-1 rounded text-xs font-semibold"
++                :class="{'bg-green-100 text-green-800': l.status==='P','bg-amber-100 text-amber-800': l.status==='H','bg-red-100 text-red-800': l.status==='A'}">
++                <span x-text="l.name"></span>
++                <span x-show="l.status==='H'" x-text="' ('+(l.half_part===1?'1st':'2nd')+')'"></span>
++                <span x-show="l.ot" class="opacity-70" x-text="' · OT '+l.ot_till+' ₹'+l.ot_amount"></span>
++              </span>
++            </template>
++          </div>
++        </div>
++      </template>
++
++      <template x-if="brDay && brDay.contractors.length">
++        <div class="mb-5">
++          <div class="lbl mb-2">Contractor attendance</div>
++          <table class="w-full text-sm">
++            <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++              <th class="py-1">Team</th><th class="py-1 text-center">Skilled</th>
++              <th class="py-1 text-center">Helper</th><th class="py-1">OT</th></tr></thead>
++            <tbody class="divide-y divide-metfraa-gray-100">
++              <template x-for="c in brDay.contractors" :key="c.name">
++                <tr><td class="py-1.5 font-semibold" x-text="c.name"></td>
++                  <td class="py-1.5 text-center" x-text="c.skilled"></td>
++                  <td class="py-1.5 text-center" x-text="c.helper"></td>
++                  <td class="py-1.5 text-xs text-metfraa-gray-500"
++                      x-text="c.ot ? (c.ot_persons+' till '+c.ot_till+' · ₹'+c.ot_amount) : '—'"></td></tr>
++              </template>
++            </tbody>
++          </table>
++        </div>
++      </template>
++
++      <template x-if="brDay && brDay.labour_worklog.length">
++        <div class="mb-5">
++          <div class="lbl mb-2">Own-team work log</div>
++          <div class="overflow-x-auto"><table class="w-full text-sm">
++            <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++              <th class="py-1">Nature of Work</th><th class="py-1 text-center">Sk</th><th class="py-1 text-center">Hp</th>
++              <th class="py-1 text-right">Qty</th><th class="py-1 text-right">Weight</th><th class="py-1">Remarks</th></tr></thead>
++            <tbody class="divide-y divide-metfraa-gray-100">
++              <template x-for="(w,i) in brDay.labour_worklog" :key="i">
++                <tr><td class="py-1.5" x-text="w.nature_of_work"></td>
++                  <td class="py-1.5 text-center" x-text="w.skilled"></td><td class="py-1.5 text-center" x-text="w.helper"></td>
++                  <td class="py-1.5 text-right mono" x-text="w.qty_nos ?? '—'"></td>
++                  <td class="py-1.5 text-right mono" x-text="w.weight_kg ?? '—'"></td>
++                  <td class="py-1.5 text-metfraa-gray-600" x-text="w.remarks"></td></tr>
++              </template>
++            </tbody>
++          </table></div>
++        </div>
++      </template>
++
++      <template x-if="brDay && brDay.contractor_worklog.length">
++        <div>
++          <div class="lbl mb-2">Contractor work log</div>
++          <div class="overflow-x-auto"><table class="w-full text-sm">
++            <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++              <th class="py-1">Contractor</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Workers</th>
++              <th class="py-1 text-right">Qty</th><th class="py-1 text-right">Weight</th><th class="py-1">Remarks</th></tr></thead>
++            <tbody class="divide-y divide-metfraa-gray-100">
++              <template x-for="(w,i) in brDay.contractor_worklog" :key="i">
++                <tr><td class="py-1.5 font-semibold" x-text="w.contractor"></td>
++                  <td class="py-1.5" x-text="w.nature_of_work"></td>
++                  <td class="py-1.5 text-center" x-text="w.workers"></td>
++                  <td class="py-1.5 text-right mono" x-text="w.qty_nos ?? '—'"></td>
++                  <td class="py-1.5 text-right mono" x-text="w.weight_kg ?? '—'"></td>
++                  <td class="py-1.5 text-metfraa-gray-600" x-text="w.remarks"></td></tr>
++              </template>
++            </tbody>
++          </table></div>
++        </div>
++      </template>
++    </div>
++  </div>
++
+   <!-- ============ SETTINGS ============ -->
+   <div x-show="tab === 'settings'">
+     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 max-w-md">
+@@ -371,11 +507,14 @@ function plantApp() {
+     labour: [], contractors: [], saved: false, saving: false,
+     labourOtRate: 50, settingsSaved: false,
+     labourWork: [], contractorWork: [],
++    brStart: new Date(Date.now()-13*864e5).toISOString().slice(0,10),
++    brEnd: new Date().toISOString().slice(0,10),
++    rangeDays: [], brDay: null,
+     labourAll: [], contractorsAll: [], showInactiveLabour: false, showInactiveContr: false,
+     drawer: null, form: {},
+ 
+     tabs: [{ id: 'day', label: 'Attendance' }, { id: 'labour', label: 'Labour Master' },
+-           { id: 'contractors', label: 'Contractor Master' }, { id: 'settings', label: 'Settings' }],
++           { id: 'contractors', label: 'Contractor Master' }, { id: 'browse', label: 'Browse' }, { id: 'settings', label: 'Settings' }],
+ 
+     get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
+     get halfCount() { return this.labour.filter(l => l.status === 'H').length; },
+@@ -413,6 +552,7 @@ function plantApp() {
+       if (this.tab === 'labour') this.loadLabour();
+       if (this.tab === 'contractors') this.loadContractors();
+       if (this.tab === 'settings') this.loadSettings();
++      if (this.tab === 'browse') { this.loadRange(); }
+     },
+ 
+     async loadDay() {
+@@ -475,6 +615,15 @@ function plantApp() {
+       this.form = c ? { ...c } : { name: '', per_day_rate: 0, ot_rate_per_half_hour: 50, active: true };
+       this.drawer = 'contractor';
+     },
++    fmtDate(iso) { return new Date(iso+'T00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); },
++    async loadRange() {
++      const r = await fetch(`/plant/api/browse/range?start=${this.brStart}&end=${this.brEnd}`);
++      if (r.ok) this.rangeDays = (await r.json()).days;
++    },
++    async openDay(date) {
++      const r = await fetch(`/plant/api/browse/day?date=${date}`);
++      if (r.ok) { this.brDay = await r.json(); window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); }
++    },
+     async loadSettings() {
+       const r = await fetch('/plant/api/settings');
+       if (r.ok) this.labourOtRate = (await r.json()).labour_ot_rate_per_half_hour;

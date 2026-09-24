@@ -402,6 +402,117 @@ def api_contractor_delete(cid: int, user: Employee = Depends(get_current_user),
     return {"ok": True, "deleted": True}
 
 
+# --------------------------------------------------------------- browse
+
+@router.get("/api/browse/day")
+def api_browse_day(date: str | None = None,
+                   user: Employee = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    """Read-only view of one day: attendance (labour + contractors) and both
+    work logs, with names resolved and OT/half shown."""
+    _guard(db, user)
+    d = _parse_date(date)
+
+    lmap = {l.id: l for l in db.query(PlantLabour).all()}
+    la = (db.query(PlantLabourAttendance)
+          .filter(PlantLabourAttendance.att_date == d)
+          .order_by(PlantLabourAttendance.labour_id).all())
+    labour = [{"name": lmap[a.labour_id].name if a.labour_id in lmap else "—",
+               "designation": (lmap[a.labour_id].designation or "") if a.labour_id in lmap else "",
+               "status": a.status, "half_part": a.half_part,
+               "ot": bool(a.ot), "ot_till": a.ot_till or "",
+               "ot_half_hours": a.ot_half_hours, "ot_amount": a.ot_amount}
+              for a in la]
+
+    cmap = {c.id: c for c in db.query(PlantContractor).all()}
+    ca = (db.query(PlantContractorAttendance)
+          .filter(PlantContractorAttendance.att_date == d)
+          .order_by(PlantContractorAttendance.contractor_id).all())
+    contractors = [{"name": cmap[a.contractor_id].name if a.contractor_id in cmap else "—",
+                    "skilled": a.skilled, "helper": a.helper,
+                    "ot": bool(a.ot), "ot_persons": a.ot_persons, "ot_till": a.ot_till or "",
+                    "ot_half_hours": a.ot_half_hours, "ot_amount": a.ot_amount}
+                   for a in ca]
+
+    lwl = [{"nature_of_work": w.nature_of_work or "", "skilled": w.skilled,
+            "helper": w.helper, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
+            "remarks": w.remarks or ""}
+           for w in db.query(PlantLabourWorkLog)
+           .filter(PlantLabourWorkLog.log_date == d)
+           .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()]
+    cwl = [{"contractor": cmap[w.contractor_id].name if w.contractor_id in cmap else "—",
+            "nature_of_work": w.nature_of_work or "", "workers": w.workers,
+            "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
+           for w in db.query(PlantContractorWorkLog)
+           .filter(PlantContractorWorkLog.log_date == d)
+           .order_by(PlantContractorWorkLog.seq, PlantContractorWorkLog.id).all()]
+
+    present = sum(1 for a in la if a.status == "P")
+    half = sum(1 for a in la if a.status == "H")
+    absent = sum(1 for a in la if a.status == "A")
+    ot_total = sum(a.ot_amount for a in la) + sum(a.ot_amount for a in ca)
+    contr_head = sum(a.skilled + a.helper for a in ca)
+
+    return {
+        "date": d.isoformat(),
+        "summary": {"present": present, "half": half, "absent": absent,
+                    "contractor_headcount": contr_head, "ot_amount": ot_total,
+                    "has_data": bool(la or ca or lwl or cwl)},
+        "labour": labour, "contractors": contractors,
+        "labour_worklog": lwl, "contractor_worklog": cwl,
+    }
+
+
+@router.get("/api/browse/range")
+def api_browse_range(start: str | None = None, end: str | None = None,
+                     user: Employee = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    """A per-day roll-up across a date range: attendance counts, contractor
+    headcount, and total qty/weight of work done. Newest day first."""
+    _guard(db, user)
+    e = _parse_date(end)
+    s_ = _parse_date(start)
+    if s_ > e:
+        s_, e = e, s_
+
+    from collections import defaultdict
+    days = defaultdict(lambda: {"present": 0, "half": 0, "absent": 0,
+                                "contractor_headcount": 0, "qty_nos": 0.0,
+                                "weight_kg": 0.0, "work_lines": 0})
+
+    for a in (db.query(PlantLabourAttendance)
+              .filter(PlantLabourAttendance.att_date >= s_,
+                      PlantLabourAttendance.att_date <= e).all()):
+        k = a.att_date.isoformat()
+        if a.status == "P": days[k]["present"] += 1
+        elif a.status == "H": days[k]["half"] += 1
+        elif a.status == "A": days[k]["absent"] += 1
+
+    for a in (db.query(PlantContractorAttendance)
+              .filter(PlantContractorAttendance.att_date >= s_,
+                      PlantContractorAttendance.att_date <= e).all()):
+        days[a.att_date.isoformat()]["contractor_headcount"] += a.skilled + a.helper
+
+    for w in (db.query(PlantLabourWorkLog)
+              .filter(PlantLabourWorkLog.log_date >= s_,
+                      PlantLabourWorkLog.log_date <= e).all()):
+        k = w.log_date.isoformat()
+        days[k]["qty_nos"] += w.qty_nos or 0
+        days[k]["weight_kg"] += w.weight_kg or 0
+        days[k]["work_lines"] += 1
+    for w in (db.query(PlantContractorWorkLog)
+              .filter(PlantContractorWorkLog.log_date >= s_,
+                      PlantContractorWorkLog.log_date <= e).all()):
+        k = w.log_date.isoformat()
+        days[k]["qty_nos"] += w.qty_nos or 0
+        days[k]["weight_kg"] += w.weight_kg or 0
+        days[k]["work_lines"] += 1
+
+    rows = [{"date": k, **v} for k, v in days.items()]
+    rows.sort(key=lambda r: r["date"], reverse=True)
+    return {"start": s_.isoformat(), "end": e.isoformat(), "days": rows}
+
+
 # --------------------------------------------------------------- settings
 
 @router.get("/api/settings")
