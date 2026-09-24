@@ -842,6 +842,7 @@ class PlantContractor(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     per_day_rate = Column(Float, nullable=False, default=0)
+    ot_rate_per_half_hour = Column(Float, nullable=False, default=50)
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -856,6 +857,13 @@ class PlantLabourAttendance(Base):
                        nullable=False, index=True)
     att_date = Column(Date, nullable=False, index=True)
     status = Column(String(1), nullable=False, default="P")   # P | A | H
+    # OT worked past the 7pm shift end. ot_till is 'HH:MM'; ot_half_hours is the
+    # completed half-hour slots after 7pm (stored so the payable report and the
+    # audit trail don't recompute); ot_amount = ot_half_hours * global rate.
+    ot = Column(Boolean, default=False, nullable=False)
+    ot_till = Column(String(5), nullable=True)
+    ot_half_hours = Column(Integer, nullable=False, default=0)
+    ot_amount = Column(Float, nullable=False, default=0)
     marked_by = Column(String(255), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -874,9 +882,26 @@ class PlantContractorAttendance(Base):
     att_date = Column(Date, nullable=False, index=True)
     skilled = Column(Integer, nullable=False, default=0)
     helper = Column(Integer, nullable=False, default=0)
+    # OT: how many of the team worked past 7pm, and till when.
+    ot = Column(Boolean, default=False, nullable=False)
+    ot_persons = Column(Integer, nullable=False, default=0)
+    ot_till = Column(String(5), nullable=True)
+    ot_half_hours = Column(Integer, nullable=False, default=0)
+    ot_amount = Column(Float, nullable=False, default=0)
     marked_by = Column(String(255), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     contractor = relationship("PlantContractor")
     __table_args__ = (UniqueConstraint("contractor_id", "att_date",
                                        name="uq_plant_contractor_day"),)
+
+
+class PlantSettings(Base):
+    """Single-row settings for Plant Operations (id always 1). Holds the global
+    labour OT rate per completed half-hour."""
+    __tablename__ = "plant_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    labour_ot_rate_per_half_hour = Column(Float, nullable=False, default=50)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(String(255), nullable=True)

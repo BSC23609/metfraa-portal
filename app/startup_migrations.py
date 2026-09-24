@@ -78,6 +78,16 @@ EXPENSE_PARITY_MIGRATIONS += [
 # today, but any query loading the whole model would fail on Postgres — the
 # same class of break that took out the gatepass page.
 MISC_MIGRATIONS = [
+    "ALTER TABLE plant_contractors ADD COLUMN IF NOT EXISTS ot_rate_per_half_hour DOUBLE PRECISION NOT NULL DEFAULT 50",
+    "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot_till VARCHAR(5)",
+    "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot_half_hours INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_persons INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_till VARCHAR(5)",
+    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_half_hours INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
     "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS plant_admin "
     "BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE expense_consolidated_reports ADD COLUMN IF NOT EXISTS "

@@ -1,0 +1,499 @@
+diff --git a/app/models.py b/app/models.py
+index d9afd6f..055e772 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -842,6 +842,7 @@ class PlantContractor(Base):
+     id = Column(Integer, primary_key=True)
+     name = Column(String(255), nullable=False)
+     per_day_rate = Column(Float, nullable=False, default=0)
++    ot_rate_per_half_hour = Column(Float, nullable=False, default=50)
+     active = Column(Boolean, default=True, nullable=False)
+     created_at = Column(DateTime, default=datetime.utcnow)
+     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+@@ -856,6 +857,13 @@ class PlantLabourAttendance(Base):
+                        nullable=False, index=True)
+     att_date = Column(Date, nullable=False, index=True)
+     status = Column(String(1), nullable=False, default="P")   # P | A | H
++    # OT worked past the 7pm shift end. ot_till is 'HH:MM'; ot_half_hours is the
++    # completed half-hour slots after 7pm (stored so the payable report and the
++    # audit trail don't recompute); ot_amount = ot_half_hours * global rate.
++    ot = Column(Boolean, default=False, nullable=False)
++    ot_till = Column(String(5), nullable=True)
++    ot_half_hours = Column(Integer, nullable=False, default=0)
++    ot_amount = Column(Float, nullable=False, default=0)
+     marked_by = Column(String(255), nullable=True)
+     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+ 
+@@ -874,9 +882,26 @@ class PlantContractorAttendance(Base):
+     att_date = Column(Date, nullable=False, index=True)
+     skilled = Column(Integer, nullable=False, default=0)
+     helper = Column(Integer, nullable=False, default=0)
++    # OT: how many of the team worked past 7pm, and till when.
++    ot = Column(Boolean, default=False, nullable=False)
++    ot_persons = Column(Integer, nullable=False, default=0)
++    ot_till = Column(String(5), nullable=True)
++    ot_half_hours = Column(Integer, nullable=False, default=0)
++    ot_amount = Column(Float, nullable=False, default=0)
+     marked_by = Column(String(255), nullable=True)
+     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+ 
+     contractor = relationship("PlantContractor")
+     __table_args__ = (UniqueConstraint("contractor_id", "att_date",
+                                        name="uq_plant_contractor_day"),)
++
++
++class PlantSettings(Base):
++    """Single-row settings for Plant Operations (id always 1). Holds the global
++    labour OT rate per completed half-hour."""
++    __tablename__ = "plant_settings"
++
++    id = Column(Integer, primary_key=True, default=1)
++    labour_ot_rate_per_half_hour = Column(Float, nullable=False, default=50)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++    updated_by = Column(String(255), nullable=True)
+diff --git a/app/routes/plant.py b/app/routes/plant.py
+index 1bfa00b..e05cece 100644
+--- a/app/routes/plant.py
++++ b/app/routes/plant.py
+@@ -19,7 +19,39 @@ from ..access import get_access
+ from ..database import get_db
+ from ..deps import get_current_user
+ from ..models import (Employee, PlantContractor, PlantContractorAttendance,
+-                      PlantLabour, PlantLabourAttendance)
++                      PlantLabour, PlantLabourAttendance, PlantSettings)
++
++SHIFT_END_MIN = 19 * 60   # 7:00 pm, in minutes from midnight
++
++
++def _completed_half_hours(ot_till: str | None) -> int:
++    """Completed 30-min slots worked AFTER 7pm. Rounds DOWN — a partial slot
++    pays nothing until it completes. 7:45 -> 1 (only the 7:00-7:30 slot is
++    complete); 8:00 -> 2; 8:29 -> 2; 8:30 -> 3. <=7:00 or invalid -> 0."""
++    if not ot_till:
++        return 0
++    try:
++        hh, mm = (int(x) for x in str(ot_till).split(":"))
++    except (ValueError, TypeError):
++        return 0
++    if not (0 <= hh <= 23 and 0 <= mm <= 59):
++        return 0
++    # OT is always evening. A plain "7:30" means 7:30 PM (19:30), not morning.
++    # Treat 1..11 as PM (+12); 12 stays noon; 13..23 already 24h; 0 -> midnight
++    # of the next day (rare, e.g. worked till 00:30) -> +24h.
++    if 1 <= hh <= 11:
++        hh += 12
++    elif hh == 0:
++        hh = 24
++    end = hh * 60 + mm
++    if end <= SHIFT_END_MIN:
++        return 0
++    return (end - SHIFT_END_MIN) // 30
++
++
++def _labour_ot_rate(db: Session) -> float:
++    row = db.query(PlantSettings).filter(PlantSettings.id == 1).first()
++    return row.labour_ot_rate_per_half_hour if row else 50.0
+ 
+ router = APIRouter(prefix="/plant", tags=["plant"])
+ templates = Jinja2Templates(directory="app/templates")
+@@ -71,13 +103,24 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
+               db.query(PlantContractorAttendance)
+               .filter(PlantContractorAttendance.att_date == d).all()}
+ 
++    lrec = {a.labour_id: a for a in
++            db.query(PlantLabourAttendance)
++            .filter(PlantLabourAttendance.att_date == d).all()}
+     return {
+         "date": d.isoformat(),
++        "labour_ot_rate": _labour_ot_rate(db),
+         "labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
+-                    "status": lmarks.get(l.id, "P")} for l in labour],
++                    "status": lmarks.get(l.id, "P"),
++                    "ot": bool(lrec[l.id].ot) if l.id in lrec else False,
++                    "ot_till": (lrec[l.id].ot_till if l.id in lrec else "") or ""}
++                   for l in labour],
+         "contractors": [{"id": c.id, "name": c.name,
++                         "ot_rate_per_half_hour": c.ot_rate_per_half_hour,
+                          "skilled": cmarks[c.id].skilled if c.id in cmarks else 0,
+-                         "helper": cmarks[c.id].helper if c.id in cmarks else 0}
++                         "helper": cmarks[c.id].helper if c.id in cmarks else 0,
++                         "ot": bool(cmarks[c.id].ot) if c.id in cmarks else False,
++                         "ot_persons": cmarks[c.id].ot_persons if c.id in cmarks else 0,
++                         "ot_till": (cmarks[c.id].ot_till if c.id in cmarks else "") or ""}
+                         for c in contractors],
+         "saved": bool(lmarks or cmarks),
+     }
+@@ -96,6 +139,7 @@ async def api_save_day(request: Request, user: Employee = Depends(get_current_us
+     valid_labour = {row[0] for row in db.query(PlantLabour.id).all()}
+     valid_contr = {row[0] for row in db.query(PlantContractor.id).all()}
+ 
++    lrate = _labour_ot_rate(db)
+     for row in (b.get("labour") or []):
+         lid = row.get("id")
+         st = (row.get("status") or "P").upper()
+@@ -103,16 +147,22 @@ async def api_save_day(request: Request, user: Employee = Depends(get_current_us
+             continue
+         if st not in VALID:
+             raise HTTPException(status_code=400, detail=f"Bad status {st!r}")
++        ot = bool(row.get("ot"))
++        ot_till = (row.get("ot_till") or "").strip() if ot else None
++        hh = _completed_half_hours(ot_till) if ot else 0
++        amt = hh * lrate
+         rec = (db.query(PlantLabourAttendance)
+                .filter(PlantLabourAttendance.labour_id == lid,
+                        PlantLabourAttendance.att_date == d).first())
+         if rec:
+             rec.status = st
++            rec.ot, rec.ot_till, rec.ot_half_hours, rec.ot_amount = ot, ot_till, hh, amt
+             rec.marked_by = user.employee_code
+             rec.updated_at = now
+         else:
+             db.add(PlantLabourAttendance(labour_id=lid, att_date=d, status=st,
+-                                         marked_by=user.employee_code))
++                                         ot=ot, ot_till=ot_till, ot_half_hours=hh,
++                                         ot_amount=amt, marked_by=user.employee_code))
+ 
+     def _int(v):
+         try:
+@@ -120,21 +170,31 @@ async def api_save_day(request: Request, user: Employee = Depends(get_current_us
+         except (TypeError, ValueError):
+             return 0
+ 
++    crates = {c.id: c.ot_rate_per_half_hour for c in db.query(PlantContractor).all()}
+     for row in (b.get("contractors") or []):
+         cid = row.get("id")
+         if cid not in valid_contr:
+             continue
+         sk, hp = _int(row.get("skilled")), _int(row.get("helper"))
++        ot = bool(row.get("ot"))
++        ot_persons = _int(row.get("ot_persons")) if ot else 0
++        ot_till = (row.get("ot_till") or "").strip() if ot else None
++        chh = _completed_half_hours(ot_till) if ot else 0
++        camt = ot_persons * chh * crates.get(cid, 50)
+         rec = (db.query(PlantContractorAttendance)
+                .filter(PlantContractorAttendance.contractor_id == cid,
+                        PlantContractorAttendance.att_date == d).first())
+         if rec:
+             rec.skilled, rec.helper = sk, hp
++            rec.ot, rec.ot_persons, rec.ot_till = ot, ot_persons, ot_till
++            rec.ot_half_hours, rec.ot_amount = chh, camt
+             rec.marked_by = user.employee_code
+             rec.updated_at = now
+-        elif sk or hp:
++        elif sk or hp or ot:
+             db.add(PlantContractorAttendance(contractor_id=cid, att_date=d,
+-                                             skilled=sk, helper=hp,
++                                             skilled=sk, helper=hp, ot=ot,
++                                             ot_persons=ot_persons, ot_till=ot_till,
++                                             ot_half_hours=chh, ot_amount=camt,
+                                              marked_by=user.employee_code))
+     db.commit()
+     return {"ok": True, "date": d.isoformat()}
+@@ -220,7 +280,9 @@ def api_contractor_list(include_inactive: str | None = None,
+         q = q.filter(PlantContractor.active == True)  # noqa: E712
+     rows = q.order_by(PlantContractor.active.desc(), PlantContractor.id).all()
+     return {"contractors": [{"id": c.id, "name": c.name,
+-                             "per_day_rate": c.per_day_rate, "active": c.active}
++                             "per_day_rate": c.per_day_rate,
++                             "ot_rate_per_half_hour": c.ot_rate_per_half_hour,
++                             "active": c.active}
+                             for c in rows]}
+ 
+ 
+@@ -240,6 +302,7 @@ async def api_contractor_save(request: Request,
+         except (TypeError, ValueError):
+             raise HTTPException(status_code=400, detail="Invalid rate")
+ 
++    ot_rate = _rate(b.get("ot_rate_per_half_hour")) if b.get("ot_rate_per_half_hour") not in (None, "") else 50.0
+     cid = b.get("id")
+     if cid:
+         c = db.query(PlantContractor).filter(PlantContractor.id == cid).first()
+@@ -247,10 +310,12 @@ async def api_contractor_save(request: Request,
+             raise HTTPException(status_code=404, detail="Contractor not found")
+         c.name = name
+         c.per_day_rate = _rate(b.get("per_day_rate"))
++        c.ot_rate_per_half_hour = ot_rate
+         if "active" in b:
+             c.active = bool(b["active"])
+     else:
+         db.add(PlantContractor(name=name, per_day_rate=_rate(b.get("per_day_rate")),
++                               ot_rate_per_half_hour=ot_rate,
+                                active=bool(b.get("active", True))))
+     db.commit()
+     return {"ok": True}
+@@ -273,3 +338,32 @@ def api_contractor_delete(cid: int, user: Employee = Depends(get_current_user),
+     db.delete(c)
+     db.commit()
+     return {"ok": True, "deleted": True}
++
++
++# --------------------------------------------------------------- settings
++
++@router.get("/api/settings")
++def api_settings(user: Employee = Depends(get_current_user),
++                 db: Session = Depends(get_db)):
++    _guard(db, user)
++    return {"labour_ot_rate_per_half_hour": _labour_ot_rate(db)}
++
++
++@router.post("/api/settings")
++async def api_settings_save(request: Request,
++                            user: Employee = Depends(get_current_user),
++                            db: Session = Depends(get_db)):
++    _guard(db, user)
++    b = await request.json()
++    try:
++        rate = max(0.0, float(b.get("labour_ot_rate_per_half_hour") or 0))
++    except (TypeError, ValueError):
++        raise HTTPException(status_code=400, detail="Invalid rate")
++    row = db.query(PlantSettings).filter(PlantSettings.id == 1).first()
++    if not row:
++        row = PlantSettings(id=1)
++        db.add(row)
++    row.labour_ot_rate_per_half_hour = rate
++    row.updated_by = user.employee_code
++    db.commit()
++    return {"ok": True, "labour_ot_rate_per_half_hour": rate}
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index ee0a0c1..e8076b0 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -78,6 +78,16 @@ EXPENSE_PARITY_MIGRATIONS += [
+ # today, but any query loading the whole model would fail on Postgres — the
+ # same class of break that took out the gatepass page.
+ MISC_MIGRATIONS = [
++    "ALTER TABLE plant_contractors ADD COLUMN IF NOT EXISTS ot_rate_per_half_hour DOUBLE PRECISION NOT NULL DEFAULT 50",
++    "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot BOOLEAN NOT NULL DEFAULT FALSE",
++    "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot_till VARCHAR(5)",
++    "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot_half_hours INTEGER NOT NULL DEFAULT 0",
++    "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
++    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot BOOLEAN NOT NULL DEFAULT FALSE",
++    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_persons INTEGER NOT NULL DEFAULT 0",
++    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_till VARCHAR(5)",
++    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_half_hours INTEGER NOT NULL DEFAULT 0",
++    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+     "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS plant_admin "
+     "BOOLEAN NOT NULL DEFAULT FALSE",
+     "ALTER TABLE expense_consolidated_reports ADD COLUMN IF NOT EXISTS "
+diff --git a/app/templates/plant.html b/app/templates/plant.html
+index dc3f922..d541fa4 100644
+--- a/app/templates/plant.html
++++ b/app/templates/plant.html
+@@ -53,17 +53,31 @@
+       </template>
+       <div class="divide-y divide-metfraa-gray-100">
+         <template x-for="l in labour" :key="l.id">
+-          <div class="flex items-center justify-between py-2.5">
+-            <div>
+-              <div class="font-semibold text-metfraa-ink" x-text="l.name"></div>
+-              <div class="text-xs text-metfraa-gray-500" x-text="l.designation"></div>
++          <div class="py-2.5">
++            <div class="flex items-center justify-between">
++              <div>
++                <div class="font-semibold text-metfraa-ink" x-text="l.name"></div>
++                <div class="text-xs text-metfraa-gray-500" x-text="l.designation"></div>
++              </div>
++              <div class="flex items-center gap-3">
++                <label class="flex items-center gap-1.5 text-xs text-metfraa-gray-500">
++                  <input type="checkbox" x-model="l.ot" class="rounded border-metfraa-gray-300"> OT
++                </label>
++                <div class="flex gap-1">
++                  <template x-for="opt in ['P','H','A']" :key="opt">
++                    <button @click="l.status = opt"
++                      :class="l.status === opt ? statusClass(opt) : 'bg-white ring-1 ring-metfraa-gray-300 text-metfraa-gray-500'"
++                      class="w-11 h-9 rounded-lg text-sm font-bold" x-text="opt"></button>
++                  </template>
++                </div>
++              </div>
+             </div>
+-            <div class="flex gap-1">
+-              <template x-for="opt in ['P','H','A']" :key="opt">
+-                <button @click="l.status = opt"
+-                  :class="l.status === opt ? statusClass(opt) : 'bg-white ring-1 ring-metfraa-gray-300 text-metfraa-gray-500'"
+-                  class="w-11 h-9 rounded-lg text-sm font-bold" x-text="opt"></button>
+-              </template>
++            <div x-show="l.ot" class="mt-2 flex items-center gap-3 pl-1">
++              <span class="lbl">Worked till</span>
++              <input type="time" x-model="l.ot_till" class="rounded border-metfraa-gray-300 text-sm">
++              <span class="text-xs text-metfraa-gray-500">after 7:00 pm</span>
++              <span class="ml-auto text-sm font-semibold text-metfraa-blue"
++                    x-text="labOtAmt(l) ? ('OT ₹ ' + labOtAmt(l).toLocaleString('en-IN') + '  ·  ' + labHalf(l) + ' × ₹' + labourOtRate) : (l.ot_till ? 'no completed half-hour' : '')"></span>
+             </div>
+           </div>
+         </template>
+@@ -79,8 +93,10 @@
+       <table x-show="contractors.length" class="w-full text-sm">
+         <thead>
+           <tr class="text-left lbl border-b border-metfraa-gray-100">
+-            <th class="py-2">Team</th><th class="py-2 w-28">Skilled</th>
+-            <th class="py-2 w-28">Helper</th><th class="py-2 w-20 text-right">Total</th>
++            <th class="py-2">Team</th><th class="py-2 w-24">Skilled</th>
++            <th class="py-2 w-24">Helper</th><th class="py-2 w-16 text-right">Total</th>
++            <th class="py-2 w-16 text-center">OT</th><th class="py-2 w-24">OT persons</th>
++            <th class="py-2 w-28">Worked till</th><th class="py-2 w-28 text-right">OT amount</th>
+           </tr>
+         </thead>
+         <tbody class="divide-y divide-metfraa-gray-100">
+@@ -88,10 +104,17 @@
+             <tr>
+               <td class="py-2 font-semibold" x-text="c.name"></td>
+               <td class="py-2"><input type="number" min="0" x-model.number="c.skilled"
+-                    class="w-20 rounded border-metfraa-gray-300 text-sm"></td>
++                    class="w-16 rounded border-metfraa-gray-300 text-sm"></td>
+               <td class="py-2"><input type="number" min="0" x-model.number="c.helper"
+-                    class="w-20 rounded border-metfraa-gray-300 text-sm"></td>
++                    class="w-16 rounded border-metfraa-gray-300 text-sm"></td>
+               <td class="py-2 text-right font-semibold" x-text="(+c.skilled||0)+(+c.helper||0)"></td>
++              <td class="py-2 text-center"><input type="checkbox" x-model="c.ot" class="rounded border-metfraa-gray-300"></td>
++              <td class="py-2"><input x-show="c.ot" type="number" min="0" x-model.number="c.ot_persons"
++                    class="w-16 rounded border-metfraa-gray-300 text-sm"></td>
++              <td class="py-2"><input x-show="c.ot" type="time" x-model="c.ot_till"
++                    class="rounded border-metfraa-gray-300 text-sm"></td>
++              <td class="py-2 text-right font-semibold text-metfraa-blue"
++                  x-text="c.ot ? '₹ ' + conOtAmt(c).toLocaleString('en-IN') : ''"></td>
+             </tr>
+           </template>
+         </tbody>
+@@ -149,7 +172,7 @@
+         <thead>
+           <tr class="text-left lbl border-b border-metfraa-gray-100">
+             <th class="py-2">Name</th><th class="py-2 text-right">Per-day rate</th>
+-            <th class="py-2">Status</th><th></th>
++            <th class="py-2 text-right">OT / half-hr</th><th class="py-2">Status</th><th></th>
+           </tr>
+         </thead>
+         <tbody class="divide-y divide-metfraa-gray-100">
+@@ -157,6 +180,7 @@
+             <tr :class="!c.active && 'opacity-50'">
+               <td class="py-2 font-semibold" x-text="c.name"></td>
+               <td class="py-2 text-right mono" x-text="'₹ ' + (c.per_day_rate||0).toLocaleString('en-IN')"></td>
++              <td class="py-2 text-right mono" x-text="'₹ ' + (c.ot_rate_per_half_hour||0).toLocaleString('en-IN')"></td>
+               <td class="py-2"><span x-text="c.active ? 'Active' : 'Inactive'"
+                     :class="c.active ? 'text-green-700' : 'text-metfraa-gray-400'" class="text-xs font-semibold"></span></td>
+               <td class="py-2 text-right whitespace-nowrap">
+@@ -174,6 +198,26 @@
+     </div>
+   </div>
+ 
++  <!-- ============ SETTINGS ============ -->
++  <div x-show="tab === 'settings'">
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 max-w-md">
++      <div class="lbl mb-3">OT settings</div>
++      <label class="lbl block mb-1">Labour OT rate per completed half-hour (₹)</label>
++      <div class="flex items-center gap-3">
++        <input type="number" min="0" x-model.number="labourOtRate"
++               class="w-40 rounded-lg border-metfraa-gray-300 text-sm">
++        <button @click="saveSettings()"
++          class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Save</button>
++        <span x-show="settingsSaved" class="text-xs text-green-700">saved</span>
++      </div>
++      <p class="text-xs text-metfraa-gray-500 mt-3">
++        Applies to all own-labour OT. Contractor OT rates are set per team in the
++        Contractor Master. OT counts only completed half-hours after 7:00 pm —
++        e.g. till 7:45 pays one half-hour, till 8:00 pays two.
++      </p>
++    </div>
++  </div>
++
+   <!-- edit drawer -->
+   <div x-show="drawer" x-cloak class="fixed inset-0 bg-black/30 flex justify-end z-50" @click.self="drawer=null">
+     <div class="bg-white w-full max-w-sm h-full p-6 overflow-y-auto">
+@@ -201,6 +245,9 @@
+           <div><label class="lbl block mb-1">Per-day rate (₹)</label>
+             <input type="number" min="0" x-model.number="form.per_day_rate"
+                    class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div><label class="lbl block mb-1">OT rate per half-hour (₹)</label>
++            <input type="number" min="0" x-model.number="form.ot_rate_per_half_hour"
++                   class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+           <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
+           <button @click="saveContractor()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+         </div>
+@@ -214,16 +261,34 @@ function plantApp() {
+   return {
+     tab: 'day', day: new Date().toISOString().slice(0, 10),
+     labour: [], contractors: [], saved: false, saving: false,
++    labourOtRate: 50, settingsSaved: false,
+     labourAll: [], contractorsAll: [], showInactiveLabour: false, showInactiveContr: false,
+     drawer: null, form: {},
+ 
+     tabs: [{ id: 'day', label: 'Attendance' }, { id: 'labour', label: 'Labour Master' },
+-           { id: 'contractors', label: 'Contractor Master' }],
++           { id: 'contractors', label: 'Contractor Master' }, { id: 'settings', label: 'Settings' }],
+ 
+     get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
+     get halfCount() { return this.labour.filter(l => l.status === 'H').length; },
+     get absentCount() { return this.labour.filter(l => l.status === 'A').length; },
+ 
++    labHalf(l) {
++      if (!l.ot || !l.ot_till) return 0;
++      const [h, m] = l.ot_till.split(':').map(Number);
++      let hh = h; if (hh >= 1 && hh <= 11) hh += 12; else if (hh === 0) hh = 24;
++      const end = hh * 60 + m, shift = 19 * 60;
++      return end <= shift ? 0 : Math.floor((end - shift) / 30);
++    },
++    labOtAmt(l) { return this.labHalf(l) * (this.labourOtRate || 0); },
++    conHalf(c) {
++      if (!c.ot || !c.ot_till) return 0;
++      const [h, m] = c.ot_till.split(':').map(Number);
++      let hh = h; if (hh >= 1 && hh <= 11) hh += 12; else if (hh === 0) hh = 24;
++      const end = hh * 60 + m, shift = 19 * 60;
++      return end <= shift ? 0 : Math.floor((end - shift) / 30);
++    },
++    conOtAmt(c) { return (+c.ot_persons || 0) * this.conHalf(c) * (c.ot_rate_per_half_hour || 0); },
++
+     statusClass(o) {
+       return { P: 'bg-green-600 text-white', H: 'bg-amber-500 text-white',
+                A: 'bg-red-500 text-white' }[o];
+@@ -234,6 +299,7 @@ function plantApp() {
+       if (this.tab === 'day') this.loadDay();
+       if (this.tab === 'labour') this.loadLabour();
+       if (this.tab === 'contractors') this.loadContractors();
++      if (this.tab === 'settings') this.loadSettings();
+     },
+ 
+     async loadDay() {
+@@ -241,6 +307,7 @@ function plantApp() {
+       if (!r.ok) return;
+       const d = await r.json();
+       this.labour = d.labour; this.contractors = d.contractors; this.saved = d.saved;
++      this.labourOtRate = d.labour_ot_rate;
+     },
+     async saveDay() {
+       this.saving = true;
+@@ -248,9 +315,11 @@ function plantApp() {
+         const r = await fetch('/plant/api/day', {
+           method: 'POST', headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ date: this.day,
+-            labour: this.labour.map(l => ({ id: l.id, status: l.status })),
++            labour: this.labour.map(l => ({ id: l.id, status: l.status,
++              ot: !!l.ot, ot_till: l.ot_till || '' })),
+             contractors: this.contractors.map(c => ({ id: c.id,
+-              skilled: +c.skilled || 0, helper: +c.helper || 0 })) }),
++              skilled: +c.skilled || 0, helper: +c.helper || 0,
++              ot: !!c.ot, ot_persons: +c.ot_persons || 0, ot_till: c.ot_till || '' })) }),
+         });
+         if (!r.ok) { alert('Save failed'); return; }
+         this.saved = true;
+@@ -285,9 +354,21 @@ function plantApp() {
+       if (r.ok) this.contractorsAll = (await r.json()).contractors;
+     },
+     editContractor(c) {
+-      this.form = c ? { ...c } : { name: '', per_day_rate: 0, active: true };
++      this.form = c ? { ...c } : { name: '', per_day_rate: 0, ot_rate_per_half_hour: 50, active: true };
+       this.drawer = 'contractor';
+     },
++    async loadSettings() {
++      const r = await fetch('/plant/api/settings');
++      if (r.ok) this.labourOtRate = (await r.json()).labour_ot_rate_per_half_hour;
++    },
++    async saveSettings() {
++      const r = await fetch('/plant/api/settings', {
++        method: 'POST', headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ labour_ot_rate_per_half_hour: +this.labourOtRate || 0 }),
++      });
++      if (!r.ok) { alert('Failed'); return; }
++      this.settingsSaved = true; setTimeout(() => this.settingsSaved = false, 2000);
++    },
+     async saveContractor() {
+       const r = await fetch('/plant/api/contractors', {
+         method: 'POST', headers: { 'Content-Type': 'application/json' },

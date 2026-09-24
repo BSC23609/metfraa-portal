@@ -53,17 +53,31 @@
       </template>
       <div class="divide-y divide-metfraa-gray-100">
         <template x-for="l in labour" :key="l.id">
-          <div class="flex items-center justify-between py-2.5">
-            <div>
-              <div class="font-semibold text-metfraa-ink" x-text="l.name"></div>
-              <div class="text-xs text-metfraa-gray-500" x-text="l.designation"></div>
+          <div class="py-2.5">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-semibold text-metfraa-ink" x-text="l.name"></div>
+                <div class="text-xs text-metfraa-gray-500" x-text="l.designation"></div>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="flex items-center gap-1.5 text-xs text-metfraa-gray-500">
+                  <input type="checkbox" x-model="l.ot" class="rounded border-metfraa-gray-300"> OT
+                </label>
+                <div class="flex gap-1">
+                  <template x-for="opt in ['P','H','A']" :key="opt">
+                    <button @click="l.status = opt"
+                      :class="l.status === opt ? statusClass(opt) : 'bg-white ring-1 ring-metfraa-gray-300 text-metfraa-gray-500'"
+                      class="w-11 h-9 rounded-lg text-sm font-bold" x-text="opt"></button>
+                  </template>
+                </div>
+              </div>
             </div>
-            <div class="flex gap-1">
-              <template x-for="opt in ['P','H','A']" :key="opt">
-                <button @click="l.status = opt"
-                  :class="l.status === opt ? statusClass(opt) : 'bg-white ring-1 ring-metfraa-gray-300 text-metfraa-gray-500'"
-                  class="w-11 h-9 rounded-lg text-sm font-bold" x-text="opt"></button>
-              </template>
+            <div x-show="l.ot" class="mt-2 flex items-center gap-3 pl-1">
+              <span class="lbl">Worked till</span>
+              <input type="time" x-model="l.ot_till" class="rounded border-metfraa-gray-300 text-sm">
+              <span class="text-xs text-metfraa-gray-500">after 7:00 pm</span>
+              <span class="ml-auto text-sm font-semibold text-metfraa-blue"
+                    x-text="labOtAmt(l) ? ('OT ₹ ' + labOtAmt(l).toLocaleString('en-IN') + '  ·  ' + labHalf(l) + ' × ₹' + labourOtRate) : (l.ot_till ? 'no completed half-hour' : '')"></span>
             </div>
           </div>
         </template>
@@ -79,8 +93,10 @@
       <table x-show="contractors.length" class="w-full text-sm">
         <thead>
           <tr class="text-left lbl border-b border-metfraa-gray-100">
-            <th class="py-2">Team</th><th class="py-2 w-28">Skilled</th>
-            <th class="py-2 w-28">Helper</th><th class="py-2 w-20 text-right">Total</th>
+            <th class="py-2">Team</th><th class="py-2 w-24">Skilled</th>
+            <th class="py-2 w-24">Helper</th><th class="py-2 w-16 text-right">Total</th>
+            <th class="py-2 w-16 text-center">OT</th><th class="py-2 w-24">OT persons</th>
+            <th class="py-2 w-28">Worked till</th><th class="py-2 w-28 text-right">OT amount</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-metfraa-gray-100">
@@ -88,10 +104,17 @@
             <tr>
               <td class="py-2 font-semibold" x-text="c.name"></td>
               <td class="py-2"><input type="number" min="0" x-model.number="c.skilled"
-                    class="w-20 rounded border-metfraa-gray-300 text-sm"></td>
+                    class="w-16 rounded border-metfraa-gray-300 text-sm"></td>
               <td class="py-2"><input type="number" min="0" x-model.number="c.helper"
-                    class="w-20 rounded border-metfraa-gray-300 text-sm"></td>
+                    class="w-16 rounded border-metfraa-gray-300 text-sm"></td>
               <td class="py-2 text-right font-semibold" x-text="(+c.skilled||0)+(+c.helper||0)"></td>
+              <td class="py-2 text-center"><input type="checkbox" x-model="c.ot" class="rounded border-metfraa-gray-300"></td>
+              <td class="py-2"><input x-show="c.ot" type="number" min="0" x-model.number="c.ot_persons"
+                    class="w-16 rounded border-metfraa-gray-300 text-sm"></td>
+              <td class="py-2"><input x-show="c.ot" type="time" x-model="c.ot_till"
+                    class="rounded border-metfraa-gray-300 text-sm"></td>
+              <td class="py-2 text-right font-semibold text-metfraa-blue"
+                  x-text="c.ot ? '₹ ' + conOtAmt(c).toLocaleString('en-IN') : ''"></td>
             </tr>
           </template>
         </tbody>
@@ -149,7 +172,7 @@
         <thead>
           <tr class="text-left lbl border-b border-metfraa-gray-100">
             <th class="py-2">Name</th><th class="py-2 text-right">Per-day rate</th>
-            <th class="py-2">Status</th><th></th>
+            <th class="py-2 text-right">OT / half-hr</th><th class="py-2">Status</th><th></th>
           </tr>
         </thead>
         <tbody class="divide-y divide-metfraa-gray-100">
@@ -157,6 +180,7 @@
             <tr :class="!c.active && 'opacity-50'">
               <td class="py-2 font-semibold" x-text="c.name"></td>
               <td class="py-2 text-right mono" x-text="'₹ ' + (c.per_day_rate||0).toLocaleString('en-IN')"></td>
+              <td class="py-2 text-right mono" x-text="'₹ ' + (c.ot_rate_per_half_hour||0).toLocaleString('en-IN')"></td>
               <td class="py-2"><span x-text="c.active ? 'Active' : 'Inactive'"
                     :class="c.active ? 'text-green-700' : 'text-metfraa-gray-400'" class="text-xs font-semibold"></span></td>
               <td class="py-2 text-right whitespace-nowrap">
@@ -171,6 +195,26 @@
         <input type="checkbox" x-model="showInactiveContr" @change="loadContractors()" class="rounded border-metfraa-gray-300">
         Show inactive
       </label>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS ============ -->
+  <div x-show="tab === 'settings'">
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 max-w-md">
+      <div class="lbl mb-3">OT settings</div>
+      <label class="lbl block mb-1">Labour OT rate per completed half-hour (₹)</label>
+      <div class="flex items-center gap-3">
+        <input type="number" min="0" x-model.number="labourOtRate"
+               class="w-40 rounded-lg border-metfraa-gray-300 text-sm">
+        <button @click="saveSettings()"
+          class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Save</button>
+        <span x-show="settingsSaved" class="text-xs text-green-700">saved</span>
+      </div>
+      <p class="text-xs text-metfraa-gray-500 mt-3">
+        Applies to all own-labour OT. Contractor OT rates are set per team in the
+        Contractor Master. OT counts only completed half-hours after 7:00 pm —
+        e.g. till 7:45 pays one half-hour, till 8:00 pays two.
+      </p>
     </div>
   </div>
 
@@ -201,6 +245,9 @@
           <div><label class="lbl block mb-1">Per-day rate (₹)</label>
             <input type="number" min="0" x-model.number="form.per_day_rate"
                    class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div><label class="lbl block mb-1">OT rate per half-hour (₹)</label>
+            <input type="number" min="0" x-model.number="form.ot_rate_per_half_hour"
+                   class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
           <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
           <button @click="saveContractor()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
         </div>
@@ -214,15 +261,33 @@ function plantApp() {
   return {
     tab: 'day', day: new Date().toISOString().slice(0, 10),
     labour: [], contractors: [], saved: false, saving: false,
+    labourOtRate: 50, settingsSaved: false,
     labourAll: [], contractorsAll: [], showInactiveLabour: false, showInactiveContr: false,
     drawer: null, form: {},
 
     tabs: [{ id: 'day', label: 'Attendance' }, { id: 'labour', label: 'Labour Master' },
-           { id: 'contractors', label: 'Contractor Master' }],
+           { id: 'contractors', label: 'Contractor Master' }, { id: 'settings', label: 'Settings' }],
 
     get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
     get halfCount() { return this.labour.filter(l => l.status === 'H').length; },
     get absentCount() { return this.labour.filter(l => l.status === 'A').length; },
+
+    labHalf(l) {
+      if (!l.ot || !l.ot_till) return 0;
+      const [h, m] = l.ot_till.split(':').map(Number);
+      let hh = h; if (hh >= 1 && hh <= 11) hh += 12; else if (hh === 0) hh = 24;
+      const end = hh * 60 + m, shift = 19 * 60;
+      return end <= shift ? 0 : Math.floor((end - shift) / 30);
+    },
+    labOtAmt(l) { return this.labHalf(l) * (this.labourOtRate || 0); },
+    conHalf(c) {
+      if (!c.ot || !c.ot_till) return 0;
+      const [h, m] = c.ot_till.split(':').map(Number);
+      let hh = h; if (hh >= 1 && hh <= 11) hh += 12; else if (hh === 0) hh = 24;
+      const end = hh * 60 + m, shift = 19 * 60;
+      return end <= shift ? 0 : Math.floor((end - shift) / 30);
+    },
+    conOtAmt(c) { return (+c.ot_persons || 0) * this.conHalf(c) * (c.ot_rate_per_half_hour || 0); },
 
     statusClass(o) {
       return { P: 'bg-green-600 text-white', H: 'bg-amber-500 text-white',
@@ -234,6 +299,7 @@ function plantApp() {
       if (this.tab === 'day') this.loadDay();
       if (this.tab === 'labour') this.loadLabour();
       if (this.tab === 'contractors') this.loadContractors();
+      if (this.tab === 'settings') this.loadSettings();
     },
 
     async loadDay() {
@@ -241,6 +307,7 @@ function plantApp() {
       if (!r.ok) return;
       const d = await r.json();
       this.labour = d.labour; this.contractors = d.contractors; this.saved = d.saved;
+      this.labourOtRate = d.labour_ot_rate;
     },
     async saveDay() {
       this.saving = true;
@@ -248,9 +315,11 @@ function plantApp() {
         const r = await fetch('/plant/api/day', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ date: this.day,
-            labour: this.labour.map(l => ({ id: l.id, status: l.status })),
+            labour: this.labour.map(l => ({ id: l.id, status: l.status,
+              ot: !!l.ot, ot_till: l.ot_till || '' })),
             contractors: this.contractors.map(c => ({ id: c.id,
-              skilled: +c.skilled || 0, helper: +c.helper || 0 })) }),
+              skilled: +c.skilled || 0, helper: +c.helper || 0,
+              ot: !!c.ot, ot_persons: +c.ot_persons || 0, ot_till: c.ot_till || '' })) }),
         });
         if (!r.ok) { alert('Save failed'); return; }
         this.saved = true;
@@ -285,8 +354,20 @@ function plantApp() {
       if (r.ok) this.contractorsAll = (await r.json()).contractors;
     },
     editContractor(c) {
-      this.form = c ? { ...c } : { name: '', per_day_rate: 0, active: true };
+      this.form = c ? { ...c } : { name: '', per_day_rate: 0, ot_rate_per_half_hour: 50, active: true };
       this.drawer = 'contractor';
+    },
+    async loadSettings() {
+      const r = await fetch('/plant/api/settings');
+      if (r.ok) this.labourOtRate = (await r.json()).labour_ot_rate_per_half_hour;
+    },
+    async saveSettings() {
+      const r = await fetch('/plant/api/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ labour_ot_rate_per_half_hour: +this.labourOtRate || 0 }),
+      });
+      if (!r.ok) { alert('Failed'); return; }
+      this.settingsSaved = true; setTimeout(() => this.settingsSaved = false, 2000);
     },
     async saveContractor() {
       const r = await fetch('/plant/api/contractors', {
