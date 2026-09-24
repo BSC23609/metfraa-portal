@@ -19,7 +19,8 @@ from ..access import get_access
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import (Employee, PlantContractor, PlantContractorAttendance,
-                      PlantLabour, PlantLabourAttendance, PlantSettings)
+                      PlantContractorWorkLog, PlantLabour, PlantLabourAttendance,
+                      PlantLabourWorkLog, PlantSettings)
 
 SHIFT_END_MIN = 19 * 60   # 7:00 pm, in minutes from midnight
 
@@ -111,6 +112,7 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
         "labour_ot_rate": _labour_ot_rate(db),
         "labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
                     "status": lmarks.get(l.id, "P"),
+                    "half_part": (lrec[l.id].half_part if l.id in lrec else None),
                     "ot": bool(lrec[l.id].ot) if l.id in lrec else False,
                     "ot_till": (lrec[l.id].ot_till if l.id in lrec else "") or ""}
                    for l in labour],
@@ -122,6 +124,21 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
                          "ot_persons": cmarks[c.id].ot_persons if c.id in cmarks else 0,
                          "ot_till": (cmarks[c.id].ot_till if c.id in cmarks else "") or ""}
                         for c in contractors],
+        "labour_worklog": [{"nature_of_work": w.nature_of_work or "",
+                            "skilled": w.skilled, "helper": w.helper,
+                            "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
+                            "remarks": w.remarks or ""}
+                           for w in db.query(PlantLabourWorkLog)
+                           .filter(PlantLabourWorkLog.log_date == d)
+                           .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()],
+        "contractor_worklog": [{"contractor_id": w.contractor_id,
+                                "nature_of_work": w.nature_of_work or "",
+                                "workers": w.workers,
+                                "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
+                                "remarks": w.remarks or ""}
+                               for w in db.query(PlantContractorWorkLog)
+                               .filter(PlantContractorWorkLog.log_date == d)
+                               .order_by(PlantContractorWorkLog.seq, PlantContractorWorkLog.id).all()],
         "saved": bool(lmarks or cmarks),
     }
 
@@ -147,6 +164,9 @@ async def api_save_day(request: Request, user: Employee = Depends(get_current_us
             continue
         if st not in VALID:
             raise HTTPException(status_code=400, detail=f"Bad status {st!r}")
+        half_part = row.get("half_part") if st == "H" else None
+        if half_part not in (1, 2, None):
+            half_part = None
         ot = bool(row.get("ot"))
         ot_till = (row.get("ot_till") or "").strip() if ot else None
         hh = _completed_half_hours(ot_till) if ot else 0
@@ -156,11 +176,13 @@ async def api_save_day(request: Request, user: Employee = Depends(get_current_us
                        PlantLabourAttendance.att_date == d).first())
         if rec:
             rec.status = st
+            rec.half_part = half_part
             rec.ot, rec.ot_till, rec.ot_half_hours, rec.ot_amount = ot, ot_till, hh, amt
             rec.marked_by = user.employee_code
             rec.updated_at = now
         else:
             db.add(PlantLabourAttendance(labour_id=lid, att_date=d, status=st,
+                                         half_part=half_part,
                                          ot=ot, ot_till=ot_till, ot_half_hours=hh,
                                          ot_amount=amt, marked_by=user.employee_code))
 
@@ -196,6 +218,46 @@ async def api_save_day(request: Request, user: Employee = Depends(get_current_us
                                              ot_persons=ot_persons, ot_till=ot_till,
                                              ot_half_hours=chh, ot_amount=camt,
                                              marked_by=user.employee_code))
+
+    # Work logs: full-replace for the day (the screen edits the whole day).
+    def _fnum(v):
+        if v in (None, ""):
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    if "labour_worklog" in b:
+        db.query(PlantLabourWorkLog).filter(PlantLabourWorkLog.log_date == d).delete()
+        for i, w in enumerate(b.get("labour_worklog") or []):
+            now_row = PlantLabourWorkLog(
+                log_date=d, nature_of_work=(w.get("nature_of_work") or "").strip() or None,
+                skilled=_int(w.get("skilled")), helper=_int(w.get("helper")),
+                qty_nos=_fnum(w.get("qty_nos")), weight_kg=_fnum(w.get("weight_kg")),
+                remarks=(w.get("remarks") or "").strip() or None, seq=i,
+                marked_by=user.employee_code)
+            # skip wholly-empty rows
+            if (now_row.nature_of_work or now_row.skilled or now_row.helper
+                    or now_row.qty_nos or now_row.weight_kg or now_row.remarks):
+                db.add(now_row)
+
+    if "contractor_worklog" in b:
+        db.query(PlantContractorWorkLog).filter(PlantContractorWorkLog.log_date == d).delete()
+        for i, w in enumerate(b.get("contractor_worklog") or []):
+            cid = w.get("contractor_id")
+            cid = cid if cid in valid_contr else None
+            row = PlantContractorWorkLog(
+                log_date=d, contractor_id=cid,
+                nature_of_work=(w.get("nature_of_work") or "").strip() or None,
+                workers=_int(w.get("workers")),
+                qty_nos=_fnum(w.get("qty_nos")), weight_kg=_fnum(w.get("weight_kg")),
+                remarks=(w.get("remarks") or "").strip() or None, seq=i,
+                marked_by=user.employee_code)
+            if (row.contractor_id or row.nature_of_work or row.workers
+                    or row.qty_nos or row.weight_kg or row.remarks):
+                db.add(row)
+
     db.commit()
     return {"ok": True, "date": d.isoformat()}
 

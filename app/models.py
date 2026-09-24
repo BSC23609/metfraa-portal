@@ -857,6 +857,7 @@ class PlantLabourAttendance(Base):
                        nullable=False, index=True)
     att_date = Column(Date, nullable=False, index=True)
     status = Column(String(1), nullable=False, default="P")   # P | A | H
+    half_part = Column(Integer, nullable=True)   # when status=H: 1 (first) | 2 (second)
     # OT worked past the 7pm shift end. ot_till is 'HH:MM'; ot_half_hours is the
     # completed half-hour slots after 7pm (stored so the payable report and the
     # audit trail don't recompute); ot_amount = ot_half_hours * global rate.
@@ -905,3 +906,42 @@ class PlantSettings(Base):
     labour_ot_rate_per_half_hour = Column(Float, nullable=False, default=50)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     updated_by = Column(String(255), nullable=True)
+
+
+class PlantLabourWorkLog(Base):
+    """Own-team daily production lines. Many rows per day (add-row UI). Skilled
+    and helper counts are per line; qty/weight are the produced quantities."""
+    __tablename__ = "plant_labour_worklog"
+
+    id = Column(Integer, primary_key=True)
+    log_date = Column(Date, nullable=False, index=True)
+    nature_of_work = Column(Text, nullable=True)
+    skilled = Column(Integer, nullable=False, default=0)
+    helper = Column(Integer, nullable=False, default=0)
+    qty_nos = Column(Float, nullable=True)
+    weight_kg = Column(Float, nullable=True)
+    remarks = Column(Text, nullable=True)
+    seq = Column(Integer, nullable=False, default=0)   # row order within the day
+    marked_by = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PlantContractorWorkLog(Base):
+    """Contractor daily production lines. Many rows per day; each row names a
+    contractor (dropdown). Single worker count (no skilled/helper split)."""
+    __tablename__ = "plant_contractor_worklog"
+
+    id = Column(Integer, primary_key=True)
+    log_date = Column(Date, nullable=False, index=True)
+    contractor_id = Column(Integer, ForeignKey("plant_contractors.id", ondelete="SET NULL"),
+                           nullable=True, index=True)
+    nature_of_work = Column(Text, nullable=True)
+    workers = Column(Integer, nullable=False, default=0)
+    qty_nos = Column(Float, nullable=True)
+    weight_kg = Column(Float, nullable=True)
+    remarks = Column(Text, nullable=True)
+    seq = Column(Integer, nullable=False, default=0)
+    marked_by = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    contractor = relationship("PlantContractor")
