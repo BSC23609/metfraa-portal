@@ -1,0 +1,640 @@
+diff --git a/app/models.py b/app/models.py
+index 19e385b..76f17a2 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -830,6 +830,10 @@ class PlantLabour(Base):
+     designation = Column(String(120), nullable=True)
+     per_day_salary = Column(Float, nullable=False, default=0)
+     working_hours = Column(Float, nullable=False, default=8)   # OT rate = salary / this
++    # OT category: 'salary' = (salary / working_hours) per hour;
++    #              'flat'   = fixed ₹100/hour (₹50 per 0.5 hour).
++    ot_category = Column(String(16), nullable=False, default="salary")
++    ot_flat_rate = Column(Float, nullable=False, default=100)   # ₹/hour when flat
+     active = Column(Boolean, default=True, nullable=False)
+     created_at = Column(DateTime, default=datetime.utcnow)
+     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+@@ -897,6 +901,19 @@ class PlantContractorAttendance(Base):
+ 
+ 
+ 
++class PlantJob(Base):
++    """Job master — a job the plant works on. Referenced by work-log lines so
++    output can be traced to a job. job_code is the human ID, name the label."""
++    __tablename__ = "plant_jobs"
++
++    id = Column(Integer, primary_key=True)
++    job_code = Column(String(64), nullable=True)
++    name = Column(String(255), nullable=False)
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++
+ class PlantLabourWorkLog(Base):
+     """Own-team daily production lines. Many rows per day (add-row UI). Skilled
+     and helper counts are per line; qty/weight are the produced quantities."""
+@@ -904,6 +921,7 @@ class PlantLabourWorkLog(Base):
+ 
+     id = Column(Integer, primary_key=True)
+     log_date = Column(Date, nullable=False, index=True)
++    job_id = Column(Integer, ForeignKey("plant_jobs.id", ondelete="SET NULL"), nullable=True)
+     nature_of_work = Column(Text, nullable=True)
+     skilled = Column(Integer, nullable=False, default=0)
+     helper = Column(Integer, nullable=False, default=0)
+@@ -924,6 +942,7 @@ class PlantContractorWorkLog(Base):
+     log_date = Column(Date, nullable=False, index=True)
+     contractor_id = Column(Integer, ForeignKey("plant_contractors.id", ondelete="SET NULL"),
+                            nullable=True, index=True)
++    job_id = Column(Integer, ForeignKey("plant_jobs.id", ondelete="SET NULL"), nullable=True)
+     nature_of_work = Column(Text, nullable=True)
+     workers = Column(Integer, nullable=False, default=0)
+     qty_nos = Column(Float, nullable=True)
+diff --git a/app/routes/plant.py b/app/routes/plant.py
+index f730216..3ca315e 100644
+--- a/app/routes/plant.py
++++ b/app/routes/plant.py
+@@ -20,7 +20,7 @@ from ..access import get_access
+ from ..database import get_db
+ from ..deps import get_current_user
+ from ..models import (Employee, PlantContractor, PlantContractorAttendance,
+-                      PlantContractorWorkLog, PlantLabour, PlantLabourAttendance,
++                      PlantContractorWorkLog, PlantJob, PlantLabour, PlantLabourAttendance,
+                       PlantLabourWorkLog)
+ from ..services import onedrive as _od
+ 
+@@ -98,6 +98,7 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
+                     "status": lmarks.get(l.id, "P"),
+                     "half_part": (lrec[l.id].half_part if l.id in lrec else None),
+                     "per_day_salary": l.per_day_salary, "working_hours": l.working_hours,
++                    "ot_category": l.ot_category, "ot_flat_rate": l.ot_flat_rate,
+                     "ot": bool(lrec[l.id].ot) if l.id in lrec else False,
+                     "ot_hours": (lrec[l.id].ot_hours if l.id in lrec else 0)}
+                    for l in labour],
+@@ -109,14 +110,17 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
+                          "ot_persons": cmarks[c.id].ot_persons if c.id in cmarks else 0,
+                          "ot_hours": (cmarks[c.id].ot_hours if c.id in cmarks else 0)}
+                         for c in contractors],
+-        "labour_worklog": [{"nature_of_work": w.nature_of_work or "",
++        "jobs": [{"id": j.id, "code": j.job_code or "", "name": j.name}
++                 for j in db.query(PlantJob).filter(PlantJob.active == True)  # noqa: E712
++                 .order_by(PlantJob.id).all()],
++        "labour_worklog": [{"job_id": w.job_id, "nature_of_work": w.nature_of_work or "",
+                             "skilled": w.skilled, "helper": w.helper,
+                             "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
+                             "remarks": w.remarks or ""}
+                            for w in db.query(PlantLabourWorkLog)
+                            .filter(PlantLabourWorkLog.log_date == d)
+                            .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()],
+-        "contractor_worklog": [{"contractor_id": w.contractor_id,
++        "contractor_worklog": [{"contractor_id": w.contractor_id, "job_id": w.job_id,
+                                 "nature_of_work": w.nature_of_work or "",
+                                 "workers": w.workers,
+                                 "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
+@@ -144,6 +148,7 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
+ 
+     valid_labour = {row[0] for row in db.query(PlantLabour.id).all()}
+     valid_contr = {row[0] for row in db.query(PlantContractor.id).all()}
++    valid_jobs = {row[0] for row in db.query(PlantJob.id).all()}
+ 
+     lmap = {l.id: l for l in db.query(PlantLabour).all()}
+     for row in (b.get("labour") or []):
+@@ -159,8 +164,11 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
+         ot = bool(row.get("ot"))
+         oth = _ot_hours(row.get("ot_hours")) if ot else 0.0
+         lab = lmap.get(lid)
+-        wh = (lab.working_hours or 8) if lab else 8
+-        rate = (lab.per_day_salary or 0) / wh if (lab and wh) else 0
++        if lab and lab.ot_category == "flat":
++            rate = lab.ot_flat_rate or 100          # ₹/hour, flat
++        else:
++            wh = (lab.working_hours or 8) if lab else 8
++            rate = (lab.per_day_salary or 0) / wh if (lab and wh) else 0
+         amt = round(rate * oth, 2)
+         rec = (db.query(PlantLabourAttendance)
+                .filter(PlantLabourAttendance.labour_id == lid,
+@@ -222,13 +230,14 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
+         db.query(PlantLabourWorkLog).filter(PlantLabourWorkLog.log_date == d).delete()
+         for i, w in enumerate(b.get("labour_worklog") or []):
+             now_row = PlantLabourWorkLog(
+-                log_date=d, nature_of_work=(w.get("nature_of_work") or "").strip() or None,
++                log_date=d, job_id=(w.get("job_id") if w.get("job_id") in valid_jobs else None),
++                nature_of_work=(w.get("nature_of_work") or "").strip() or None,
+                 skilled=_int(w.get("skilled")), helper=_int(w.get("helper")),
+                 qty_nos=_fnum(w.get("qty_nos")), weight_kg=_fnum(w.get("weight_kg")),
+                 remarks=(w.get("remarks") or "").strip() or None, seq=i,
+                 marked_by=user.employee_code)
+             # skip wholly-empty rows
+-            if (now_row.nature_of_work or now_row.skilled or now_row.helper
++            if (now_row.job_id or now_row.nature_of_work or now_row.skilled or now_row.helper
+                     or now_row.qty_nos or now_row.weight_kg or now_row.remarks):
+                 db.add(now_row)
+ 
+@@ -238,13 +247,13 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
+             cid = w.get("contractor_id")
+             cid = cid if cid in valid_contr else None
+             row = PlantContractorWorkLog(
+-                log_date=d, contractor_id=cid,
++                log_date=d, contractor_id=cid, job_id=(w.get("job_id") if w.get("job_id") in valid_jobs else None),
+                 nature_of_work=(w.get("nature_of_work") or "").strip() or None,
+                 workers=_int(w.get("workers")),
+                 qty_nos=_fnum(w.get("qty_nos")), weight_kg=_fnum(w.get("weight_kg")),
+                 remarks=(w.get("remarks") or "").strip() or None, seq=i,
+                 marked_by=user.employee_code)
+-            if (row.contractor_id or row.nature_of_work or row.workers
++            if (row.contractor_id or row.job_id or row.nature_of_work or row.workers
+                     or row.qty_nos or row.weight_kg or row.remarks):
+                 db.add(row)
+ 
+@@ -270,13 +279,16 @@ def _gather_day(db: Session, d):
+                     "skilled": a.skilled, "helper": a.helper, "ot": bool(a.ot),
+                     "ot_persons": a.ot_persons, "ot_hours": a.ot_hours,
+                     "ot_amount": a.ot_amount} for a in ca]
+-    lwl = [{"nature_of_work": w.nature_of_work or "", "skilled": w.skilled,
+-            "helper": w.helper, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
+-            "remarks": w.remarks or ""}
++    jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
++            for j in db.query(PlantJob).all()}
++    lwl = [{"job": jmap.get(w.job_id, ""), "nature_of_work": w.nature_of_work or "",
++            "skilled": w.skilled, "helper": w.helper, "qty_nos": w.qty_nos,
++            "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
+            for w in db.query(PlantLabourWorkLog)
+            .filter(PlantLabourWorkLog.log_date == d)
+            .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()]
+     cwl = [{"contractor": cmap[w.contractor_id].name if w.contractor_id in cmap else "—",
++            "job": jmap.get(w.job_id, ""),
+             "nature_of_work": w.nature_of_work or "", "workers": w.workers,
+             "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
+            for w in db.query(PlantContractorWorkLog)
+@@ -330,7 +342,9 @@ def api_labour_list(include_inactive: str | None = None,
+     rows = q.order_by(PlantLabour.active.desc(), PlantLabour.id).all()
+     return {"labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
+                         "per_day_salary": l.per_day_salary,
+-                        "working_hours": l.working_hours, "active": l.active}
++                        "working_hours": l.working_hours,
++                        "ot_category": l.ot_category, "ot_flat_rate": l.ot_flat_rate,
++                        "active": l.active}
+                        for l in rows]}
+ 
+ 
+@@ -356,6 +370,13 @@ async def api_labour_save(request: Request, user: Employee = Depends(get_current
+             raise HTTPException(status_code=400, detail="Invalid working hours")
+         return h if h > 0 else 8.0
+ 
++    def _flat_l(v):
++        try:
++            r = float(v) if v not in (None, "") else 100.0
++        except (TypeError, ValueError):
++            return 100.0
++        return r if r > 0 else 100.0
++
+     lid = b.get("id")
+     if lid:
+         l = db.query(PlantLabour).filter(PlantLabour.id == lid).first()
+@@ -365,6 +386,8 @@ async def api_labour_save(request: Request, user: Employee = Depends(get_current
+         l.designation = (b.get("designation") or "").strip() or None
+         l.per_day_salary = _sal(b.get("per_day_salary"))
+         l.working_hours = _wh_l(b.get("working_hours"))
++        l.ot_category = "flat" if (b.get("ot_category") == "flat") else "salary"
++        l.ot_flat_rate = _flat_l(b.get("ot_flat_rate"))
+         if "active" in b:
+             l.active = bool(b["active"])
+     else:
+@@ -372,6 +395,8 @@ async def api_labour_save(request: Request, user: Employee = Depends(get_current
+                            designation=(b.get("designation") or "").strip() or None,
+                            per_day_salary=_sal(b.get("per_day_salary")),
+                            working_hours=_wh_l(b.get("working_hours")),
++                           ot_category=("flat" if b.get("ot_category") == "flat" else "salary"),
++                           ot_flat_rate=_flat_l(b.get("ot_flat_rate")),
+                            active=bool(b.get("active", True))))
+     db.commit()
+     return {"ok": True}
+@@ -473,6 +498,65 @@ def api_contractor_delete(cid: int, user: Employee = Depends(get_current_user),
+     return {"ok": True, "deleted": True}
+ 
+ 
++# --------------------------------------------------------------- job master
++
++@router.get("/api/jobs")
++def api_jobs_list(include_inactive: str | None = None,
++                  user: Employee = Depends(get_current_user),
++                  db: Session = Depends(get_db)):
++    _guard(db, user)
++    q = db.query(PlantJob)
++    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
++        q = q.filter(PlantJob.active == True)  # noqa: E712
++    rows = q.order_by(PlantJob.active.desc(), PlantJob.id).all()
++    return {"jobs": [{"id": j.id, "job_code": j.job_code or "", "name": j.name,
++                      "active": j.active} for j in rows]}
++
++
++@router.post("/api/jobs")
++async def api_jobs_save(request: Request, user: Employee = Depends(get_current_user),
++                        db: Session = Depends(get_db)):
++    _guard(db, user)
++    b = await request.json()
++    name = (b.get("name") or "").strip()
++    if not name:
++        raise HTTPException(status_code=400, detail="Job name is required")
++    code = (b.get("job_code") or "").strip() or None
++    jid = b.get("id")
++    if jid:
++        j = db.query(PlantJob).filter(PlantJob.id == jid).first()
++        if not j:
++            raise HTTPException(status_code=404, detail="Job not found")
++        j.name = name
++        j.job_code = code
++        if "active" in b:
++            j.active = bool(b["active"])
++    else:
++        db.add(PlantJob(name=name, job_code=code, active=bool(b.get("active", True))))
++    db.commit()
++    return {"ok": True}
++
++
++@router.delete("/api/jobs/{jid}")
++def api_jobs_delete(jid: int, user: Employee = Depends(get_current_user),
++                    db: Session = Depends(get_db)):
++    """Soft-delete: a job used on any work-log line is deactivated (history
++    preserved); an unused job is removed outright."""
++    _guard(db, user)
++    j = db.query(PlantJob).filter(PlantJob.id == jid).first()
++    if not j:
++        raise HTTPException(status_code=404, detail="Not found")
++    used = (db.query(PlantLabourWorkLog).filter(PlantLabourWorkLog.job_id == jid).first()
++            or db.query(PlantContractorWorkLog).filter(PlantContractorWorkLog.job_id == jid).first())
++    if used:
++        j.active = False
++        db.commit()
++        return {"ok": True, "deactivated": True}
++    db.delete(j)
++    db.commit()
++    return {"ok": True, "deleted": True}
++
++
+ # --------------------------------------------------------------- browse
+ 
+ @router.get("/api/browse/day")
+@@ -504,13 +588,16 @@ def api_browse_day(date: str | None = None,
+                     "ot_hours": a.ot_hours, "ot_amount": a.ot_amount}
+                    for a in ca]
+ 
+-    lwl = [{"nature_of_work": w.nature_of_work or "", "skilled": w.skilled,
+-            "helper": w.helper, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
+-            "remarks": w.remarks or ""}
++    jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
++            for j in db.query(PlantJob).all()}
++    lwl = [{"job": jmap.get(w.job_id, ""), "nature_of_work": w.nature_of_work or "",
++            "skilled": w.skilled, "helper": w.helper, "qty_nos": w.qty_nos,
++            "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
+            for w in db.query(PlantLabourWorkLog)
+            .filter(PlantLabourWorkLog.log_date == d)
+            .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()]
+     cwl = [{"contractor": cmap[w.contractor_id].name if w.contractor_id in cmap else "—",
++            "job": jmap.get(w.job_id, ""),
+             "nature_of_work": w.nature_of_work or "", "workers": w.workers,
+             "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
+            for w in db.query(PlantContractorWorkLog)
+diff --git a/app/services/plant_pdf.py b/app/services/plant_pdf.py
+index 7b28583..16b8fa4 100644
+--- a/app/services/plant_pdf.py
++++ b/app/services/plant_pdf.py
+@@ -134,8 +134,8 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
+                     summary: dict) -> bytes:
+     """labour: [{name, designation, status, half_part, ot, ot_hours, ot_amount}]
+        contractors: [{name, skilled, helper, ot, ot_persons, ot_hours, ot_amount}]
+-       labour_worklog: [{nature_of_work, skilled, helper, qty_nos, weight_kg, remarks}]
+-       contractor_worklog: [{contractor, nature_of_work, workers, qty_nos, weight_kg, remarks}]
++       labour_worklog: [{job, nature_of_work, skilled, helper, qty_nos, weight_kg, remarks}]
++       contractor_worklog: [{contractor, job, nature_of_work, workers, qty_nos, weight_kg, remarks}]
+        summary: {present, half, absent, ot_amount}"""
+     _ensure()
+     buf = io.BytesIO()
+@@ -208,8 +208,8 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
+     # ---- page 2: work logs ----
+     y = _header(c, "Metfraa / Plant Operations", "Daily Work Log", ref)
+     y = _section(c, y, "Own-team work log")
+-    hdr = [("Nature of Work", 0), ("Sk", 190), ("Hp", 225), ("Qty", 260),
+-           ("Weight (Kg)", 315), ("Remarks", 400)]
++    hdr = [("Job", 0), ("Nature of Work", 110), ("Sk", 235), ("Hp", 262),
++           ("Qty", 290), ("Weight (Kg)", 340), ("Remarks", 420)]
+     y = _thead(c, y, hdr)
+     c.setFont(_f(), 9)
+     for i, w in enumerate(labour_worklog):
+@@ -221,20 +221,21 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
+         if i % 2 == 0:
+             c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
+         c.setFillColor(_hx(INK))
+-        c.drawString(L + 8, y - 13, _clip(c, w.get("nature_of_work", ""), _f(), 9, 178))
+-        c.drawString(L + 198, y - 13, str(w.get("skilled", 0)))
+-        c.drawString(L + 233, y - 13, str(w.get("helper", 0)))
+-        c.drawString(L + 268, y - 13, "" if w.get("qty_nos") is None else _fmt(w["qty_nos"]))
+-        c.drawString(L + 323, y - 13, "" if w.get("weight_kg") is None else _fmt(w["weight_kg"]))
+-        c.drawString(L + 408, y - 13, _clip(c, w.get("remarks", ""), _f(), 9, R - L - 408 - 8))
++        c.drawString(L + 8, y - 13, _clip(c, w.get("job", ""), _f(), 9, 100))
++        c.drawString(L + 118, y - 13, _clip(c, w.get("nature_of_work", ""), _f(), 9, 115))
++        c.drawString(L + 243, y - 13, str(w.get("skilled", 0)))
++        c.drawString(L + 270, y - 13, str(w.get("helper", 0)))
++        c.drawString(L + 298, y - 13, "" if w.get("qty_nos") is None else _fmt(w["qty_nos"]))
++        c.drawString(L + 348, y - 13, "" if w.get("weight_kg") is None else _fmt(w["weight_kg"]))
++        c.drawString(L + 428, y - 13, _clip(c, w.get("remarks", ""), _f(), 9, R - L - 428 - 8))
+         y -= rh
+     if not labour_worklog:
+         c.setFillColor(_hx(MUTED)); c.setFont(_f(), 9); c.drawString(L + 8, y - 13, "No work lines."); y -= 18
+     y -= 18
+ 
+     y = _section(c, y, "Contractor work log")
+-    hdr2 = [("Contractor", 0), ("Nature of Work", 100), ("Workers", 270),
+-            ("Qty", 325), ("Weight (Kg)", 375), ("Remarks", 460)]
++    hdr2 = [("Contractor", 0), ("Job", 95), ("Nature of Work", 190), ("Workers", 300),
++            ("Qty", 350), ("Weight (Kg)", 395), ("Remarks", 470)]
+     y = _thead(c, y, hdr2)
+     c.setFont(_f(), 9)
+     for i, w in enumerate(contractor_worklog):
+@@ -246,13 +247,14 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
+         if i % 2 == 0:
+             c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
+         c.setFillColor(_hx(INK)); c.setFont(_f(True), 9)
+-        c.drawString(L + 8, y - 13, _clip(c, w.get("contractor", ""), _f(True), 9, 90))
++        c.drawString(L + 8, y - 13, _clip(c, w.get("contractor", ""), _f(True), 9, 85))
+         c.setFont(_f(), 9)
+-        c.drawString(L + 108, y - 13, _clip(c, w.get("nature_of_work", ""), _f(), 9, 165))
+-        c.drawString(L + 278, y - 13, str(w.get("workers", 0)))
+-        c.drawString(L + 333, y - 13, "" if w.get("qty_nos") is None else _fmt(w["qty_nos"]))
+-        c.drawString(L + 383, y - 13, "" if w.get("weight_kg") is None else _fmt(w["weight_kg"]))
+-        c.drawString(L + 468, y - 13, _clip(c, w.get("remarks", ""), _f(), 9, R - L - 468 - 8))
++        c.drawString(L + 103, y - 13, _clip(c, w.get("job", ""), _f(), 9, 85))
++        c.drawString(L + 198, y - 13, _clip(c, w.get("nature_of_work", ""), _f(), 9, 100))
++        c.drawString(L + 308, y - 13, str(w.get("workers", 0)))
++        c.drawString(L + 358, y - 13, "" if w.get("qty_nos") is None else _fmt(w["qty_nos"]))
++        c.drawString(L + 403, y - 13, "" if w.get("weight_kg") is None else _fmt(w["weight_kg"]))
++        c.drawString(L + 478, y - 13, _clip(c, w.get("remarks", ""), _f(), 9, R - L - 478 - 8))
+         y -= rh
+     if not contractor_worklog:
+         c.setFillColor(_hx(MUTED)); c.setFont(_f(), 9); c.drawString(L + 8, y - 13, "No work lines."); y -= 18
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index 8db3476..4304476 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -80,6 +80,10 @@ EXPENSE_PARITY_MIGRATIONS += [
+ MISC_MIGRATIONS = [
+     "ALTER TABLE plant_contractors ADD COLUMN IF NOT EXISTS ot_rate_per_half_hour DOUBLE PRECISION NOT NULL DEFAULT 50",
+     "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS working_hours DOUBLE PRECISION NOT NULL DEFAULT 8",
++    "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS ot_category VARCHAR(16) NOT NULL DEFAULT 'salary'",
++    "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS ot_flat_rate DOUBLE PRECISION NOT NULL DEFAULT 100",
++    "ALTER TABLE plant_labour_worklog ADD COLUMN IF NOT EXISTS job_id INTEGER",
++    "ALTER TABLE plant_contractor_worklog ADD COLUMN IF NOT EXISTS job_id INTEGER",
+     "ALTER TABLE plant_contractors ADD COLUMN IF NOT EXISTS working_hours DOUBLE PRECISION NOT NULL DEFAULT 8",
+     "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot_hours DOUBLE PRECISION NOT NULL DEFAULT 0",
+     "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_hours DOUBLE PRECISION NOT NULL DEFAULT 0",
+diff --git a/app/templates/plant.html b/app/templates/plant.html
+index ac6f709..81607e0 100644
+--- a/app/templates/plant.html
++++ b/app/templates/plant.html
+@@ -147,7 +147,8 @@
+         <table class="w-full text-sm">
+           <thead>
+             <tr class="text-left lbl border-b border-metfraa-gray-100">
+-              <th class="py-2 min-w-[180px]">Nature of Work</th>
++              <th class="py-2 min-w-[150px]">Job</th>
++              <th class="py-2 min-w-[160px]">Nature of Work</th>
+               <th class="py-2 w-28 text-center">Skilled</th>
+               <th class="py-2 w-28 text-center">Helper</th>
+               <th class="py-2 w-24">Qty (Nos)</th>
+@@ -159,6 +160,14 @@
+           <tbody class="divide-y divide-metfraa-gray-100">
+             <template x-for="(w, i) in labourWork" :key="i">
+               <tr>
++                <td class="py-2 pr-2">
++                  <select x-model.number="w.job_id" class="w-full rounded border-metfraa-gray-300 text-sm">
++                    <option :value="null">— none —</option>
++                    <template x-for="j in jobs" :key="j.id">
++                      <option :value="j.id" x-text="(j.code ? j.code+' · ' : '')+j.name"></option>
++                    </template>
++                  </select>
++                </td>
+                 <td class="py-2 pr-2"><input x-model="w.nature_of_work" class="w-full rounded border-metfraa-gray-300 text-sm"></td>
+                 <td class="py-2"><div class="flex items-center justify-center gap-1">
+                   <button @click="w.skilled = Math.max(0,(+w.skilled||0)-1)" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300 text-metfraa-gray-600">−</button>
+@@ -196,7 +205,8 @@
+           <thead>
+             <tr class="text-left lbl border-b border-metfraa-gray-100">
+               <th class="py-2 min-w-[150px]">Contractor</th>
+-              <th class="py-2 min-w-[180px]">Nature of Work</th>
++              <th class="py-2 min-w-[150px]">Job</th>
++              <th class="py-2 min-w-[160px]">Nature of Work</th>
+               <th class="py-2 w-32 text-center">No. of workers</th>
+               <th class="py-2 w-24">Qty (Nos)</th>
+               <th class="py-2 w-28">Weight (Kg)</th>
+@@ -215,6 +225,14 @@
+                     </template>
+                   </select>
+                 </td>
++                <td class="py-2 pr-2">
++                  <select x-model.number="w.job_id" class="w-full rounded border-metfraa-gray-300 text-sm">
++                    <option :value="null">— none —</option>
++                    <template x-for="j in jobs" :key="j.id">
++                      <option :value="j.id" x-text="(j.code ? j.code+' · ' : '')+j.name"></option>
++                    </template>
++                  </select>
++                </td>
+                 <td class="py-2 pr-2"><input x-model="w.nature_of_work" class="w-full rounded border-metfraa-gray-300 text-sm"></td>
+                 <td class="py-2"><div class="flex items-center justify-center gap-1">
+                   <button @click="w.workers = Math.max(0,(+w.workers||0)-1)" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300 text-metfraa-gray-600">−</button>
+@@ -374,6 +392,45 @@
+     </div>
+   </div>
+ 
++  <!-- ============ JOB MASTER ============ -->
++  <div x-show="tab === 'jobs'">
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++      <div class="flex items-center justify-between mb-4">
++        <div class="lbl">Job Master</div>
++        <button @click="editJob(null)"
++          class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add job</button>
++      </div>
++      <table class="w-full text-sm">
++        <thead>
++          <tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Job ID</th><th class="py-2">Name</th><th class="py-2">Status</th><th></th>
++          </tr>
++        </thead>
++        <tbody class="divide-y divide-metfraa-gray-100">
++          <template x-for="j in jobsAll" :key="j.id">
++            <tr :class="!j.active && 'opacity-50'">
++              <td class="py-2 font-semibold mono" x-text="j.job_code || '—'"></td>
++              <td class="py-2" x-text="j.name"></td>
++              <td class="py-2"><span x-text="j.active ? 'Active' : 'Inactive'"
++                    :class="j.active ? 'text-green-700' : 'text-metfraa-gray-400'" class="text-xs font-semibold"></span></td>
++              <td class="py-2 text-right whitespace-nowrap">
++                <button @click="editJob(j)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
++                <button @click="delJob(j)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
++              </td>
++            </tr>
++          </template>
++          <template x-if="!jobsAll.length">
++            <tr><td colspan="4" class="py-4 text-center text-metfraa-gray-400 text-sm">No jobs yet. Click “Add job”.</td></tr>
++          </template>
++        </tbody>
++      </table>
++      <label class="flex items-center gap-2 text-xs text-metfraa-gray-500 mt-3">
++        <input type="checkbox" x-model="showInactiveJobs" @change="loadJobs()" class="rounded border-metfraa-gray-300">
++        Show inactive
++      </label>
++    </div>
++  </div>
++
+   <!-- ============ BROWSE ============ -->
+   <div x-show="tab === 'browse'">
+     <!-- range roll-up -->
+@@ -472,11 +529,12 @@
+           <div class="lbl mb-2">Own-team work log</div>
+           <div class="overflow-x-auto"><table class="w-full text-sm">
+             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+-              <th class="py-1">Nature of Work</th><th class="py-1 text-center">Sk</th><th class="py-1 text-center">Hp</th>
++              <th class="py-1">Job</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Sk</th><th class="py-1 text-center">Hp</th>
+               <th class="py-1 text-right">Qty</th><th class="py-1 text-right">Weight</th><th class="py-1">Remarks</th></tr></thead>
+             <tbody class="divide-y divide-metfraa-gray-100">
+               <template x-for="(w,i) in brDay.labour_worklog" :key="i">
+-                <tr><td class="py-1.5" x-text="w.nature_of_work"></td>
++                <tr><td class="py-1.5 text-metfraa-gray-500" x-text="w.job"></td>
++                  <td class="py-1.5" x-text="w.nature_of_work"></td>
+                   <td class="py-1.5 text-center" x-text="w.skilled"></td><td class="py-1.5 text-center" x-text="w.helper"></td>
+                   <td class="py-1.5 text-right mono" x-text="w.qty_nos ?? '—'"></td>
+                   <td class="py-1.5 text-right mono" x-text="w.weight_kg ?? '—'"></td>
+@@ -492,11 +550,12 @@
+           <div class="lbl mb-2">Contractor work log</div>
+           <div class="overflow-x-auto"><table class="w-full text-sm">
+             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+-              <th class="py-1">Contractor</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Workers</th>
++              <th class="py-1">Contractor</th><th class="py-1">Job</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Workers</th>
+               <th class="py-1 text-right">Qty</th><th class="py-1 text-right">Weight</th><th class="py-1">Remarks</th></tr></thead>
+             <tbody class="divide-y divide-metfraa-gray-100">
+               <template x-for="(w,i) in brDay.contractor_worklog" :key="i">
+                 <tr><td class="py-1.5 font-semibold" x-text="w.contractor"></td>
++                  <td class="py-1.5 text-metfraa-gray-500" x-text="w.job"></td>
+                   <td class="py-1.5" x-text="w.nature_of_work"></td>
+                   <td class="py-1.5 text-center" x-text="w.workers"></td>
+                   <td class="py-1.5 text-right mono" x-text="w.qty_nos ?? '—'"></td>
+@@ -578,13 +637,33 @@
+           <div><label class="lbl block mb-1">Per-day salary (₹)</label>
+             <input type="number" min="0" x-model.number="form.per_day_salary"
+                    class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+-          <div><label class="lbl block mb-1">Working hours per day (OT = salary ÷ this)</label>
++          <div><label class="lbl block mb-1">OT category</label>
++            <select x-model="form.ot_category" class="w-full rounded-lg border-metfraa-gray-300 text-sm">
++              <option value="salary">Salary-based (salary ÷ working hours)</option>
++              <option value="flat">Flat — ₹100/hour (₹50 per 0.5 hr)</option>
++            </select>
++          </div>
++          <div x-show="form.ot_category !== 'flat'"><label class="lbl block mb-1">Working hours per day (OT = salary ÷ this)</label>
+             <input type="number" min="0" step="0.5" x-model.number="form.working_hours"
+                    class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div x-show="form.ot_category === 'flat'" class="text-xs text-metfraa-gray-500">
++            OT is charged at a flat ₹100 per hour (₹50 per half-hour) for this labourer.
++          </div>
+           <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
+           <button @click="saveLabour()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+         </div>
+       </template>
++      <template x-if="drawer === 'job'">
++        <div class="space-y-4">
++          <div><label class="lbl block mb-1">Job ID (code)</label>
++            <input x-model="form.job_code" placeholder="e.g. KGISL, APOLLO-01"
++                   class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div><label class="lbl block mb-1">Job name</label>
++            <input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
++          <button @click="saveJob()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
++        </div>
++      </template>
+       <template x-if="drawer === 'contractor'">
+         <div class="space-y-4">
+           <div><label class="lbl block mb-1">Name</label>
+@@ -608,7 +687,7 @@ function plantApp() {
+   return {
+     tab: 'day', day: new Date().toISOString().slice(0, 10),
+     labour: [], contractors: [], saved: false, saving: false, submitting: false,
+-    labourWork: [], contractorWork: [],
++    labourWork: [], contractorWork: [], jobs: [], jobsAll: [], showInactiveJobs: false,
+     dbStart: new Date(Date.now()-29*864e5).toISOString().slice(0,10),
+     dbEnd: new Date().toISOString().slice(0,10),
+     db: null, attChart: null, workChart: null,
+@@ -619,17 +698,20 @@ function plantApp() {
+     drawer: null, form: {},
+ 
+     tabs: [{ id: 'day', label: 'Attendance' }, { id: 'dashboard', label: 'Dashboard' }, { id: 'labour', label: 'Labour Master' },
+-           { id: 'contractors', label: 'Contractor Master' }, { id: 'browse', label: 'Browse' }, { id: 'monthly', label: 'Monthly Report' }],
++           { id: 'contractors', label: 'Contractor Master' }, { id: 'jobs', label: 'Job Master' }, { id: 'browse', label: 'Browse' }, { id: 'monthly', label: 'Monthly Report' }],
+ 
+     get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
+     get halfCount() { return this.labour.filter(l => l.status === 'H').length; },
+     get absentCount() { return this.labour.filter(l => l.status === 'A').length; },
+ 
+     numOnly(v) { return String(v==null?'':v).replace(/[^0-9.]/g,'').replace(/(\..*)\./g,'$1'); },
+-    addLabourWork() { this.labourWork.push({ nature_of_work:'', skilled:0, helper:0, qty_nos:'', weight_kg:'', remarks:'' }); },
+-    addContractorWork() { this.contractorWork.push({ contractor_id:null, nature_of_work:'', workers:0, qty_nos:'', weight_kg:'', remarks:'' }); },
++    addLabourWork() { this.labourWork.push({ job_id:null, nature_of_work:'', skilled:0, helper:0, qty_nos:'', weight_kg:'', remarks:'' }); },
++    addContractorWork() { this.contractorWork.push({ contractor_id:null, job_id:null, nature_of_work:'', workers:0, qty_nos:'', weight_kg:'', remarks:'' }); },
+ 
+-    labRate(l) { const wh = +l.working_hours || 8; return (+l.per_day_salary || 0) / wh; },
++    labRate(l) {
++      if (l.ot_category === 'flat') return (+l.ot_flat_rate || 100);
++      const wh = +l.working_hours || 8; return (+l.per_day_salary || 0) / wh;
++    },
+     labOtAmt(l) { return l.ot ? this.labRate(l) * (+l.ot_hours || 0) : 0; },
+     conRate(c) { const wh = +c.working_hours || 8; return (+c.per_day_rate || 0) / wh; },
+     conOtAmt(c) { return c.ot ? (+c.ot_persons || 0) * this.conRate(c) * (+c.ot_hours || 0) : 0; },
+@@ -644,6 +726,7 @@ function plantApp() {
+       if (this.tab === 'day') this.loadDay();
+       if (this.tab === 'labour') this.loadLabour();
+       if (this.tab === 'contractors') this.loadContractors();
++      if (this.tab === 'jobs') this.loadJobs();
+       if (this.tab === 'browse') { this.loadRange(); }
+       if (this.tab === 'dashboard') { this.loadDashboard(); }
+       if (this.tab === 'monthly') { this.loadMonthly(); }
+@@ -654,6 +737,7 @@ function plantApp() {
+       if (!r.ok) return;
+       const d = await r.json();
+       this.labour = d.labour; this.contractors = d.contractors; this.saved = d.saved;
++      this.jobs = d.jobs || [];
+       this.labourWork = d.labour_worklog || [];
+       this.contractorWork = d.contractor_worklog || [];
+     },
+@@ -706,7 +790,7 @@ function plantApp() {
+       if (r.ok) this.labourAll = (await r.json()).labour;
+     },
+     editLabour(l) {
+-      this.form = l ? { ...l } : { name: '', designation: '', per_day_salary: 0, working_hours: 8, active: true };
++      this.form = l ? { ...l } : { name: '', designation: '', per_day_salary: 0, working_hours: 8, ot_category: 'salary', ot_flat_rate: 100, active: true };
+       this.drawer = 'labour';
+     },
+     async saveLabour() {
+@@ -724,6 +808,28 @@ function plantApp() {
+       this.loadLabour();
+     },
+ 
++    async loadJobs() {
++      const r = await fetch('/plant/api/jobs?include_inactive=' + (this.showInactiveJobs ? 1 : 0));
++      if (r.ok) this.jobsAll = (await r.json()).jobs;
++    },
++    editJob(j) {
++      this.form = j ? { ...j } : { job_code: '', name: '', active: true };
++      this.drawer = 'job';
++    },
++    async saveJob() {
++      const r = await fetch('/plant/api/jobs', {
++        method: 'POST', headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify(this.form),
++      });
++      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
++      this.drawer = null; this.loadJobs();
++    },
++    async delJob(j) {
++      if (!confirm(`Remove ${j.name}? If it's used on any work log it will be deactivated, not deleted.`)) return;
++      const r = await fetch(`/plant/api/jobs/${j.id}`, { method: 'DELETE' });
++      if (!r.ok) { alert('Failed'); return; }
++      this.loadJobs();
++    },
+     async loadContractors() {
+       const r = await fetch('/plant/api/contractors?include_inactive=' + (this.showInactiveContr ? 1 : 0));
+       if (r.ok) this.contractorsAll = (await r.json()).contractors;

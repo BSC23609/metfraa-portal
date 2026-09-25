@@ -134,8 +134,8 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
                     summary: dict) -> bytes:
     """labour: [{name, designation, status, half_part, ot, ot_hours, ot_amount}]
        contractors: [{name, skilled, helper, ot, ot_persons, ot_hours, ot_amount}]
-       labour_worklog: [{nature_of_work, skilled, helper, qty_nos, weight_kg, remarks}]
-       contractor_worklog: [{contractor, nature_of_work, workers, qty_nos, weight_kg, remarks}]
+       labour_worklog: [{job, nature_of_work, skilled, helper, qty_nos, weight_kg, remarks}]
+       contractor_worklog: [{contractor, job, nature_of_work, workers, qty_nos, weight_kg, remarks}]
        summary: {present, half, absent, ot_amount}"""
     _ensure()
     buf = io.BytesIO()
@@ -208,8 +208,8 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
     # ---- page 2: work logs ----
     y = _header(c, "Metfraa / Plant Operations", "Daily Work Log", ref)
     y = _section(c, y, "Own-team work log")
-    hdr = [("Nature of Work", 0), ("Sk", 190), ("Hp", 225), ("Qty", 260),
-           ("Weight (Kg)", 315), ("Remarks", 400)]
+    hdr = [("Job", 0), ("Nature of Work", 110), ("Sk", 235), ("Hp", 262),
+           ("Qty", 290), ("Weight (Kg)", 340), ("Remarks", 420)]
     y = _thead(c, y, hdr)
     c.setFont(_f(), 9)
     for i, w in enumerate(labour_worklog):
@@ -221,20 +221,21 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
         if i % 2 == 0:
             c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
         c.setFillColor(_hx(INK))
-        c.drawString(L + 8, y - 13, _clip(c, w.get("nature_of_work", ""), _f(), 9, 178))
-        c.drawString(L + 198, y - 13, str(w.get("skilled", 0)))
-        c.drawString(L + 233, y - 13, str(w.get("helper", 0)))
-        c.drawString(L + 268, y - 13, "" if w.get("qty_nos") is None else _fmt(w["qty_nos"]))
-        c.drawString(L + 323, y - 13, "" if w.get("weight_kg") is None else _fmt(w["weight_kg"]))
-        c.drawString(L + 408, y - 13, _clip(c, w.get("remarks", ""), _f(), 9, R - L - 408 - 8))
+        c.drawString(L + 8, y - 13, _clip(c, w.get("job", ""), _f(), 9, 100))
+        c.drawString(L + 118, y - 13, _clip(c, w.get("nature_of_work", ""), _f(), 9, 115))
+        c.drawString(L + 243, y - 13, str(w.get("skilled", 0)))
+        c.drawString(L + 270, y - 13, str(w.get("helper", 0)))
+        c.drawString(L + 298, y - 13, "" if w.get("qty_nos") is None else _fmt(w["qty_nos"]))
+        c.drawString(L + 348, y - 13, "" if w.get("weight_kg") is None else _fmt(w["weight_kg"]))
+        c.drawString(L + 428, y - 13, _clip(c, w.get("remarks", ""), _f(), 9, R - L - 428 - 8))
         y -= rh
     if not labour_worklog:
         c.setFillColor(_hx(MUTED)); c.setFont(_f(), 9); c.drawString(L + 8, y - 13, "No work lines."); y -= 18
     y -= 18
 
     y = _section(c, y, "Contractor work log")
-    hdr2 = [("Contractor", 0), ("Nature of Work", 100), ("Workers", 270),
-            ("Qty", 325), ("Weight (Kg)", 375), ("Remarks", 460)]
+    hdr2 = [("Contractor", 0), ("Job", 95), ("Nature of Work", 190), ("Workers", 300),
+            ("Qty", 350), ("Weight (Kg)", 395), ("Remarks", 470)]
     y = _thead(c, y, hdr2)
     c.setFont(_f(), 9)
     for i, w in enumerate(contractor_worklog):
@@ -246,13 +247,14 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
         if i % 2 == 0:
             c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
         c.setFillColor(_hx(INK)); c.setFont(_f(True), 9)
-        c.drawString(L + 8, y - 13, _clip(c, w.get("contractor", ""), _f(True), 9, 90))
+        c.drawString(L + 8, y - 13, _clip(c, w.get("contractor", ""), _f(True), 9, 85))
         c.setFont(_f(), 9)
-        c.drawString(L + 108, y - 13, _clip(c, w.get("nature_of_work", ""), _f(), 9, 165))
-        c.drawString(L + 278, y - 13, str(w.get("workers", 0)))
-        c.drawString(L + 333, y - 13, "" if w.get("qty_nos") is None else _fmt(w["qty_nos"]))
-        c.drawString(L + 383, y - 13, "" if w.get("weight_kg") is None else _fmt(w["weight_kg"]))
-        c.drawString(L + 468, y - 13, _clip(c, w.get("remarks", ""), _f(), 9, R - L - 468 - 8))
+        c.drawString(L + 103, y - 13, _clip(c, w.get("job", ""), _f(), 9, 85))
+        c.drawString(L + 198, y - 13, _clip(c, w.get("nature_of_work", ""), _f(), 9, 100))
+        c.drawString(L + 308, y - 13, str(w.get("workers", 0)))
+        c.drawString(L + 358, y - 13, "" if w.get("qty_nos") is None else _fmt(w["qty_nos"]))
+        c.drawString(L + 403, y - 13, "" if w.get("weight_kg") is None else _fmt(w["weight_kg"]))
+        c.drawString(L + 478, y - 13, _clip(c, w.get("remarks", ""), _f(), 9, R - L - 478 - 8))
         y -= rh
     if not contractor_worklog:
         c.setFillColor(_hx(MUTED)); c.setFont(_f(), 9); c.drawString(L + 8, y - 13, "No work lines."); y -= 18

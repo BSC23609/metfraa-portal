@@ -830,6 +830,10 @@ class PlantLabour(Base):
     designation = Column(String(120), nullable=True)
     per_day_salary = Column(Float, nullable=False, default=0)
     working_hours = Column(Float, nullable=False, default=8)   # OT rate = salary / this
+    # OT category: 'salary' = (salary / working_hours) per hour;
+    #              'flat'   = fixed ₹100/hour (₹50 per 0.5 hour).
+    ot_category = Column(String(16), nullable=False, default="salary")
+    ot_flat_rate = Column(Float, nullable=False, default=100)   # ₹/hour when flat
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -897,6 +901,19 @@ class PlantContractorAttendance(Base):
 
 
 
+class PlantJob(Base):
+    """Job master — a job the plant works on. Referenced by work-log lines so
+    output can be traced to a job. job_code is the human ID, name the label."""
+    __tablename__ = "plant_jobs"
+
+    id = Column(Integer, primary_key=True)
+    job_code = Column(String(64), nullable=True)
+    name = Column(String(255), nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class PlantLabourWorkLog(Base):
     """Own-team daily production lines. Many rows per day (add-row UI). Skilled
     and helper counts are per line; qty/weight are the produced quantities."""
@@ -904,6 +921,7 @@ class PlantLabourWorkLog(Base):
 
     id = Column(Integer, primary_key=True)
     log_date = Column(Date, nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("plant_jobs.id", ondelete="SET NULL"), nullable=True)
     nature_of_work = Column(Text, nullable=True)
     skilled = Column(Integer, nullable=False, default=0)
     helper = Column(Integer, nullable=False, default=0)
@@ -924,6 +942,7 @@ class PlantContractorWorkLog(Base):
     log_date = Column(Date, nullable=False, index=True)
     contractor_id = Column(Integer, ForeignKey("plant_contractors.id", ondelete="SET NULL"),
                            nullable=True, index=True)
+    job_id = Column(Integer, ForeignKey("plant_jobs.id", ondelete="SET NULL"), nullable=True)
     nature_of_work = Column(Text, nullable=True)
     workers = Column(Integer, nullable=False, default=0)
     qty_nos = Column(Float, nullable=True)

@@ -20,7 +20,7 @@ from ..access import get_access
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import (Employee, PlantContractor, PlantContractorAttendance,
-                      PlantContractorWorkLog, PlantLabour, PlantLabourAttendance,
+                      PlantContractorWorkLog, PlantJob, PlantLabour, PlantLabourAttendance,
                       PlantLabourWorkLog)
 from ..services import onedrive as _od
 
@@ -98,6 +98,7 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
                     "status": lmarks.get(l.id, "P"),
                     "half_part": (lrec[l.id].half_part if l.id in lrec else None),
                     "per_day_salary": l.per_day_salary, "working_hours": l.working_hours,
+                    "ot_category": l.ot_category, "ot_flat_rate": l.ot_flat_rate,
                     "ot": bool(lrec[l.id].ot) if l.id in lrec else False,
                     "ot_hours": (lrec[l.id].ot_hours if l.id in lrec else 0)}
                    for l in labour],
@@ -109,14 +110,17 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
                          "ot_persons": cmarks[c.id].ot_persons if c.id in cmarks else 0,
                          "ot_hours": (cmarks[c.id].ot_hours if c.id in cmarks else 0)}
                         for c in contractors],
-        "labour_worklog": [{"nature_of_work": w.nature_of_work or "",
+        "jobs": [{"id": j.id, "code": j.job_code or "", "name": j.name}
+                 for j in db.query(PlantJob).filter(PlantJob.active == True)  # noqa: E712
+                 .order_by(PlantJob.id).all()],
+        "labour_worklog": [{"job_id": w.job_id, "nature_of_work": w.nature_of_work or "",
                             "skilled": w.skilled, "helper": w.helper,
                             "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
                             "remarks": w.remarks or ""}
                            for w in db.query(PlantLabourWorkLog)
                            .filter(PlantLabourWorkLog.log_date == d)
                            .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()],
-        "contractor_worklog": [{"contractor_id": w.contractor_id,
+        "contractor_worklog": [{"contractor_id": w.contractor_id, "job_id": w.job_id,
                                 "nature_of_work": w.nature_of_work or "",
                                 "workers": w.workers,
                                 "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
@@ -144,6 +148,7 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
 
     valid_labour = {row[0] for row in db.query(PlantLabour.id).all()}
     valid_contr = {row[0] for row in db.query(PlantContractor.id).all()}
+    valid_jobs = {row[0] for row in db.query(PlantJob.id).all()}
 
     lmap = {l.id: l for l in db.query(PlantLabour).all()}
     for row in (b.get("labour") or []):
@@ -159,8 +164,11 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
         ot = bool(row.get("ot"))
         oth = _ot_hours(row.get("ot_hours")) if ot else 0.0
         lab = lmap.get(lid)
-        wh = (lab.working_hours or 8) if lab else 8
-        rate = (lab.per_day_salary or 0) / wh if (lab and wh) else 0
+        if lab and lab.ot_category == "flat":
+            rate = lab.ot_flat_rate or 100          # ₹/hour, flat
+        else:
+            wh = (lab.working_hours or 8) if lab else 8
+            rate = (lab.per_day_salary or 0) / wh if (lab and wh) else 0
         amt = round(rate * oth, 2)
         rec = (db.query(PlantLabourAttendance)
                .filter(PlantLabourAttendance.labour_id == lid,
@@ -222,13 +230,14 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
         db.query(PlantLabourWorkLog).filter(PlantLabourWorkLog.log_date == d).delete()
         for i, w in enumerate(b.get("labour_worklog") or []):
             now_row = PlantLabourWorkLog(
-                log_date=d, nature_of_work=(w.get("nature_of_work") or "").strip() or None,
+                log_date=d, job_id=(w.get("job_id") if w.get("job_id") in valid_jobs else None),
+                nature_of_work=(w.get("nature_of_work") or "").strip() or None,
                 skilled=_int(w.get("skilled")), helper=_int(w.get("helper")),
                 qty_nos=_fnum(w.get("qty_nos")), weight_kg=_fnum(w.get("weight_kg")),
                 remarks=(w.get("remarks") or "").strip() or None, seq=i,
                 marked_by=user.employee_code)
             # skip wholly-empty rows
-            if (now_row.nature_of_work or now_row.skilled or now_row.helper
+            if (now_row.job_id or now_row.nature_of_work or now_row.skilled or now_row.helper
                     or now_row.qty_nos or now_row.weight_kg or now_row.remarks):
                 db.add(now_row)
 
@@ -238,13 +247,13 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
             cid = w.get("contractor_id")
             cid = cid if cid in valid_contr else None
             row = PlantContractorWorkLog(
-                log_date=d, contractor_id=cid,
+                log_date=d, contractor_id=cid, job_id=(w.get("job_id") if w.get("job_id") in valid_jobs else None),
                 nature_of_work=(w.get("nature_of_work") or "").strip() or None,
                 workers=_int(w.get("workers")),
                 qty_nos=_fnum(w.get("qty_nos")), weight_kg=_fnum(w.get("weight_kg")),
                 remarks=(w.get("remarks") or "").strip() or None, seq=i,
                 marked_by=user.employee_code)
-            if (row.contractor_id or row.nature_of_work or row.workers
+            if (row.contractor_id or row.job_id or row.nature_of_work or row.workers
                     or row.qty_nos or row.weight_kg or row.remarks):
                 db.add(row)
 
@@ -270,13 +279,16 @@ def _gather_day(db: Session, d):
                     "skilled": a.skilled, "helper": a.helper, "ot": bool(a.ot),
                     "ot_persons": a.ot_persons, "ot_hours": a.ot_hours,
                     "ot_amount": a.ot_amount} for a in ca]
-    lwl = [{"nature_of_work": w.nature_of_work or "", "skilled": w.skilled,
-            "helper": w.helper, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
-            "remarks": w.remarks or ""}
+    jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
+            for j in db.query(PlantJob).all()}
+    lwl = [{"job": jmap.get(w.job_id, ""), "nature_of_work": w.nature_of_work or "",
+            "skilled": w.skilled, "helper": w.helper, "qty_nos": w.qty_nos,
+            "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
            for w in db.query(PlantLabourWorkLog)
            .filter(PlantLabourWorkLog.log_date == d)
            .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()]
     cwl = [{"contractor": cmap[w.contractor_id].name if w.contractor_id in cmap else "—",
+            "job": jmap.get(w.job_id, ""),
             "nature_of_work": w.nature_of_work or "", "workers": w.workers,
             "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
            for w in db.query(PlantContractorWorkLog)
@@ -330,7 +342,9 @@ def api_labour_list(include_inactive: str | None = None,
     rows = q.order_by(PlantLabour.active.desc(), PlantLabour.id).all()
     return {"labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
                         "per_day_salary": l.per_day_salary,
-                        "working_hours": l.working_hours, "active": l.active}
+                        "working_hours": l.working_hours,
+                        "ot_category": l.ot_category, "ot_flat_rate": l.ot_flat_rate,
+                        "active": l.active}
                        for l in rows]}
 
 
@@ -356,6 +370,13 @@ async def api_labour_save(request: Request, user: Employee = Depends(get_current
             raise HTTPException(status_code=400, detail="Invalid working hours")
         return h if h > 0 else 8.0
 
+    def _flat_l(v):
+        try:
+            r = float(v) if v not in (None, "") else 100.0
+        except (TypeError, ValueError):
+            return 100.0
+        return r if r > 0 else 100.0
+
     lid = b.get("id")
     if lid:
         l = db.query(PlantLabour).filter(PlantLabour.id == lid).first()
@@ -365,6 +386,8 @@ async def api_labour_save(request: Request, user: Employee = Depends(get_current
         l.designation = (b.get("designation") or "").strip() or None
         l.per_day_salary = _sal(b.get("per_day_salary"))
         l.working_hours = _wh_l(b.get("working_hours"))
+        l.ot_category = "flat" if (b.get("ot_category") == "flat") else "salary"
+        l.ot_flat_rate = _flat_l(b.get("ot_flat_rate"))
         if "active" in b:
             l.active = bool(b["active"])
     else:
@@ -372,6 +395,8 @@ async def api_labour_save(request: Request, user: Employee = Depends(get_current
                            designation=(b.get("designation") or "").strip() or None,
                            per_day_salary=_sal(b.get("per_day_salary")),
                            working_hours=_wh_l(b.get("working_hours")),
+                           ot_category=("flat" if b.get("ot_category") == "flat" else "salary"),
+                           ot_flat_rate=_flat_l(b.get("ot_flat_rate")),
                            active=bool(b.get("active", True))))
     db.commit()
     return {"ok": True}
@@ -473,6 +498,65 @@ def api_contractor_delete(cid: int, user: Employee = Depends(get_current_user),
     return {"ok": True, "deleted": True}
 
 
+# --------------------------------------------------------------- job master
+
+@router.get("/api/jobs")
+def api_jobs_list(include_inactive: str | None = None,
+                  user: Employee = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    _guard(db, user)
+    q = db.query(PlantJob)
+    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
+        q = q.filter(PlantJob.active == True)  # noqa: E712
+    rows = q.order_by(PlantJob.active.desc(), PlantJob.id).all()
+    return {"jobs": [{"id": j.id, "job_code": j.job_code or "", "name": j.name,
+                      "active": j.active} for j in rows]}
+
+
+@router.post("/api/jobs")
+async def api_jobs_save(request: Request, user: Employee = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    _guard(db, user)
+    b = await request.json()
+    name = (b.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Job name is required")
+    code = (b.get("job_code") or "").strip() or None
+    jid = b.get("id")
+    if jid:
+        j = db.query(PlantJob).filter(PlantJob.id == jid).first()
+        if not j:
+            raise HTTPException(status_code=404, detail="Job not found")
+        j.name = name
+        j.job_code = code
+        if "active" in b:
+            j.active = bool(b["active"])
+    else:
+        db.add(PlantJob(name=name, job_code=code, active=bool(b.get("active", True))))
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/jobs/{jid}")
+def api_jobs_delete(jid: int, user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """Soft-delete: a job used on any work-log line is deactivated (history
+    preserved); an unused job is removed outright."""
+    _guard(db, user)
+    j = db.query(PlantJob).filter(PlantJob.id == jid).first()
+    if not j:
+        raise HTTPException(status_code=404, detail="Not found")
+    used = (db.query(PlantLabourWorkLog).filter(PlantLabourWorkLog.job_id == jid).first()
+            or db.query(PlantContractorWorkLog).filter(PlantContractorWorkLog.job_id == jid).first())
+    if used:
+        j.active = False
+        db.commit()
+        return {"ok": True, "deactivated": True}
+    db.delete(j)
+    db.commit()
+    return {"ok": True, "deleted": True}
+
+
 # --------------------------------------------------------------- browse
 
 @router.get("/api/browse/day")
@@ -504,13 +588,16 @@ def api_browse_day(date: str | None = None,
                     "ot_hours": a.ot_hours, "ot_amount": a.ot_amount}
                    for a in ca]
 
-    lwl = [{"nature_of_work": w.nature_of_work or "", "skilled": w.skilled,
-            "helper": w.helper, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
-            "remarks": w.remarks or ""}
+    jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
+            for j in db.query(PlantJob).all()}
+    lwl = [{"job": jmap.get(w.job_id, ""), "nature_of_work": w.nature_of_work or "",
+            "skilled": w.skilled, "helper": w.helper, "qty_nos": w.qty_nos,
+            "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
            for w in db.query(PlantLabourWorkLog)
            .filter(PlantLabourWorkLog.log_date == d)
            .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()]
     cwl = [{"contractor": cmap[w.contractor_id].name if w.contractor_id in cmap else "—",
+            "job": jmap.get(w.job_id, ""),
             "nature_of_work": w.nature_of_work or "", "workers": w.workers,
             "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
            for w in db.query(PlantContractorWorkLog)

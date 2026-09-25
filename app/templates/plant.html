@@ -147,7 +147,8 @@
         <table class="w-full text-sm">
           <thead>
             <tr class="text-left lbl border-b border-metfraa-gray-100">
-              <th class="py-2 min-w-[180px]">Nature of Work</th>
+              <th class="py-2 min-w-[150px]">Job</th>
+              <th class="py-2 min-w-[160px]">Nature of Work</th>
               <th class="py-2 w-28 text-center">Skilled</th>
               <th class="py-2 w-28 text-center">Helper</th>
               <th class="py-2 w-24">Qty (Nos)</th>
@@ -159,6 +160,14 @@
           <tbody class="divide-y divide-metfraa-gray-100">
             <template x-for="(w, i) in labourWork" :key="i">
               <tr>
+                <td class="py-2 pr-2">
+                  <select x-model.number="w.job_id" class="w-full rounded border-metfraa-gray-300 text-sm">
+                    <option :value="null">— none —</option>
+                    <template x-for="j in jobs" :key="j.id">
+                      <option :value="j.id" x-text="(j.code ? j.code+' · ' : '')+j.name"></option>
+                    </template>
+                  </select>
+                </td>
                 <td class="py-2 pr-2"><input x-model="w.nature_of_work" class="w-full rounded border-metfraa-gray-300 text-sm"></td>
                 <td class="py-2"><div class="flex items-center justify-center gap-1">
                   <button @click="w.skilled = Math.max(0,(+w.skilled||0)-1)" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300 text-metfraa-gray-600">−</button>
@@ -196,7 +205,8 @@
           <thead>
             <tr class="text-left lbl border-b border-metfraa-gray-100">
               <th class="py-2 min-w-[150px]">Contractor</th>
-              <th class="py-2 min-w-[180px]">Nature of Work</th>
+              <th class="py-2 min-w-[150px]">Job</th>
+              <th class="py-2 min-w-[160px]">Nature of Work</th>
               <th class="py-2 w-32 text-center">No. of workers</th>
               <th class="py-2 w-24">Qty (Nos)</th>
               <th class="py-2 w-28">Weight (Kg)</th>
@@ -212,6 +222,14 @@
                     <option :value="null">— select —</option>
                     <template x-for="c in contractors" :key="c.id">
                       <option :value="c.id" x-text="c.name"></option>
+                    </template>
+                  </select>
+                </td>
+                <td class="py-2 pr-2">
+                  <select x-model.number="w.job_id" class="w-full rounded border-metfraa-gray-300 text-sm">
+                    <option :value="null">— none —</option>
+                    <template x-for="j in jobs" :key="j.id">
+                      <option :value="j.id" x-text="(j.code ? j.code+' · ' : '')+j.name"></option>
                     </template>
                   </select>
                 </td>
@@ -374,6 +392,45 @@
     </div>
   </div>
 
+  <!-- ============ JOB MASTER ============ -->
+  <div x-show="tab === 'jobs'">
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div class="lbl">Job Master</div>
+        <button @click="editJob(null)"
+          class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add job</button>
+      </div>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-2">Job ID</th><th class="py-2">Name</th><th class="py-2">Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-metfraa-gray-100">
+          <template x-for="j in jobsAll" :key="j.id">
+            <tr :class="!j.active && 'opacity-50'">
+              <td class="py-2 font-semibold mono" x-text="j.job_code || '—'"></td>
+              <td class="py-2" x-text="j.name"></td>
+              <td class="py-2"><span x-text="j.active ? 'Active' : 'Inactive'"
+                    :class="j.active ? 'text-green-700' : 'text-metfraa-gray-400'" class="text-xs font-semibold"></span></td>
+              <td class="py-2 text-right whitespace-nowrap">
+                <button @click="editJob(j)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
+                <button @click="delJob(j)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
+              </td>
+            </tr>
+          </template>
+          <template x-if="!jobsAll.length">
+            <tr><td colspan="4" class="py-4 text-center text-metfraa-gray-400 text-sm">No jobs yet. Click “Add job”.</td></tr>
+          </template>
+        </tbody>
+      </table>
+      <label class="flex items-center gap-2 text-xs text-metfraa-gray-500 mt-3">
+        <input type="checkbox" x-model="showInactiveJobs" @change="loadJobs()" class="rounded border-metfraa-gray-300">
+        Show inactive
+      </label>
+    </div>
+  </div>
+
   <!-- ============ BROWSE ============ -->
   <div x-show="tab === 'browse'">
     <!-- range roll-up -->
@@ -472,11 +529,12 @@
           <div class="lbl mb-2">Own-team work log</div>
           <div class="overflow-x-auto"><table class="w-full text-sm">
             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
-              <th class="py-1">Nature of Work</th><th class="py-1 text-center">Sk</th><th class="py-1 text-center">Hp</th>
+              <th class="py-1">Job</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Sk</th><th class="py-1 text-center">Hp</th>
               <th class="py-1 text-right">Qty</th><th class="py-1 text-right">Weight</th><th class="py-1">Remarks</th></tr></thead>
             <tbody class="divide-y divide-metfraa-gray-100">
               <template x-for="(w,i) in brDay.labour_worklog" :key="i">
-                <tr><td class="py-1.5" x-text="w.nature_of_work"></td>
+                <tr><td class="py-1.5 text-metfraa-gray-500" x-text="w.job"></td>
+                  <td class="py-1.5" x-text="w.nature_of_work"></td>
                   <td class="py-1.5 text-center" x-text="w.skilled"></td><td class="py-1.5 text-center" x-text="w.helper"></td>
                   <td class="py-1.5 text-right mono" x-text="w.qty_nos ?? '—'"></td>
                   <td class="py-1.5 text-right mono" x-text="w.weight_kg ?? '—'"></td>
@@ -492,11 +550,12 @@
           <div class="lbl mb-2">Contractor work log</div>
           <div class="overflow-x-auto"><table class="w-full text-sm">
             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
-              <th class="py-1">Contractor</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Workers</th>
+              <th class="py-1">Contractor</th><th class="py-1">Job</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Workers</th>
               <th class="py-1 text-right">Qty</th><th class="py-1 text-right">Weight</th><th class="py-1">Remarks</th></tr></thead>
             <tbody class="divide-y divide-metfraa-gray-100">
               <template x-for="(w,i) in brDay.contractor_worklog" :key="i">
                 <tr><td class="py-1.5 font-semibold" x-text="w.contractor"></td>
+                  <td class="py-1.5 text-metfraa-gray-500" x-text="w.job"></td>
                   <td class="py-1.5" x-text="w.nature_of_work"></td>
                   <td class="py-1.5 text-center" x-text="w.workers"></td>
                   <td class="py-1.5 text-right mono" x-text="w.qty_nos ?? '—'"></td>
@@ -578,11 +637,31 @@
           <div><label class="lbl block mb-1">Per-day salary (₹)</label>
             <input type="number" min="0" x-model.number="form.per_day_salary"
                    class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
-          <div><label class="lbl block mb-1">Working hours per day (OT = salary ÷ this)</label>
+          <div><label class="lbl block mb-1">OT category</label>
+            <select x-model="form.ot_category" class="w-full rounded-lg border-metfraa-gray-300 text-sm">
+              <option value="salary">Salary-based (salary ÷ working hours)</option>
+              <option value="flat">Flat — ₹100/hour (₹50 per 0.5 hr)</option>
+            </select>
+          </div>
+          <div x-show="form.ot_category !== 'flat'"><label class="lbl block mb-1">Working hours per day (OT = salary ÷ this)</label>
             <input type="number" min="0" step="0.5" x-model.number="form.working_hours"
                    class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div x-show="form.ot_category === 'flat'" class="text-xs text-metfraa-gray-500">
+            OT is charged at a flat ₹100 per hour (₹50 per half-hour) for this labourer.
+          </div>
           <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
           <button @click="saveLabour()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+        </div>
+      </template>
+      <template x-if="drawer === 'job'">
+        <div class="space-y-4">
+          <div><label class="lbl block mb-1">Job ID (code)</label>
+            <input x-model="form.job_code" placeholder="e.g. KGISL, APOLLO-01"
+                   class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div><label class="lbl block mb-1">Job name</label>
+            <input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
+          <button @click="saveJob()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
         </div>
       </template>
       <template x-if="drawer === 'contractor'">
@@ -608,7 +687,7 @@ function plantApp() {
   return {
     tab: 'day', day: new Date().toISOString().slice(0, 10),
     labour: [], contractors: [], saved: false, saving: false, submitting: false,
-    labourWork: [], contractorWork: [],
+    labourWork: [], contractorWork: [], jobs: [], jobsAll: [], showInactiveJobs: false,
     dbStart: new Date(Date.now()-29*864e5).toISOString().slice(0,10),
     dbEnd: new Date().toISOString().slice(0,10),
     db: null, attChart: null, workChart: null,
@@ -619,17 +698,20 @@ function plantApp() {
     drawer: null, form: {},
 
     tabs: [{ id: 'day', label: 'Attendance' }, { id: 'dashboard', label: 'Dashboard' }, { id: 'labour', label: 'Labour Master' },
-           { id: 'contractors', label: 'Contractor Master' }, { id: 'browse', label: 'Browse' }, { id: 'monthly', label: 'Monthly Report' }],
+           { id: 'contractors', label: 'Contractor Master' }, { id: 'jobs', label: 'Job Master' }, { id: 'browse', label: 'Browse' }, { id: 'monthly', label: 'Monthly Report' }],
 
     get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
     get halfCount() { return this.labour.filter(l => l.status === 'H').length; },
     get absentCount() { return this.labour.filter(l => l.status === 'A').length; },
 
     numOnly(v) { return String(v==null?'':v).replace(/[^0-9.]/g,'').replace(/(\..*)\./g,'$1'); },
-    addLabourWork() { this.labourWork.push({ nature_of_work:'', skilled:0, helper:0, qty_nos:'', weight_kg:'', remarks:'' }); },
-    addContractorWork() { this.contractorWork.push({ contractor_id:null, nature_of_work:'', workers:0, qty_nos:'', weight_kg:'', remarks:'' }); },
+    addLabourWork() { this.labourWork.push({ job_id:null, nature_of_work:'', skilled:0, helper:0, qty_nos:'', weight_kg:'', remarks:'' }); },
+    addContractorWork() { this.contractorWork.push({ contractor_id:null, job_id:null, nature_of_work:'', workers:0, qty_nos:'', weight_kg:'', remarks:'' }); },
 
-    labRate(l) { const wh = +l.working_hours || 8; return (+l.per_day_salary || 0) / wh; },
+    labRate(l) {
+      if (l.ot_category === 'flat') return (+l.ot_flat_rate || 100);
+      const wh = +l.working_hours || 8; return (+l.per_day_salary || 0) / wh;
+    },
     labOtAmt(l) { return l.ot ? this.labRate(l) * (+l.ot_hours || 0) : 0; },
     conRate(c) { const wh = +c.working_hours || 8; return (+c.per_day_rate || 0) / wh; },
     conOtAmt(c) { return c.ot ? (+c.ot_persons || 0) * this.conRate(c) * (+c.ot_hours || 0) : 0; },
@@ -644,6 +726,7 @@ function plantApp() {
       if (this.tab === 'day') this.loadDay();
       if (this.tab === 'labour') this.loadLabour();
       if (this.tab === 'contractors') this.loadContractors();
+      if (this.tab === 'jobs') this.loadJobs();
       if (this.tab === 'browse') { this.loadRange(); }
       if (this.tab === 'dashboard') { this.loadDashboard(); }
       if (this.tab === 'monthly') { this.loadMonthly(); }
@@ -654,6 +737,7 @@ function plantApp() {
       if (!r.ok) return;
       const d = await r.json();
       this.labour = d.labour; this.contractors = d.contractors; this.saved = d.saved;
+      this.jobs = d.jobs || [];
       this.labourWork = d.labour_worklog || [];
       this.contractorWork = d.contractor_worklog || [];
     },
@@ -706,7 +790,7 @@ function plantApp() {
       if (r.ok) this.labourAll = (await r.json()).labour;
     },
     editLabour(l) {
-      this.form = l ? { ...l } : { name: '', designation: '', per_day_salary: 0, working_hours: 8, active: true };
+      this.form = l ? { ...l } : { name: '', designation: '', per_day_salary: 0, working_hours: 8, ot_category: 'salary', ot_flat_rate: 100, active: true };
       this.drawer = 'labour';
     },
     async saveLabour() {
@@ -724,6 +808,28 @@ function plantApp() {
       this.loadLabour();
     },
 
+    async loadJobs() {
+      const r = await fetch('/plant/api/jobs?include_inactive=' + (this.showInactiveJobs ? 1 : 0));
+      if (r.ok) this.jobsAll = (await r.json()).jobs;
+    },
+    editJob(j) {
+      this.form = j ? { ...j } : { job_code: '', name: '', active: true };
+      this.drawer = 'job';
+    },
+    async saveJob() {
+      const r = await fetch('/plant/api/jobs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(this.form),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'Failed'); return; }
+      this.drawer = null; this.loadJobs();
+    },
+    async delJob(j) {
+      if (!confirm(`Remove ${j.name}? If it's used on any work log it will be deactivated, not deleted.`)) return;
+      const r = await fetch(`/plant/api/jobs/${j.id}`, { method: 'DELETE' });
+      if (!r.ok) { alert('Failed'); return; }
+      this.loadJobs();
+    },
     async loadContractors() {
       const r = await fetch('/plant/api/contractors?include_inactive=' + (this.showInactiveContr ? 1 : 0));
       if (r.ok) this.contractorsAll = (await r.json()).contractors;
