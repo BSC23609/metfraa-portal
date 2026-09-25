@@ -132,8 +132,8 @@ STATUS_COL = {"P": GREEN, "H": AMBER, "A": RED}
 def build_daily_pdf(d: date, labour: list, contractors: list,
                     labour_worklog: list, contractor_worklog: list,
                     summary: dict) -> bytes:
-    """labour: [{name, designation, status, half_part, ot, ot_till, ot_half_hours, ot_amount}]
-       contractors: [{name, skilled, helper, ot, ot_persons, ot_till, ot_amount}]
+    """labour: [{name, designation, status, half_part, ot, ot_hours, ot_amount}]
+       contractors: [{name, skilled, helper, ot, ot_persons, ot_hours, ot_amount}]
        labour_worklog: [{nature_of_work, skilled, helper, qty_nos, weight_kg, remarks}]
        contractor_worklog: [{contractor, nature_of_work, workers, qty_nos, weight_kg, remarks}]
        summary: {present, half, absent, ot_amount}"""
@@ -158,7 +158,7 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
 
     y = _section(c, y, "Own labour")
     y = _thead(c, y, [("Name", 0), ("Designation", 140), ("Status", 255),
-                      ("OT till", 315), ("OT hrs", 395), ("OT amt", 455)])
+                      ("OT hrs", 360), ("OT amt", 445)])
     c.setFont(_f(), 9)
     for i, l in enumerate(labour):
         rh = 18
@@ -166,7 +166,7 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
             _footer(c, foot, "1"); c.showPage(); y = _header(c, "Metfraa / Plant Operations",
                                                              "Daily Attendance Report", ref)
             y = _thead(c, y, [("Name", 0), ("Designation", 140), ("Status", 255),
-                              ("OT till", 315), ("OT hrs", 395), ("OT amt", 455)])
+                              ("OT hrs", 360), ("OT amt", 445)])
         if i % 2 == 0:
             c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
         st = l["status"]
@@ -177,9 +177,8 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
         c.setFillColor(_hx(STATUS_COL.get(st, INK))); c.setFont(_f(True), 9); c.drawString(L + 263, y - 13, st_disp)
         c.setFillColor(_hx(INK)); c.setFont(_f(), 9)
         if l.get("ot"):
-            c.drawString(L + 323, y - 13, l.get("ot_till", "") or "")
-            c.drawString(L + 403, y - 13, str(l.get("ot_half_hours", 0)))
-            c.drawString(L + 463, y - 13, "₹" + _fmt(l.get("ot_amount", 0), 0))
+            c.drawString(L + 368, y - 13, _fmt(l.get("ot_hours", 0), 1).rstrip("0").rstrip("."))
+            c.drawString(L + 453, y - 13, "₹" + _fmt(l.get("ot_amount", 0), 0))
         y -= rh
     y -= 18
 
@@ -197,7 +196,7 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
         c.drawString(L + 218, y - 13, str(ct.get("skilled", 0)))
         c.drawString(L + 288, y - 13, str(ct.get("helper", 0)))
         if ct.get("ot"):
-            c.drawString(L + 358, y - 13, f"{ct.get('ot_persons', 0)} till {ct.get('ot_till', '')}")
+            c.drawString(L + 358, y - 13, f"{ct.get('ot_persons', 0)} × {_fmt(ct.get('ot_hours', 0), 1).rstrip('0').rstrip('.')}h")
             c.drawString(L + 463, y - 13, "₹" + _fmt(ct.get("ot_amount", 0), 0))
         else:
             c.setFillColor(_hx(MUTED)); c.drawString(L + 358, y - 13, "—")
@@ -335,7 +334,7 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
         c.drawString(c_days, y, _fmt(r["days"], 1).rstrip("0").rstrip("."))
         c.drawString(c_amt, y, _fmt(r["amount"], 0))
         c.setFillColor(_hx(BLUE) if r["ot_hours"] else _hx(MUTED))
-        c.drawString(c_oth, y, str(r["ot_hours"]) if r["ot_hours"] else "—")
+        c.drawString(c_oth, y, _fmt(r["ot_hours"], 1).rstrip("0").rstrip(".") if r["ot_hours"] else "—")
         c.drawString(c_ota, y, _fmt(r["ot_amount"], 0) if r["ot_amount"] else "—")
         y -= 14
     y -= 10
@@ -348,7 +347,7 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
     c.drawString(L + 14, y - 13, "COMPANY TOTAL — SALARY + OT")
     c.setFont(_f(True), 8)
     c.drawString(L + 14, y - 25, f"{t['workers']} workers · {_fmt(t['present_days'],1).rstrip('0').rstrip('.')} "
-                                 f"present-days · OT {t['ot_hours']} hrs · OT ₹{_fmt(t['ot_amount'],0)}")
+                                 f"present-days · OT {_fmt(t['ot_hours'],1).rstrip('0').rstrip('.')} hrs · OT ₹{_fmt(t['ot_amount'],0)}")
     c.setFont(_f(True), 18); c.drawRightString(R - 14, y - 21, "₹ " + _fmt(t["grand"], 0))
     _footer(c, foot, page_no())
     c.showPage()

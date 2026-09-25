@@ -21,50 +21,27 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models import (Employee, PlantContractor, PlantContractorAttendance,
                       PlantContractorWorkLog, PlantLabour, PlantLabourAttendance,
-                      PlantLabourWorkLog, PlantSettings)
+                      PlantLabourWorkLog)
 from ..services import onedrive as _od
 
 PLANT_ROOT = "Plant Operation/Attendance and Work Log"
 DAILY_DIR = PLANT_ROOT + "/DAILY REPORT"
 MONTHLY_DIR = PLANT_ROOT + "/MONTHLY REPORT"
 
-SHIFT_END_MIN = 19 * 60   # 7:00 pm, in minutes from midnight
-
-
-def _completed_half_hours(ot_till: str | None) -> int:
-    """Completed 30-min slots worked AFTER 7pm. Rounds DOWN — a partial slot
-    pays nothing until it completes. 7:45 -> 1 (only the 7:00-7:30 slot is
-    complete); 8:00 -> 2; 8:29 -> 2; 8:30 -> 3. <=7:00 or invalid -> 0."""
-    if not ot_till:
-        return 0
-    try:
-        hh, mm = (int(x) for x in str(ot_till).split(":"))
-    except (ValueError, TypeError):
-        return 0
-    if not (0 <= hh <= 23 and 0 <= mm <= 59):
-        return 0
-    # OT is always evening. A plain "7:30" means 7:30 PM (19:30), not morning.
-    # Treat 1..11 as PM (+12); 12 stays noon; 13..23 already 24h; 0 -> midnight
-    # of the next day (rare, e.g. worked till 00:30) -> +24h.
-    if 1 <= hh <= 11:
-        hh += 12
-    elif hh == 0:
-        hh = 24
-    end = hh * 60 + mm
-    if end <= SHIFT_END_MIN:
-        return 0
-    return (end - SHIFT_END_MIN) // 30
-
-
-def _labour_ot_rate(db: Session) -> float:
-    row = db.query(PlantSettings).filter(PlantSettings.id == 1).first()
-    return row.labour_ot_rate_per_half_hour if row else 50.0
-
 router = APIRouter(prefix="/plant", tags=["plant"])
 log = logging.getLogger("plant")
 templates = Jinja2Templates(directory="app/templates")
 
 VALID = {"P", "A", "H"}
+
+
+def _ot_hours(v):
+    """Snap OT hours to the nearest 0.5, non-negative."""
+    try:
+        h = float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(h * 2) / 2 if h > 0 else 0.0
 
 
 def _guard(db: Session, user: Employee):
@@ -114,22 +91,23 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
     lrec = {a.labour_id: a for a in
             db.query(PlantLabourAttendance)
             .filter(PlantLabourAttendance.att_date == d).all()}
+    lwh = {l.id: l.working_hours for l in labour}
     return {
         "date": d.isoformat(),
-        "labour_ot_rate": _labour_ot_rate(db),
         "labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
                     "status": lmarks.get(l.id, "P"),
                     "half_part": (lrec[l.id].half_part if l.id in lrec else None),
+                    "per_day_salary": l.per_day_salary, "working_hours": l.working_hours,
                     "ot": bool(lrec[l.id].ot) if l.id in lrec else False,
-                    "ot_till": (lrec[l.id].ot_till if l.id in lrec else "") or ""}
+                    "ot_hours": (lrec[l.id].ot_hours if l.id in lrec else 0)}
                    for l in labour],
         "contractors": [{"id": c.id, "name": c.name,
-                         "ot_rate_per_half_hour": c.ot_rate_per_half_hour,
+                         "per_day_rate": c.per_day_rate, "working_hours": c.working_hours,
                          "skilled": cmarks[c.id].skilled if c.id in cmarks else 0,
                          "helper": cmarks[c.id].helper if c.id in cmarks else 0,
                          "ot": bool(cmarks[c.id].ot) if c.id in cmarks else False,
                          "ot_persons": cmarks[c.id].ot_persons if c.id in cmarks else 0,
-                         "ot_till": (cmarks[c.id].ot_till if c.id in cmarks else "") or ""}
+                         "ot_hours": (cmarks[c.id].ot_hours if c.id in cmarks else 0)}
                         for c in contractors],
         "labour_worklog": [{"nature_of_work": w.nature_of_work or "",
                             "skilled": w.skilled, "helper": w.helper,
@@ -167,7 +145,7 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
     valid_labour = {row[0] for row in db.query(PlantLabour.id).all()}
     valid_contr = {row[0] for row in db.query(PlantContractor.id).all()}
 
-    lrate = _labour_ot_rate(db)
+    lmap = {l.id: l for l in db.query(PlantLabour).all()}
     for row in (b.get("labour") or []):
         lid = row.get("id")
         st = (row.get("status") or "P").upper()
@@ -179,22 +157,23 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
         if half_part not in (1, 2, None):
             half_part = None
         ot = bool(row.get("ot"))
-        ot_till = (row.get("ot_till") or "").strip() if ot else None
-        hh = _completed_half_hours(ot_till) if ot else 0
-        amt = hh * lrate
+        oth = _ot_hours(row.get("ot_hours")) if ot else 0.0
+        lab = lmap.get(lid)
+        wh = (lab.working_hours or 8) if lab else 8
+        rate = (lab.per_day_salary or 0) / wh if (lab and wh) else 0
+        amt = round(rate * oth, 2)
         rec = (db.query(PlantLabourAttendance)
                .filter(PlantLabourAttendance.labour_id == lid,
                        PlantLabourAttendance.att_date == d).first())
         if rec:
             rec.status = st
             rec.half_part = half_part
-            rec.ot, rec.ot_till, rec.ot_half_hours, rec.ot_amount = ot, ot_till, hh, amt
+            rec.ot, rec.ot_hours, rec.ot_amount = ot, oth, amt
             rec.marked_by = user.employee_code
             rec.updated_at = now
         else:
             db.add(PlantLabourAttendance(labour_id=lid, att_date=d, status=st,
-                                         half_part=half_part,
-                                         ot=ot, ot_till=ot_till, ot_half_hours=hh,
+                                         half_part=half_part, ot=ot, ot_hours=oth,
                                          ot_amount=amt, marked_by=user.employee_code))
 
     def _int(v):
@@ -203,7 +182,7 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
         except (TypeError, ValueError):
             return 0
 
-    crates = {c.id: c.ot_rate_per_half_hour for c in db.query(PlantContractor).all()}
+    cmap = {c.id: c for c in db.query(PlantContractor).all()}
     for row in (b.get("contractors") or []):
         cid = row.get("id")
         if cid not in valid_contr:
@@ -211,24 +190,24 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
         sk, hp = _int(row.get("skilled")), _int(row.get("helper"))
         ot = bool(row.get("ot"))
         ot_persons = _int(row.get("ot_persons")) if ot else 0
-        ot_till = (row.get("ot_till") or "").strip() if ot else None
-        chh = _completed_half_hours(ot_till) if ot else 0
-        camt = ot_persons * chh * crates.get(cid, 50)
+        oth = _ot_hours(row.get("ot_hours")) if ot else 0.0
+        c_ = cmap.get(cid)
+        wh = (c_.working_hours or 8) if c_ else 8
+        rate = (c_.per_day_rate or 0) / wh if (c_ and wh) else 0
+        camt = round(ot_persons * rate * oth, 2)
         rec = (db.query(PlantContractorAttendance)
                .filter(PlantContractorAttendance.contractor_id == cid,
                        PlantContractorAttendance.att_date == d).first())
         if rec:
             rec.skilled, rec.helper = sk, hp
-            rec.ot, rec.ot_persons, rec.ot_till = ot, ot_persons, ot_till
-            rec.ot_half_hours, rec.ot_amount = chh, camt
+            rec.ot, rec.ot_persons, rec.ot_hours, rec.ot_amount = ot, ot_persons, oth, camt
             rec.marked_by = user.employee_code
             rec.updated_at = now
         elif sk or hp or ot:
             db.add(PlantContractorAttendance(contractor_id=cid, att_date=d,
                                              skilled=sk, helper=hp, ot=ot,
-                                             ot_persons=ot_persons, ot_till=ot_till,
-                                             ot_half_hours=chh, ot_amount=camt,
-                                             marked_by=user.employee_code))
+                                             ot_persons=ot_persons, ot_hours=oth,
+                                             ot_amount=camt, marked_by=user.employee_code))
 
     # Work logs: full-replace for the day (the screen edits the whole day).
     def _fnum(v):
@@ -282,15 +261,14 @@ def _gather_day(db: Session, d):
     labour = [{"name": lmap[a.labour_id].name if a.labour_id in lmap else "—",
                "designation": (lmap[a.labour_id].designation or "") if a.labour_id in lmap else "",
                "status": a.status, "half_part": a.half_part, "ot": bool(a.ot),
-               "ot_till": a.ot_till or "", "ot_half_hours": a.ot_half_hours,
-               "ot_amount": a.ot_amount} for a in la]
+               "ot_hours": a.ot_hours, "ot_amount": a.ot_amount} for a in la]
     cmap = {c.id: c for c in db.query(PlantContractor).all()}
     ca = (db.query(PlantContractorAttendance)
           .filter(PlantContractorAttendance.att_date == d)
           .order_by(PlantContractorAttendance.contractor_id).all())
     contractors = [{"name": cmap[a.contractor_id].name if a.contractor_id in cmap else "—",
                     "skilled": a.skilled, "helper": a.helper, "ot": bool(a.ot),
-                    "ot_persons": a.ot_persons, "ot_till": a.ot_till or "",
+                    "ot_persons": a.ot_persons, "ot_hours": a.ot_hours,
                     "ot_amount": a.ot_amount} for a in ca]
     lwl = [{"nature_of_work": w.nature_of_work or "", "skilled": w.skilled,
             "helper": w.helper, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
@@ -351,7 +329,8 @@ def api_labour_list(include_inactive: str | None = None,
         q = q.filter(PlantLabour.active == True)  # noqa: E712
     rows = q.order_by(PlantLabour.active.desc(), PlantLabour.id).all()
     return {"labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
-                        "per_day_salary": l.per_day_salary, "active": l.active}
+                        "per_day_salary": l.per_day_salary,
+                        "working_hours": l.working_hours, "active": l.active}
                        for l in rows]}
 
 
@@ -370,6 +349,13 @@ async def api_labour_save(request: Request, user: Employee = Depends(get_current
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Invalid salary")
 
+    def _wh_l(v):
+        try:
+            h = float(v) if v not in (None, "") else 8.0
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid working hours")
+        return h if h > 0 else 8.0
+
     lid = b.get("id")
     if lid:
         l = db.query(PlantLabour).filter(PlantLabour.id == lid).first()
@@ -378,12 +364,14 @@ async def api_labour_save(request: Request, user: Employee = Depends(get_current
         l.name = name
         l.designation = (b.get("designation") or "").strip() or None
         l.per_day_salary = _sal(b.get("per_day_salary"))
+        l.working_hours = _wh_l(b.get("working_hours"))
         if "active" in b:
             l.active = bool(b["active"])
     else:
         db.add(PlantLabour(name=name,
                            designation=(b.get("designation") or "").strip() or None,
                            per_day_salary=_sal(b.get("per_day_salary")),
+                           working_hours=_wh_l(b.get("working_hours")),
                            active=bool(b.get("active", True))))
     db.commit()
     return {"ok": True}
@@ -420,7 +408,7 @@ def api_contractor_list(include_inactive: str | None = None,
     rows = q.order_by(PlantContractor.active.desc(), PlantContractor.id).all()
     return {"contractors": [{"id": c.id, "name": c.name,
                              "per_day_rate": c.per_day_rate,
-                             "ot_rate_per_half_hour": c.ot_rate_per_half_hour,
+                             "working_hours": c.working_hours,
                              "active": c.active}
                             for c in rows]}
 
@@ -441,7 +429,13 @@ async def api_contractor_save(request: Request,
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Invalid rate")
 
-    ot_rate = _rate(b.get("ot_rate_per_half_hour")) if b.get("ot_rate_per_half_hour") not in (None, "") else 50.0
+    def _wh(v):
+        try:
+            h = float(v) if v not in (None, "") else 8.0
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid working hours")
+        return h if h > 0 else 8.0
+    wh = _wh(b.get("working_hours"))
     cid = b.get("id")
     if cid:
         c = db.query(PlantContractor).filter(PlantContractor.id == cid).first()
@@ -449,12 +443,12 @@ async def api_contractor_save(request: Request,
             raise HTTPException(status_code=404, detail="Contractor not found")
         c.name = name
         c.per_day_rate = _rate(b.get("per_day_rate"))
-        c.ot_rate_per_half_hour = ot_rate
+        c.working_hours = wh
         if "active" in b:
             c.active = bool(b["active"])
     else:
         db.add(PlantContractor(name=name, per_day_rate=_rate(b.get("per_day_rate")),
-                               ot_rate_per_half_hour=ot_rate,
+                               working_hours=wh,
                                active=bool(b.get("active", True))))
     db.commit()
     return {"ok": True}
@@ -497,8 +491,7 @@ def api_browse_day(date: str | None = None,
     labour = [{"name": lmap[a.labour_id].name if a.labour_id in lmap else "—",
                "designation": (lmap[a.labour_id].designation or "") if a.labour_id in lmap else "",
                "status": a.status, "half_part": a.half_part,
-               "ot": bool(a.ot), "ot_till": a.ot_till or "",
-               "ot_half_hours": a.ot_half_hours, "ot_amount": a.ot_amount}
+               "ot": bool(a.ot), "ot_hours": a.ot_hours, "ot_amount": a.ot_amount}
               for a in la]
 
     cmap = {c.id: c for c in db.query(PlantContractor).all()}
@@ -507,8 +500,8 @@ def api_browse_day(date: str | None = None,
           .order_by(PlantContractorAttendance.contractor_id).all())
     contractors = [{"name": cmap[a.contractor_id].name if a.contractor_id in cmap else "—",
                     "skilled": a.skilled, "helper": a.helper,
-                    "ot": bool(a.ot), "ot_persons": a.ot_persons, "ot_till": a.ot_till or "",
-                    "ot_half_hours": a.ot_half_hours, "ot_amount": a.ot_amount}
+                    "ot": bool(a.ot), "ot_persons": a.ot_persons,
+                    "ot_hours": a.ot_hours, "ot_amount": a.ot_amount}
                    for a in ca]
 
     lwl = [{"nature_of_work": w.nature_of_work or "", "skilled": w.skilled,
@@ -590,33 +583,6 @@ def api_browse_range(start: str | None = None, end: str | None = None,
     return {"start": s_.isoformat(), "end": e.isoformat(), "days": rows}
 
 
-# --------------------------------------------------------------- settings
-
-@router.get("/api/settings")
-def api_settings(user: Employee = Depends(get_current_user),
-                 db: Session = Depends(get_db)):
-    _guard(db, user)
-    return {"labour_ot_rate_per_half_hour": _labour_ot_rate(db)}
-
-
-@router.post("/api/settings")
-async def api_settings_save(request: Request,
-                            user: Employee = Depends(get_current_user),
-                            db: Session = Depends(get_db)):
-    _guard(db, user)
-    b = await request.json()
-    try:
-        rate = max(0.0, float(b.get("labour_ot_rate_per_half_hour") or 0))
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Invalid rate")
-    row = db.query(PlantSettings).filter(PlantSettings.id == 1).first()
-    if not row:
-        row = PlantSettings(id=1)
-        db.add(row)
-    row.labour_ot_rate_per_half_hour = rate
-    row.updated_by = user.employee_code
-    db.commit()
-    return {"ok": True, "labour_ot_rate_per_half_hour": rate}
 
 # --------------------------------------------------------------- dashboard
 
@@ -732,7 +698,7 @@ def _build_monthly(db: Session, year: int, month: int):
             rec["present_equiv"] += 1
         elif a.status == "H":
             rec["present_equiv"] += 0.5
-        rec["ot_hours"] += a.ot_half_hours   # half-hour slots
+        rec["ot_hours"] += a.ot_hours
         rec["ot_amount"] += a.ot_amount
     rows = []
     tot = {"workers": 0, "present_days": 0.0, "ot_hours": 0, "ot_amount": 0.0,
@@ -864,4 +830,72 @@ async def api_monthly_submit(request: Request,
         log.error("[plant] monthly submit failed for %s-%s: %s", year, month, e, exc_info=True)
         return {"ok": True, "uploaded": False,
                 "message": f"The OneDrive upload failed: {e}"}
+
+
+PLANT_HR_TO = "admin@metfraa.com"
+PLANT_HR_CC = ["gopi@metfraa.com", "thangaraj@metfraa.com",
+               "arasu@metfraa.com", "info@metfraa.com"]
+
+
+@router.post("/api/monthly/send-hr")
+async def api_monthly_send_hr(request: Request,
+                             user: Employee = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    """Render the monthly PDF and email it to HR (admin@) with CC to the
+    management group."""
+    _guard(db, user)
+    b = await request.json()
+    period = b.get("period")
+    if period:
+        try:
+            year, month = (int(x) for x in period.split("-"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="period must be YYYY-MM")
+    else:
+        year, month = _prev_month()
+    company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    if not has_data:
+        return {"ok": True, "sent": False,
+                "message": "Nothing recorded for this month — nothing to send."}
+    try:
+        from ..services.plant_pdf import build_monthly_pdf
+        pdf = build_monthly_pdf(year, month, company, contractors, work_summary, total_weight)
+    except Exception as e:
+        log.error("[plant] monthly PDF build failed for HR mail: %s", e, exc_info=True)
+        return {"ok": False, "sent": False, "message": f"Could not build the report: {e}"}
+
+    from datetime import datetime as _dt
+    mlabel = _dt(year, month, 1).strftime("%B %Y")
+    grand = company["totals"]["grand"] + sum(c["totals"]["grand"] for c in contractors)
+    subject = f"[Metfraa] Plant Attendance & Work Report — {mlabel}"
+    html = f"""<div style="font-family:Arial,sans-serif;color:#0d1421;max-width:600px">
+      <div style="border-top:4px solid #1F7CCB;padding-top:14px">
+        <div style="font-family:monospace;font-size:11px;letter-spacing:.15em;color:#6b7689;text-transform:uppercase">Metfraa · Plant Operations</div>
+        <h2 style="margin:6px 0 0;font-size:20px">Monthly Plant Report — {mlabel}</h2>
+      </div>
+      <p style="font-size:14px;line-height:1.6">The consolidated plant attendance and work report for
+      <b>{mlabel}</b> is attached.</p>
+      <table style="font-size:13px;border-collapse:collapse;margin:16px 0">
+        <tr><td style="color:#6b7689;padding:3px 16px 3px 0">Company payable</td><td style="font-weight:700">INR {company['totals']['grand']:,.0f}</td></tr>
+        <tr><td style="color:#6b7689;padding:3px 16px 3px 0">Contractor payable</td><td style="font-weight:700">INR {sum(c['totals']['grand'] for c in contractors):,.0f}</td></tr>
+        <tr><td style="color:#6b7689;padding:3px 16px 3px 0">Total weight produced</td><td style="font-weight:700">{total_weight:,.2f} Kg</td></tr>
+        <tr><td style="color:#6b7689;padding:6px 16px 3px 0;border-top:1px solid #d6dde6">Grand total</td><td style="font-weight:700;font-size:15px;border-top:1px solid #d6dde6;padding-top:6px">INR {grand:,.0f}</td></tr>
+      </table>
+      <p style="font-size:11px;color:#6b7689;font-family:monospace;letter-spacing:.05em;border-top:1px dashed #d6dde6;padding-top:12px">
+        METFRAA · PLANT OPERATIONS · AUTOMATED MESSAGE</p>
+    </div>"""
+    fname = f"{year:04d}-{month:02d} Plant Report.pdf"
+    try:
+        from ..services.email_service import send_email_async
+        ok = await send_email_async(
+            PLANT_HR_TO, subject, html, cc=PLANT_HR_CC,
+            attachments=[(fname, pdf, "application/pdf")])
+        if not ok:
+            return {"ok": True, "sent": False,
+                    "message": "Send failed — check SMTP configuration."}
+        return {"ok": True, "sent": True,
+                "message": f"Sent to {PLANT_HR_TO} (CC: {', '.join(PLANT_HR_CC)})."}
+    except Exception as e:
+        log.error("[plant] monthly HR mail failed: %s", e, exc_info=True)
+        return {"ok": True, "sent": False, "message": f"Send failed: {e}"}
 
