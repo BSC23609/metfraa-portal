@@ -705,7 +705,11 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         trend[a.att_date.isoformat()]["contractor"] += a.skilled + a.helper
 
     cmap = {c.id: c.name for c in db.query(PlantContractor).all()}
+    jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
+            for j in db.query(PlantJob).all()}
     per_team = defaultdict(lambda: {"qty": 0.0, "weight": 0.0})
+    # job -> team -> {qty, weight}
+    job_team = defaultdict(lambda: defaultdict(lambda: {"qty": 0.0, "weight": 0.0}))
 
     for w in (db.query(PlantLabourWorkLog)
               .filter(PlantLabourWorkLog.log_date >= s_,
@@ -715,6 +719,9 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         trend[k]["weight"] += w.weight_kg or 0
         per_team["Own team"]["qty"] += w.qty_nos or 0
         per_team["Own team"]["weight"] += w.weight_kg or 0
+        jn = jmap.get(w.job_id, "No job")
+        job_team[jn]["Own team"]["qty"] += w.qty_nos or 0
+        job_team[jn]["Own team"]["weight"] += w.weight_kg or 0
     for w in (db.query(PlantContractorWorkLog)
               .filter(PlantContractorWorkLog.log_date >= s_,
                       PlantContractorWorkLog.log_date <= e).all()):
@@ -724,6 +731,9 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         name = cmap.get(w.contractor_id, "Unassigned")
         per_team[name]["qty"] += w.qty_nos or 0
         per_team[name]["weight"] += w.weight_kg or 0
+        jn = jmap.get(w.job_id, "No job")
+        job_team[jn][name]["qty"] += w.qty_nos or 0
+        job_team[jn][name]["weight"] += w.weight_kg or 0
 
     # fill every calendar day in range so the trend line has no gaps
     from datetime import timedelta
@@ -741,6 +751,23 @@ def api_dashboard(start: str | None = None, end: str | None = None,
                     for n, v in per_team.items()),
                    key=lambda r: r["weight"], reverse=True)
 
+    # job-wise breakdown: the set of teams that did any work, and per job the
+    # qty/weight each team contributed (0 where a team didn't touch that job).
+    team_names = [t["team"] for t in teams]
+    job_rows = []
+    for jn, teams_map in job_team.items():
+        jtot = sum(v["weight"] for v in teams_map.values())
+        job_rows.append({
+            "job": jn,
+            "total_qty": round(sum(v["qty"] for v in teams_map.values()), 2),
+            "total_weight": round(jtot, 2),
+            "by_team": {tn: {"qty": round(teams_map.get(tn, {}).get("qty", 0), 2),
+                             "weight": round(teams_map.get(tn, {}).get("weight", 0), 2)}
+                        for tn in team_names},
+        })
+    job_rows.sort(key=lambda r: r["total_weight"], reverse=True)
+    job_breakdown = {"teams": team_names, "jobs": job_rows}
+
     totals = {
         "present": sum(d["present"] for d in days),
         "half": sum(d["half"] for d in days),
@@ -750,7 +777,8 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         "weight": round(sum(d["weight"] for d in days), 2),
     }
     return {"start": s_.isoformat(), "end": e.isoformat(),
-            "days": days, "teams": teams, "totals": totals}
+            "days": days, "teams": teams, "totals": totals,
+            "job_breakdown": job_breakdown}
 
 
 # --------------------------------------------------------------- monthly

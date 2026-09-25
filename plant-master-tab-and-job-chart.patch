@@ -1,0 +1,219 @@
+diff --git a/app/routes/plant.py b/app/routes/plant.py
+index 3ca315e..d2c62f0 100644
+--- a/app/routes/plant.py
++++ b/app/routes/plant.py
+@@ -705,7 +705,11 @@ def api_dashboard(start: str | None = None, end: str | None = None,
+         trend[a.att_date.isoformat()]["contractor"] += a.skilled + a.helper
+ 
+     cmap = {c.id: c.name for c in db.query(PlantContractor).all()}
++    jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
++            for j in db.query(PlantJob).all()}
+     per_team = defaultdict(lambda: {"qty": 0.0, "weight": 0.0})
++    # job -> team -> {qty, weight}
++    job_team = defaultdict(lambda: defaultdict(lambda: {"qty": 0.0, "weight": 0.0}))
+ 
+     for w in (db.query(PlantLabourWorkLog)
+               .filter(PlantLabourWorkLog.log_date >= s_,
+@@ -715,6 +719,9 @@ def api_dashboard(start: str | None = None, end: str | None = None,
+         trend[k]["weight"] += w.weight_kg or 0
+         per_team["Own team"]["qty"] += w.qty_nos or 0
+         per_team["Own team"]["weight"] += w.weight_kg or 0
++        jn = jmap.get(w.job_id, "No job")
++        job_team[jn]["Own team"]["qty"] += w.qty_nos or 0
++        job_team[jn]["Own team"]["weight"] += w.weight_kg or 0
+     for w in (db.query(PlantContractorWorkLog)
+               .filter(PlantContractorWorkLog.log_date >= s_,
+                       PlantContractorWorkLog.log_date <= e).all()):
+@@ -724,6 +731,9 @@ def api_dashboard(start: str | None = None, end: str | None = None,
+         name = cmap.get(w.contractor_id, "Unassigned")
+         per_team[name]["qty"] += w.qty_nos or 0
+         per_team[name]["weight"] += w.weight_kg or 0
++        jn = jmap.get(w.job_id, "No job")
++        job_team[jn][name]["qty"] += w.qty_nos or 0
++        job_team[jn][name]["weight"] += w.weight_kg or 0
+ 
+     # fill every calendar day in range so the trend line has no gaps
+     from datetime import timedelta
+@@ -741,6 +751,23 @@ def api_dashboard(start: str | None = None, end: str | None = None,
+                     for n, v in per_team.items()),
+                    key=lambda r: r["weight"], reverse=True)
+ 
++    # job-wise breakdown: the set of teams that did any work, and per job the
++    # qty/weight each team contributed (0 where a team didn't touch that job).
++    team_names = [t["team"] for t in teams]
++    job_rows = []
++    for jn, teams_map in job_team.items():
++        jtot = sum(v["weight"] for v in teams_map.values())
++        job_rows.append({
++            "job": jn,
++            "total_qty": round(sum(v["qty"] for v in teams_map.values()), 2),
++            "total_weight": round(jtot, 2),
++            "by_team": {tn: {"qty": round(teams_map.get(tn, {}).get("qty", 0), 2),
++                             "weight": round(teams_map.get(tn, {}).get("weight", 0), 2)}
++                        for tn in team_names},
++        })
++    job_rows.sort(key=lambda r: r["total_weight"], reverse=True)
++    job_breakdown = {"teams": team_names, "jobs": job_rows}
++
+     totals = {
+         "present": sum(d["present"] for d in days),
+         "half": sum(d["half"] for d in days),
+@@ -750,7 +777,8 @@ def api_dashboard(start: str | None = None, end: str | None = None,
+         "weight": round(sum(d["weight"] for d in days), 2),
+     }
+     return {"start": s_.isoformat(), "end": e.isoformat(),
+-            "days": days, "teams": teams, "totals": totals}
++            "days": days, "teams": teams, "totals": totals,
++            "job_breakdown": job_breakdown}
+ 
+ 
+ # --------------------------------------------------------------- monthly
+diff --git a/app/templates/plant.html b/app/templates/plant.html
+index 81607e0..6a05963 100644
+--- a/app/templates/plant.html
++++ b/app/templates/plant.html
+@@ -254,8 +254,18 @@
+     </div>
+   </div>
+ 
++  <!-- ============ MASTER (labour / contractor / job) ============ -->
++  <div x-show="tab === 'master'">
++    <div class="flex gap-1 mb-5 border-b border-metfraa-gray-100">
++      <template x-for="mt in [['labour','Labour'],['contractors','Contractors'],['jobs','Jobs']]" :key="mt[0]">
++        <button @click="masterTab = mt[0]; onMasterTab()"
++          :class="masterTab === mt[0] ? 'border-metfraa-blue text-metfraa-ink' : 'border-transparent text-metfraa-gray-500 hover:text-metfraa-ink'"
++          class="px-4 py-2 text-sm font-bold border-b-2" x-text="mt[1]"></button>
++      </template>
++    </div>
++
+   <!-- ============ LABOUR MASTER ============ -->
+-  <div x-show="tab === 'labour'">
++  <div x-show="masterTab === 'labour'">
+     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+       <div class="flex items-center justify-between mb-4">
+         <div class="lbl">Labour Master</div>
+@@ -294,7 +304,7 @@
+   </div>
+ 
+   <!-- ============ CONTRACTOR MASTER ============ -->
+-  <div x-show="tab === 'contractors'">
++  <div x-show="masterTab === 'contractors'">
+     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+       <div class="flex items-center justify-between mb-4">
+         <div class="lbl">Contractor Master</div>
+@@ -390,10 +400,29 @@
+         </tbody>
+       </table>
+     </div>
++
++    <!-- job-wise output by team -->
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
++      <div class="flex items-center justify-between mb-3">
++        <div class="lbl">Job-wise output by team</div>
++        <div class="flex gap-1">
++          <button @click="jobMetric='weight'; drawJobChart()"
++            :class="jobMetric==='weight' ? 'bg-metfraa-blue text-white' : 'ring-1 ring-metfraa-gray-300 text-metfraa-gray-600'"
++            class="px-3 py-1 rounded-lg text-xs font-bold">Weight (Kg)</button>
++          <button @click="jobMetric='qty'; drawJobChart()"
++            :class="jobMetric==='qty' ? 'bg-metfraa-blue text-white' : 'ring-1 ring-metfraa-gray-300 text-metfraa-gray-600'"
++            class="px-3 py-1 rounded-lg text-xs font-bold">Qty (Nos)</button>
++        </div>
++      </div>
++      <div style="position:relative;height:320px"><canvas id="jobChart"></canvas></div>
++      <template x-if="db && (!db.job_breakdown || !db.job_breakdown.jobs.length)">
++        <div class="text-sm text-metfraa-gray-400 py-4 text-center">No job-tagged work in this range.</div>
++      </template>
++    </div>
+   </div>
+ 
+   <!-- ============ JOB MASTER ============ -->
+-  <div x-show="tab === 'jobs'">
++  <div x-show="masterTab === 'jobs'">
+     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+       <div class="flex items-center justify-between mb-4">
+         <div class="lbl">Job Master</div>
+@@ -431,6 +460,8 @@
+     </div>
+   </div>
+ 
++  </div><!-- /Master wrapper -->
++
+   <!-- ============ BROWSE ============ -->
+   <div x-show="tab === 'browse'">
+     <!-- range roll-up -->
+@@ -690,15 +721,17 @@ function plantApp() {
+     labourWork: [], contractorWork: [], jobs: [], jobsAll: [], showInactiveJobs: false,
+     dbStart: new Date(Date.now()-29*864e5).toISOString().slice(0,10),
+     dbEnd: new Date().toISOString().slice(0,10),
+-    db: null, attChart: null, workChart: null,
++    db: null, attChart: null, workChart: null, jobChart: null, jobMetric: 'weight',
+     brStart: new Date(Date.now()-13*864e5).toISOString().slice(0,10),
+     brEnd: new Date().toISOString().slice(0,10),
+     rangeDays: [], brDay: null,
+     labourAll: [], contractorsAll: [], showInactiveLabour: false, showInactiveContr: false,
+     drawer: null, form: {},
+ 
+-    tabs: [{ id: 'day', label: 'Attendance' }, { id: 'dashboard', label: 'Dashboard' }, { id: 'labour', label: 'Labour Master' },
+-           { id: 'contractors', label: 'Contractor Master' }, { id: 'jobs', label: 'Job Master' }, { id: 'browse', label: 'Browse' }, { id: 'monthly', label: 'Monthly Report' }],
++    tabs: [{ id: 'day', label: 'Attendance' }, { id: 'dashboard', label: 'Dashboard' },
++           { id: 'browse', label: 'Browse' }, { id: 'monthly', label: 'Monthly Report' },
++           { id: 'master', label: 'Master' }],
++    masterTab: 'labour',
+ 
+     get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
+     get halfCount() { return this.labour.filter(l => l.status === 'H').length; },
+@@ -722,11 +755,14 @@ function plantApp() {
+     },
+ 
+     init() { this.loadDay(); },
++    onMasterTab() {
++      if (this.masterTab === 'labour') this.loadLabour();
++      if (this.masterTab === 'contractors') this.loadContractors();
++      if (this.masterTab === 'jobs') this.loadJobs();
++    },
+     onTab() {
+       if (this.tab === 'day') this.loadDay();
+-      if (this.tab === 'labour') this.loadLabour();
+-      if (this.tab === 'contractors') this.loadContractors();
+-      if (this.tab === 'jobs') this.loadJobs();
++      if (this.tab === 'master') this.onMasterTab();
+       if (this.tab === 'browse') { this.loadRange(); }
+       if (this.tab === 'dashboard') { this.loadDashboard(); }
+       if (this.tab === 'monthly') { this.loadMonthly(); }
+@@ -862,6 +898,28 @@ function plantApp() {
+       this.db = await r.json();
+       this.$nextTick(() => this.drawCharts());
+     },
++    drawJobChart() {
++      if (typeof Chart === 'undefined') { setTimeout(() => this.drawJobChart(), 200); return; }
++      const jb = this.db && this.db.job_breakdown;
++      const el = document.getElementById('jobChart');
++      if (this.jobChart) { this.jobChart.destroy(); this.jobChart = null; }
++      if (!el || !jb || !jb.jobs.length) return;
++      const palette = ['#1F7CCB','#059669','#d97706','#dc2626','#7c3aed','#0891b2','#be185d','#4d7c0f','#b45309','#0d1421'];
++      const labels = jb.jobs.map(j => j.job);
++      const datasets = jb.teams.map((tn, i) => ({
++        label: tn,
++        data: jb.jobs.map(j => (j.by_team[tn] ? j.by_team[tn][this.jobMetric] : 0)),
++        backgroundColor: palette[i % palette.length],
++      }));
++      this.jobChart = new Chart(el, {
++        type: 'bar',
++        data: { labels, datasets },
++        options: { responsive:true, maintainAspectRatio:false, indexAxis: 'y',
++          plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}},
++                   title:{display:true,text:(this.jobMetric==='weight'?'Weight (Kg)':'Qty (Nos)')+' by job, split by team'}},
++          scales:{ x:{stacked:true,beginAtZero:true}, y:{stacked:true} } }
++      });
++    },
+     drawCharts() {
+       if (typeof Chart === 'undefined') { setTimeout(() => this.drawCharts(), 200); return; }
+       const labels = this.db.days.map(d => d.date.slice(5));
+@@ -878,6 +936,7 @@ function plantApp() {
+                    plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
+                    scales:{y:{beginAtZero:true,ticks:{precision:0}}} }
+       });
++      this.drawJobChart();
+       if (this.workChart) this.workChart.destroy();
+       this.workChart = new Chart(document.getElementById('workChart'), {
+         type: 'bar',
