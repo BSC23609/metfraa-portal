@@ -1064,3 +1064,31 @@ class ProjSiteAttendance(Base):
 
     __table_args__ = (UniqueConstraint("att_date", "site_id", "contractor_id",
                                        "worker_type_id", name="uq_proj_site_att"),)
+
+
+class ProjWorkProgress(Base):
+    """Work progress lines — many per day. Each line: site + contractor + nature
+    of work, workers by type (JSON {worker_type_id: count}), a part mark (from
+    that site), qty/weight produced, start/end time, equipment used (JSON list of
+    equipment ids), remarks. No money here — attendance carries the pay."""
+    __tablename__ = "proj_work_progress"
+
+    id = Column(Integer, primary_key=True)
+    log_date = Column(Date, nullable=False, index=True)
+    site_id = Column(Integer, ForeignKey("proj_sites.id", ondelete="SET NULL"),
+                     nullable=True, index=True)
+    contractor_id = Column(Integer, ForeignKey("proj_contractors.id", ondelete="SET NULL"),
+                           nullable=True, index=True)
+    part_mark_id = Column(Integer, ForeignKey("proj_part_marks.id", ondelete="SET NULL"),
+                          nullable=True)
+    nature_of_work = Column(Text, nullable=True)
+    workers = Column(JSON, nullable=True)        # {worker_type_id: count}
+    qty_nos = Column(Float, nullable=True)
+    weight_kg = Column(Float, nullable=True)
+    start_time = Column(String(5), nullable=True)   # HH:MM
+    end_time = Column(String(5), nullable=True)
+    equipment_ids = Column(JSON, nullable=True)   # [equipment_id, ...]
+    remarks = Column(Text, nullable=True)
+    seq = Column(Integer, nullable=False, default=0)
+    marked_by = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

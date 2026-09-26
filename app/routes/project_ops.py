@@ -26,7 +26,8 @@ from ..deps import get_current_user
 from datetime import date, datetime
 
 from ..models import (Employee, ProjContractor, ProjContractorRate, ProjEquipment,
-                      ProjPartMark, ProjSite, ProjSiteAttendance, ProjWorkerType)
+                      ProjPartMark, ProjSite, ProjSiteAttendance, ProjWorkerType,
+                      ProjWorkProgress)
 
 router = APIRouter(prefix="/project-ops", tags=["project-ops"])
 log = logging.getLogger("project_ops")
@@ -512,5 +513,105 @@ async def api_attendance_save(request: Request, user: Employee = Depends(get_cur
                 headcount=hc, ot=ot, ot_people=otp, ot_hours=oth, rate_used=rate,
                 regular_amount=reg, ot_amount=ota, marked_by=user.employee_code,
                 updated_at=now))
+    db.commit()
+    return {"ok": True, "date": d.isoformat()}
+
+
+# --------------------------------------------------------------- work progress
+
+@router.get("/api/work")
+def api_work_day(date: str | None = None,
+                 user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Work-progress rows for a day + the masters the form needs (sites,
+    contractors, worker types, equipment, and part marks grouped by site)."""
+    _guard(db, user)
+    d = _parse_date(date)
+    sites = [{"id": s.id, "job_id": s.job_id or "", "name": s.name}
+             for s in db.query(ProjSite).filter(ProjSite.active == True)  # noqa: E712
+             .order_by(ProjSite.id).all()]
+    contractors = [{"id": c.id, "name": c.name}
+                   for c in db.query(ProjContractor).filter(ProjContractor.active == True)  # noqa: E712
+                   .order_by(ProjContractor.id).all()]
+    types = [{"id": t.id, "name": t.name}
+             for t in db.query(ProjWorkerType).filter(ProjWorkerType.active == True)  # noqa: E712
+             .order_by(ProjWorkerType.id).all()]
+    equipment = [{"id": e.id, "name": e.name}
+                 for e in db.query(ProjEquipment).filter(ProjEquipment.active == True)  # noqa: E712
+                 .order_by(ProjEquipment.id).all()]
+    parts_by_site = {}
+    for pm in (db.query(ProjPartMark).filter(ProjPartMark.active == True)  # noqa: E712
+               .order_by(ProjPartMark.site_id, ProjPartMark.id).all()):
+        parts_by_site.setdefault(pm.site_id, []).append(
+            {"id": pm.id, "mark": pm.mark, "description": pm.description or ""})
+
+    rows = [{"site_id": w.site_id, "contractor_id": w.contractor_id,
+             "part_mark_id": w.part_mark_id, "nature_of_work": w.nature_of_work or "",
+             "workers": w.workers or {}, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
+             "start_time": w.start_time or "", "end_time": w.end_time or "",
+             "equipment_ids": w.equipment_ids or [], "remarks": w.remarks or ""}
+            for w in db.query(ProjWorkProgress)
+            .filter(ProjWorkProgress.log_date == d)
+            .order_by(ProjWorkProgress.seq, ProjWorkProgress.id).all()]
+    return {"date": d.isoformat(), "sites": sites, "contractors": contractors,
+            "worker_types": types, "equipment": equipment,
+            "parts_by_site": parts_by_site, "rows": rows, "saved": bool(rows)}
+
+
+@router.post("/api/work")
+async def api_work_save(request: Request, user: Employee = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Full-replace the day's work-progress rows."""
+    _guard(db, user)
+    b = await request.json()
+    d = _parse_date(b.get("date"))
+    now = datetime.utcnow()
+
+    valid_sites = {r[0] for r in db.query(ProjSite.id).all()}
+    valid_contr = {r[0] for r in db.query(ProjContractor.id).all()}
+    valid_types = {r[0] for r in db.query(ProjWorkerType.id).all()}
+    valid_equip = {r[0] for r in db.query(ProjEquipment.id).all()}
+    # part marks valid only for their own site
+    part_site = {p.id: p.site_id for p in db.query(ProjPartMark).all()}
+
+    def _fnum(v):
+        if v in (None, ""):
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    db.query(ProjWorkProgress).filter(ProjWorkProgress.log_date == d).delete()
+
+    for i, w in enumerate(b.get("rows") or []):
+        sid = w.get("site_id") if w.get("site_id") in valid_sites else None
+        cid = w.get("contractor_id") if w.get("contractor_id") in valid_contr else None
+        # part mark must belong to the chosen site
+        pmid = w.get("part_mark_id")
+        if pmid not in part_site or part_site.get(pmid) != sid:
+            pmid = None
+        # workers by type, keep only valid types with a positive count
+        workers = {}
+        for k, v in (w.get("workers") or {}).items():
+            try:
+                tid = int(k); cnt = int(v)
+            except (TypeError, ValueError):
+                continue
+            if tid in valid_types and cnt > 0:
+                workers[str(tid)] = cnt
+        equip = [e for e in (w.get("equipment_ids") or []) if e in valid_equip]
+        nature = (w.get("nature_of_work") or "").strip() or None
+        remarks = (w.get("remarks") or "").strip() or None
+        qty = _fnum(w.get("qty_nos")); wt = _fnum(w.get("weight_kg"))
+        st = (w.get("start_time") or "").strip() or None
+        et = (w.get("end_time") or "").strip() or None
+        # skip wholly-empty rows
+        if not (sid or cid or pmid or nature or workers or equip or qty or wt or st or et or remarks):
+            continue
+        db.add(ProjWorkProgress(
+            log_date=d, site_id=sid, contractor_id=cid, part_mark_id=pmid,
+            nature_of_work=nature, workers=workers or None, qty_nos=qty, weight_kg=wt,
+            start_time=st, end_time=et, equipment_ids=equip or None, remarks=remarks,
+            seq=i, marked_by=user.employee_code, updated_at=now))
     db.commit()
     return {"ok": True, "date": d.isoformat()}

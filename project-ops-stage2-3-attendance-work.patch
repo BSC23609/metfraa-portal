@@ -1,0 +1,322 @@
+diff --git a/app/models.py b/app/models.py
+index 16cb346..307c425 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -1064,3 +1064,31 @@ class ProjSiteAttendance(Base):
+ 
+     __table_args__ = (UniqueConstraint("att_date", "site_id", "contractor_id",
+                                        "worker_type_id", name="uq_proj_site_att"),)
++
++
++class ProjWorkProgress(Base):
++    """Work progress lines — many per day. Each line: site + contractor + nature
++    of work, workers by type (JSON {worker_type_id: count}), a part mark (from
++    that site), qty/weight produced, start/end time, equipment used (JSON list of
++    equipment ids), remarks. No money here — attendance carries the pay."""
++    __tablename__ = "proj_work_progress"
++
++    id = Column(Integer, primary_key=True)
++    log_date = Column(Date, nullable=False, index=True)
++    site_id = Column(Integer, ForeignKey("proj_sites.id", ondelete="SET NULL"),
++                     nullable=True, index=True)
++    contractor_id = Column(Integer, ForeignKey("proj_contractors.id", ondelete="SET NULL"),
++                           nullable=True, index=True)
++    part_mark_id = Column(Integer, ForeignKey("proj_part_marks.id", ondelete="SET NULL"),
++                          nullable=True)
++    nature_of_work = Column(Text, nullable=True)
++    workers = Column(JSON, nullable=True)        # {worker_type_id: count}
++    qty_nos = Column(Float, nullable=True)
++    weight_kg = Column(Float, nullable=True)
++    start_time = Column(String(5), nullable=True)   # HH:MM
++    end_time = Column(String(5), nullable=True)
++    equipment_ids = Column(JSON, nullable=True)   # [equipment_id, ...]
++    remarks = Column(Text, nullable=True)
++    seq = Column(Integer, nullable=False, default=0)
++    marked_by = Column(String(255), nullable=True)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+diff --git a/app/routes/project_ops.py b/app/routes/project_ops.py
+index c76ea46..aa2b2be 100644
+--- a/app/routes/project_ops.py
++++ b/app/routes/project_ops.py
+@@ -26,7 +26,8 @@ from ..deps import get_current_user
+ from datetime import date, datetime
+ 
+ from ..models import (Employee, ProjContractor, ProjContractorRate, ProjEquipment,
+-                      ProjPartMark, ProjSite, ProjSiteAttendance, ProjWorkerType)
++                      ProjPartMark, ProjSite, ProjSiteAttendance, ProjWorkerType,
++                      ProjWorkProgress)
+ 
+ router = APIRouter(prefix="/project-ops", tags=["project-ops"])
+ log = logging.getLogger("project_ops")
+@@ -514,3 +515,103 @@ async def api_attendance_save(request: Request, user: Employee = Depends(get_cur
+                 updated_at=now))
+     db.commit()
+     return {"ok": True, "date": d.isoformat()}
++
++
++# --------------------------------------------------------------- work progress
++
++@router.get("/api/work")
++def api_work_day(date: str | None = None,
++                 user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    """Work-progress rows for a day + the masters the form needs (sites,
++    contractors, worker types, equipment, and part marks grouped by site)."""
++    _guard(db, user)
++    d = _parse_date(date)
++    sites = [{"id": s.id, "job_id": s.job_id or "", "name": s.name}
++             for s in db.query(ProjSite).filter(ProjSite.active == True)  # noqa: E712
++             .order_by(ProjSite.id).all()]
++    contractors = [{"id": c.id, "name": c.name}
++                   for c in db.query(ProjContractor).filter(ProjContractor.active == True)  # noqa: E712
++                   .order_by(ProjContractor.id).all()]
++    types = [{"id": t.id, "name": t.name}
++             for t in db.query(ProjWorkerType).filter(ProjWorkerType.active == True)  # noqa: E712
++             .order_by(ProjWorkerType.id).all()]
++    equipment = [{"id": e.id, "name": e.name}
++                 for e in db.query(ProjEquipment).filter(ProjEquipment.active == True)  # noqa: E712
++                 .order_by(ProjEquipment.id).all()]
++    parts_by_site = {}
++    for pm in (db.query(ProjPartMark).filter(ProjPartMark.active == True)  # noqa: E712
++               .order_by(ProjPartMark.site_id, ProjPartMark.id).all()):
++        parts_by_site.setdefault(pm.site_id, []).append(
++            {"id": pm.id, "mark": pm.mark, "description": pm.description or ""})
++
++    rows = [{"site_id": w.site_id, "contractor_id": w.contractor_id,
++             "part_mark_id": w.part_mark_id, "nature_of_work": w.nature_of_work or "",
++             "workers": w.workers or {}, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
++             "start_time": w.start_time or "", "end_time": w.end_time or "",
++             "equipment_ids": w.equipment_ids or [], "remarks": w.remarks or ""}
++            for w in db.query(ProjWorkProgress)
++            .filter(ProjWorkProgress.log_date == d)
++            .order_by(ProjWorkProgress.seq, ProjWorkProgress.id).all()]
++    return {"date": d.isoformat(), "sites": sites, "contractors": contractors,
++            "worker_types": types, "equipment": equipment,
++            "parts_by_site": parts_by_site, "rows": rows, "saved": bool(rows)}
++
++
++@router.post("/api/work")
++async def api_work_save(request: Request, user: Employee = Depends(get_current_user),
++                        db: Session = Depends(get_db)):
++    """Full-replace the day's work-progress rows."""
++    _guard(db, user)
++    b = await request.json()
++    d = _parse_date(b.get("date"))
++    now = datetime.utcnow()
++
++    valid_sites = {r[0] for r in db.query(ProjSite.id).all()}
++    valid_contr = {r[0] for r in db.query(ProjContractor.id).all()}
++    valid_types = {r[0] for r in db.query(ProjWorkerType.id).all()}
++    valid_equip = {r[0] for r in db.query(ProjEquipment.id).all()}
++    # part marks valid only for their own site
++    part_site = {p.id: p.site_id for p in db.query(ProjPartMark).all()}
++
++    def _fnum(v):
++        if v in (None, ""):
++            return None
++        try:
++            return float(v)
++        except (TypeError, ValueError):
++            return None
++
++    db.query(ProjWorkProgress).filter(ProjWorkProgress.log_date == d).delete()
++
++    for i, w in enumerate(b.get("rows") or []):
++        sid = w.get("site_id") if w.get("site_id") in valid_sites else None
++        cid = w.get("contractor_id") if w.get("contractor_id") in valid_contr else None
++        # part mark must belong to the chosen site
++        pmid = w.get("part_mark_id")
++        if pmid not in part_site or part_site.get(pmid) != sid:
++            pmid = None
++        # workers by type, keep only valid types with a positive count
++        workers = {}
++        for k, v in (w.get("workers") or {}).items():
++            try:
++                tid = int(k); cnt = int(v)
++            except (TypeError, ValueError):
++                continue
++            if tid in valid_types and cnt > 0:
++                workers[str(tid)] = cnt
++        equip = [e for e in (w.get("equipment_ids") or []) if e in valid_equip]
++        nature = (w.get("nature_of_work") or "").strip() or None
++        remarks = (w.get("remarks") or "").strip() or None
++        qty = _fnum(w.get("qty_nos")); wt = _fnum(w.get("weight_kg"))
++        st = (w.get("start_time") or "").strip() or None
++        et = (w.get("end_time") or "").strip() or None
++        # skip wholly-empty rows
++        if not (sid or cid or pmid or nature or workers or equip or qty or wt or st or et or remarks):
++            continue
++        db.add(ProjWorkProgress(
++            log_date=d, site_id=sid, contractor_id=cid, part_mark_id=pmid,
++            nature_of_work=nature, workers=workers or None, qty_nos=qty, weight_kg=wt,
++            start_time=st, end_time=et, equipment_ids=equip or None, remarks=remarks,
++            seq=i, marked_by=user.employee_code, updated_at=now))
++    db.commit()
++    return {"ok": True, "date": d.isoformat()}
+diff --git a/app/templates/project_ops.html b/app/templates/project_ops.html
+index 045f5fd..ee718a8 100644
+--- a/app/templates/project_ops.html
++++ b/app/templates/project_ops.html
+@@ -93,6 +93,97 @@
+     <button @click="addAttRow()" class="mt-4 px-4 py-2 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold">+ Add site / contractor</button>
+   </div>
+ 
++  <!-- ============ WORK PROGRESS ============ -->
++  <div x-show="tab === 'work'">
++    <div class="flex items-center justify-between flex-wrap gap-3 mb-5">
++      <div class="flex items-center gap-3">
++        <label class="lbl">Date</label>
++        <input type="date" x-model="wday" @change="loadWork()" class="rounded-lg border-metfraa-gray-300 text-sm">
++        <span x-show="workSaved" class="text-xs text-green-700">saved earlier · editable</span>
++      </div>
++      <button @click="saveWork()" :disabled="workSaving"
++        class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
++        <span x-text="workSaving ? 'Saving…' : 'Save work progress'"></span>
++      </button>
++    </div>
++
++    <div class="space-y-4">
++      <template x-for="(w, wi) in workRows" :key="wi">
++        <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++          <div class="flex items-center gap-3 flex-wrap mb-3">
++            <select x-model.number="w.site_id" @change="w.part_mark_id=null" class="rounded-lg border-metfraa-gray-300 text-sm">
++              <option :value="null">— site —</option>
++              <template x-for="s in wSites" :key="s.id"><option :value="s.id" x-text="(s.job_id?s.job_id+' · ':'')+s.name"></option></template>
++            </select>
++            <select x-model.number="w.contractor_id" class="rounded-lg border-metfraa-gray-300 text-sm">
++              <option :value="null">— contractor —</option>
++              <template x-for="c in wContractors" :key="c.id"><option :value="c.id" x-text="c.name"></option></template>
++            </select>
++            <button @click="workRows.splice(wi,1)" class="ml-auto text-red-500 text-lg leading-none">&times;</button>
++          </div>
++
++          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
++            <div><label class="lbl block mb-1">Nature of work</label>
++              <input x-model="w.nature_of_work" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++            <div><label class="lbl block mb-1">Part mark <span class="text-metfraa-gray-400 font-normal">(this site)</span></label>
++              <select x-model.number="w.part_mark_id" class="w-full rounded-lg border-metfraa-gray-300 text-sm">
++                <option :value="null">— none —</option>
++                <template x-for="pm in partsForSite(w.site_id)" :key="pm.id">
++                  <option :value="pm.id" x-text="pm.mark + (pm.description ? ' · '+pm.description : '')"></option>
++                </template>
++              </select>
++            </div>
++          </div>
++
++          <div class="mb-3">
++            <label class="lbl block mb-1">Workers by type</label>
++            <div class="flex flex-wrap gap-3">
++              <template x-for="t in wTypes" :key="t.id">
++                <div class="flex items-center gap-1.5">
++                  <span class="text-xs text-metfraa-gray-600" x-text="t.name"></span>
++                  <button @click="wc(w,t.id, -1)" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300">−</button>
++                  <span class="w-6 text-center font-semibold text-sm" x-text="w.workers[t.id]||0"></span>
++                  <button @click="wc(w,t.id, 1)" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300">+</button>
++                </div>
++              </template>
++            </div>
++          </div>
++
++          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
++            <div><label class="lbl block mb-1">Qty (Nos)</label>
++              <input type="text" inputmode="decimal" x-model="w.qty_nos" @input="w.qty_nos=numOnly(w.qty_nos)" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++            <div><label class="lbl block mb-1">Weight (Kg)</label>
++              <input type="text" inputmode="decimal" x-model="w.weight_kg" @input="w.weight_kg=numOnly(w.weight_kg)" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++            <div><label class="lbl block mb-1">Start time</label>
++              <input type="time" x-model="w.start_time" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++            <div><label class="lbl block mb-1">End time</label>
++              <input type="time" x-model="w.end_time" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          </div>
++
++          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
++            <div>
++              <label class="lbl block mb-1">Equipment used</label>
++              <div class="flex flex-wrap gap-2">
++                <template x-for="e in wEquipment" :key="e.id">
++                  <label class="flex items-center gap-1.5 text-xs px-2 py-1 rounded ring-1 ring-metfraa-gray-200 cursor-pointer"
++                         :class="w.equipment_ids.includes(e.id) ? 'bg-metfraa-blue/10 ring-metfraa-blue text-metfraa-blue' : ''">
++                    <input type="checkbox" :value="e.id" :checked="w.equipment_ids.includes(e.id)"
++                           @change="toggleEquip(w, e.id)" class="rounded border-metfraa-gray-300">
++                    <span x-text="e.name"></span>
++                  </label>
++                </template>
++                <template x-if="!wEquipment.length"><span class="text-xs text-metfraa-gray-400">No equipment in master.</span></template>
++              </div>
++            </div>
++            <div><label class="lbl block mb-1">Remarks</label>
++              <input x-model="w.remarks" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          </div>
++        </div>
++      </template>
++    </div>
++    <button @click="addWorkRow()" class="mt-4 px-4 py-2 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold">+ Add work line</button>
++  </div>
++
+   <!-- ============ MASTER ============ -->
+   <div x-show="tab === 'master'">
+     <div class="flex gap-1 mb-5 border-b border-metfraa-gray-100 flex-wrap">
+@@ -339,16 +430,20 @@ function projOps() {
+     sites: [], types: [], contractors: [], parts: [], equipment: [],
+     partFilterSite: null, rateRows: [],
+     aSites: [], aContractors: [], aTypes: [], attRows: [], attSaved: false, attSaving: false,
++    wday: new Date().toISOString().slice(0,10),
++    wSites: [], wContractors: [], wTypes: [], wEquipment: [], wPartsBySite: {},
++    workRows: [], workSaved: false, workSaving: false,
+     showInactive: { sites: false },
+     drawer: null, drawerTitle: '', form: {},
+ 
+-    tabs: [{ id: 'attendance', label: 'Site Attendance' }, { id: 'master', label: 'Master' }],
++    tabs: [{ id: 'attendance', label: 'Site Attendance' }, { id: 'work', label: 'Work Progress' }, { id: 'master', label: 'Master' }],
+     day: new Date().toISOString().slice(0,10),
+ 
+     init() { this.loadAtt(); },
+     onTab() {
+       if (this.tab === 'master') this.onMasterTab();
+       if (this.tab === 'attendance') this.loadAtt();
++      if (this.tab === 'work') this.loadWork();
+     },
+     onMasterTab() {
+       if (this.masterTab === 'sites') this.loadSites();
+@@ -405,6 +500,43 @@ function projOps() {
+         this.attSaved = true;
+       } finally { this.attSaving = false; }
+     },
++    numOnly(v) { return String(v==null?'':v).replace(/[^0-9.]/g,'').replace(/(\..*)\./g,'$1'); },
++    async loadWork() {
++      const d = await this._get('/project-ops/api/work?date=' + this.wday);
++      if (!d) return;
++      this.wSites = d.sites; this.wContractors = d.contractors; this.wTypes = d.worker_types;
++      this.wEquipment = d.equipment; this.wPartsBySite = d.parts_by_site || {};
++      this.workSaved = d.saved;
++      this.workRows = (d.rows || []).map(r => ({
++        site_id: r.site_id, contractor_id: r.contractor_id, part_mark_id: r.part_mark_id,
++        nature_of_work: r.nature_of_work, workers: {...(r.workers||{})},
++        qty_nos: r.qty_nos ?? '', weight_kg: r.weight_kg ?? '',
++        start_time: r.start_time || '', end_time: r.end_time || '',
++        equipment_ids: [...(r.equipment_ids||[])], remarks: r.remarks || '',
++      }));
++      if (!this.workRows.length) this.addWorkRow();
++    },
++    addWorkRow() { this.workRows.push({ site_id:null, contractor_id:null, part_mark_id:null, nature_of_work:'', workers:{}, qty_nos:'', weight_kg:'', start_time:'', end_time:'', equipment_ids:[], remarks:'' }); },
++    partsForSite(sid) { return sid ? (this.wPartsBySite[sid] || []) : []; },
++    wc(w, tid, delta) {
++      const cur = +(w.workers[tid] || 0); const nv = Math.max(0, cur + delta);
++      if (nv === 0) delete w.workers[tid]; else w.workers[tid] = nv;
++    },
++    toggleEquip(w, eid) {
++      const i = w.equipment_ids.indexOf(eid);
++      if (i >= 0) w.equipment_ids.splice(i, 1); else w.equipment_ids.push(eid);
++    },
++    async saveWork() {
++      this.workSaving = true;
++      try {
++        const res = await fetch('/project-ops/api/work', {
++          method:'POST', headers:{'Content-Type':'application/json'},
++          body: JSON.stringify({ date: this.wday, rows: this.workRows }),
++        });
++        if (!res.ok) { const e = await res.json().catch(()=>({})); alert(e.detail || 'Save failed'); return; }
++        this.workSaved = true;
++      } finally { this.workSaving = false; }
++    },
+     async _get(path) { const r = await fetch(path); return r.ok ? r.json() : null; },
+     async loadSites() {
+       const d = await this._get('/project-ops/api/sites?include_inactive=' + (this.showInactive.sites ? 1 : 0));
