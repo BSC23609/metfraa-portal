@@ -1,0 +1,999 @@
+diff --git a/app/access.py b/app/access.py
+index 88515de..896a2fc 100644
+--- a/app/access.py
++++ b/app/access.py
+@@ -24,6 +24,7 @@ class Access:
+     ehs_admin: bool = False
+     gatepass_admin: bool = False
+     plant_admin: bool = False
++    project_ops_admin: bool = False
+     kpi_access: bool = True
+     expense_access: bool = True
+     ehs_access: bool = True
+@@ -32,7 +33,7 @@ class Access:
+     def any_admin(self) -> bool:
+         return (self.superadmin or self.hr_admin or self.kpi_admin
+                 or self.expense_admin or self.ehs_admin or self.gatepass_admin
+-                or self.plant_admin)
++                or self.plant_admin or self.project_ops_admin)
+ 
+     @property
+     def can_manage_employees(self) -> bool:
+@@ -62,6 +63,10 @@ class Access:
+         # team run it without any other admin rights.
+         return self.superadmin or self.plant_admin
+ 
++    @property
++    def can_admin_project_ops(self) -> bool:
++        return self.superadmin or self.project_ops_admin
++
+ 
+ def get_access(db: Session, user: Employee) -> Access:
+     row = db.query(EmployeeAccess).filter(EmployeeAccess.employee_id == user.id).first()
+@@ -76,6 +81,7 @@ def get_access(db: Session, user: Employee) -> Access:
+         ehs_admin=row.ehs_admin,
+         gatepass_admin=row.gatepass_admin,
+         plant_admin=getattr(row, 'plant_admin', False),
++        project_ops_admin=getattr(row, 'project_ops_admin', False),
+         kpi_access=row.kpi_access,
+         expense_access=row.expense_access,
+         ehs_access=row.ehs_access,
+diff --git a/app/main.py b/app/main.py
+index 70e904d..d89263e 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -27,6 +27,7 @@ from .routes import site_visits as site_visits_routes
+ from .routes import cron as cron_routes
+ from .routes import gatepass as gatepass_routes
+ from .routes import plant as plant_routes
++from .routes import project_ops as project_ops_routes
+ from .routes import gatepass_public as gatepass_public_routes
+ from .routes import tgt26 as tgt26_routes
+ from .routes import ehs as ehs_routes
+@@ -117,6 +118,7 @@ app.include_router(site_visits_routes.router)
+ app.include_router(cron_routes.router)
+ app.include_router(gatepass_routes.router)
+ app.include_router(plant_routes.router)
++app.include_router(project_ops_routes.router)
+ # Root-mounted: WhatsApp button URLs may only vary in the last path segment.
+ app.include_router(gatepass_public_routes.router)
+ app.include_router(tgt26_routes.router)   # Team Get Together 2026 passes (same rationale)
+diff --git a/app/models.py b/app/models.py
+index 76f17a2..972273c 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -549,6 +549,7 @@ class EmployeeAccess(Base):
+     ehs_admin = Column(Boolean, default=False, nullable=False)
+     gatepass_admin = Column(Boolean, default=False, nullable=False)
+     plant_admin = Column(Boolean, default=False, nullable=False)
++    project_ops_admin = Column(Boolean, default=False, nullable=False)
+     kpi_access = Column(Boolean, default=True, nullable=False)
+     expense_access = Column(Boolean, default=True, nullable=False)
+     ehs_access = Column(Boolean, default=True, nullable=False)
+@@ -953,3 +954,84 @@ class PlantContractorWorkLog(Base):
+     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+ 
+     contractor = relationship("PlantContractor")
++
++
++# ===================== Project Operations — Site attendance & work ==========
++
++class ProjSite(Base):
++    """Site / Job master — each project site has a Job ID (code) and a name."""
++    __tablename__ = "proj_sites"
++
++    id = Column(Integer, primary_key=True)
++    job_id = Column(String(64), nullable=True)      # the human Job ID
++    name = Column(String(255), nullable=False)
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++
++class ProjWorkerType(Base):
++    """Worker type master — name + DEFAULT hourly rate applied to every
++    contractor unless the contractor overrides it (see ProjContractorRate)."""
++    __tablename__ = "proj_worker_types"
++
++    id = Column(Integer, primary_key=True)
++    name = Column(String(120), nullable=False)
++    rate_per_hour = Column(Float, nullable=False, default=0)   # default rate
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++
++class ProjContractor(Base):
++    """Contractor master — name + standard hours (drives the regular day and
++    the OT-hour boundary). Per-type rate overrides live in ProjContractorRate;
++    where none exists the worker-type default applies."""
++    __tablename__ = "proj_contractors"
++
++    id = Column(Integer, primary_key=True)
++    name = Column(String(255), nullable=False)
++    standard_hours = Column(Float, nullable=False, default=8)
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++
++class ProjContractorRate(Base):
++    """A per-contractor override of a worker type's hourly rate. Absent = the
++    worker type's default rate is used. Keeps the master a defaults-plus-
++    overrides model rather than a full manual matrix."""
++    __tablename__ = "proj_contractor_rates"
++
++    id = Column(Integer, primary_key=True)
++    contractor_id = Column(Integer, ForeignKey("proj_contractors.id", ondelete="CASCADE"),
++                           nullable=False, index=True)
++    worker_type_id = Column(Integer, ForeignKey("proj_worker_types.id", ondelete="CASCADE"),
++                            nullable=False, index=True)
++    rate_per_hour = Column(Float, nullable=False, default=0)
++    __table_args__ = (UniqueConstraint("contractor_id", "worker_type_id",
++                                       name="uq_proj_contractor_rate"),)
++
++
++class ProjPartMark(Base):
++    """Part mark master — STRICTLY linked to a site; only that site's parts show
++    in the work-progress dropdown."""
++    __tablename__ = "proj_part_marks"
++
++    id = Column(Integer, primary_key=True)
++    site_id = Column(Integer, ForeignKey("proj_sites.id", ondelete="CASCADE"),
++                     nullable=False, index=True)
++    mark = Column(String(120), nullable=False)
++    description = Column(String(255), nullable=True)
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
++
++
++class ProjEquipment(Base):
++    """Equipment master — flat list, multi-selected on work-progress lines."""
++    __tablename__ = "proj_equipment"
++
++    id = Column(Integer, primary_key=True)
++    name = Column(String(255), nullable=False)
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
+diff --git a/app/routes/people.py b/app/routes/people.py
+index 7239170..38b196a 100644
+--- a/app/routes/people.py
++++ b/app/routes/people.py
+@@ -39,7 +39,7 @@ router = APIRouter(prefix="/people", tags=["people"])
+ templates = Jinja2Templates(directory="app/templates")
+ 
+ ROLE_FIELDS = ["is_superadmin", "is_hr_admin", "kpi_admin", "expense_admin",
+-               "ehs_admin", "gatepass_admin", "plant_admin"]
++               "ehs_admin", "gatepass_admin", "plant_admin", "project_ops_admin"]
+ ACCESS_FIELDS = ["kpi_access", "expense_access", "ehs_access"]
+ 
+ 
+diff --git a/app/routes/project_ops.py b/app/routes/project_ops.py
+new file mode 100644
+index 0000000..70e758c
+--- /dev/null
++++ b/app/routes/project_ops.py
+@@ -0,0 +1,390 @@
++"""Project Operations — site attendance & work progress.
++
++Stage 1: the five masters and the module shell.
++  * Site / Job          (job_id + name)
++  * Worker Type         (name + default hourly rate)
++  * Contractor          (name + standard hours + per-type rate overrides)
++  * Part Mark           (per site)
++  * Equipment           (flat list)
++
++Rate model: each worker type carries a DEFAULT hourly rate; a contractor may
++override it per type. The resolved rate for (contractor, type) is the override
++if present, else the type default. OT/hr = the same resolved hourly rate.
++Regular pay = headcount x contractor.standard_hours x rate; OT = people x hours
++x rate. (Attendance & work capture come in later stages.)
++"""
++import logging
++
++from fastapi import APIRouter, Depends, HTTPException, Request
++from fastapi.responses import HTMLResponse
++from fastapi.templating import Jinja2Templates
++from sqlalchemy.orm import Session
++
++from ..access import get_access
++from ..database import get_db
++from ..deps import get_current_user
++from ..models import (Employee, ProjContractor, ProjContractorRate, ProjEquipment,
++                      ProjPartMark, ProjSite, ProjWorkerType)
++
++router = APIRouter(prefix="/project-ops", tags=["project-ops"])
++log = logging.getLogger("project_ops")
++templates = Jinja2Templates(directory="app/templates")
++
++
++def _guard(db: Session, user: Employee):
++    if not get_access(db, user).can_admin_project_ops:
++        raise HTTPException(status_code=403, detail="Project Operations access only")
++
++
++def _num(v, default=None):
++    if v in (None, ""):
++        return default
++    try:
++        return float(v)
++    except (TypeError, ValueError):
++        raise HTTPException(status_code=400, detail="Invalid number")
++
++
++# ------------------------------------------------------------------ page
++
++@router.get("/", response_class=HTMLResponse)
++def page(request: Request, user: Employee = Depends(get_current_user),
++         db: Session = Depends(get_db)):
++    _guard(db, user)
++    return templates.TemplateResponse(request, "project_ops.html", {"user": user})
++
++
++# --------------------------------------------------------------- sites
++
++@router.get("/api/sites")
++def api_sites(include_inactive: str | None = None,
++              user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    _guard(db, user)
++    q = db.query(ProjSite)
++    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
++        q = q.filter(ProjSite.active == True)  # noqa: E712
++    rows = q.order_by(ProjSite.active.desc(), ProjSite.id).all()
++    return {"sites": [{"id": s.id, "job_id": s.job_id or "", "name": s.name,
++                       "active": s.active} for s in rows]}
++
++
++@router.post("/api/sites")
++async def api_site_save(request: Request, user: Employee = Depends(get_current_user),
++                        db: Session = Depends(get_db)):
++    _guard(db, user)
++    b = await request.json()
++    name = (b.get("name") or "").strip()
++    if not name:
++        raise HTTPException(status_code=400, detail="Site name is required")
++    job_id = (b.get("job_id") or "").strip() or None
++    sid = b.get("id")
++    if sid:
++        s = db.query(ProjSite).filter(ProjSite.id == sid).first()
++        if not s:
++            raise HTTPException(status_code=404, detail="Site not found")
++        s.name, s.job_id = name, job_id
++        if "active" in b:
++            s.active = bool(b["active"])
++    else:
++        db.add(ProjSite(name=name, job_id=job_id, active=bool(b.get("active", True))))
++    db.commit()
++    return {"ok": True}
++
++
++@router.delete("/api/sites/{sid}")
++def api_site_delete(sid: int, user: Employee = Depends(get_current_user),
++                    db: Session = Depends(get_db)):
++    _guard(db, user)
++    s = db.query(ProjSite).filter(ProjSite.id == sid).first()
++    if not s:
++        raise HTTPException(status_code=404, detail="Not found")
++    # A site with part marks is deactivated (keeps its parts/history); an empty
++    # one is removed.
++    has_parts = db.query(ProjPartMark).filter(ProjPartMark.site_id == sid).first()
++    if has_parts:
++        s.active = False
++        db.commit()
++        return {"ok": True, "deactivated": True}
++    db.delete(s)
++    db.commit()
++    return {"ok": True, "deleted": True}
++
++
++# --------------------------------------------------------------- worker types
++
++@router.get("/api/worker-types")
++def api_worker_types(include_inactive: str | None = None,
++                     user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    _guard(db, user)
++    q = db.query(ProjWorkerType)
++    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
++        q = q.filter(ProjWorkerType.active == True)  # noqa: E712
++    rows = q.order_by(ProjWorkerType.active.desc(), ProjWorkerType.id).all()
++    return {"worker_types": [{"id": w.id, "name": w.name,
++                              "rate_per_hour": w.rate_per_hour, "active": w.active}
++                             for w in rows]}
++
++
++@router.post("/api/worker-types")
++async def api_worker_type_save(request: Request, user: Employee = Depends(get_current_user),
++                               db: Session = Depends(get_db)):
++    _guard(db, user)
++    b = await request.json()
++    name = (b.get("name") or "").strip()
++    if not name:
++        raise HTTPException(status_code=400, detail="Worker type name is required")
++    rate = _num(b.get("rate_per_hour"), 0) or 0
++    wid = b.get("id")
++    if wid:
++        w = db.query(ProjWorkerType).filter(ProjWorkerType.id == wid).first()
++        if not w:
++            raise HTTPException(status_code=404, detail="Worker type not found")
++        w.name, w.rate_per_hour = name, rate
++        if "active" in b:
++            w.active = bool(b["active"])
++    else:
++        db.add(ProjWorkerType(name=name, rate_per_hour=rate, active=bool(b.get("active", True))))
++    db.commit()
++    return {"ok": True}
++
++
++@router.delete("/api/worker-types/{wid}")
++def api_worker_type_delete(wid: int, user: Employee = Depends(get_current_user),
++                           db: Session = Depends(get_db)):
++    _guard(db, user)
++    w = db.query(ProjWorkerType).filter(ProjWorkerType.id == wid).first()
++    if not w:
++        raise HTTPException(status_code=404, detail="Not found")
++    used = db.query(ProjContractorRate).filter(ProjContractorRate.worker_type_id == wid).first()
++    if used:
++        w.active = False
++        db.commit()
++        return {"ok": True, "deactivated": True}
++    db.delete(w)
++    db.commit()
++    return {"ok": True, "deleted": True}
++
++
++# --------------------------------------------------------------- contractors
++
++@router.get("/api/contractors")
++def api_contractors(include_inactive: str | None = None,
++                    user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    _guard(db, user)
++    q = db.query(ProjContractor)
++    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
++        q = q.filter(ProjContractor.active == True)  # noqa: E712
++    rows = q.order_by(ProjContractor.active.desc(), ProjContractor.id).all()
++    # overrides per contractor
++    ov = {}
++    for r in db.query(ProjContractorRate).all():
++        ov.setdefault(r.contractor_id, {})[r.worker_type_id] = r.rate_per_hour
++    return {"contractors": [{"id": c.id, "name": c.name,
++                             "standard_hours": c.standard_hours, "active": c.active,
++                             "overrides": ov.get(c.id, {})} for c in rows]}
++
++
++@router.get("/api/contractors/{cid}/rates")
++def api_contractor_rates(cid: int, user: Employee = Depends(get_current_user),
++                         db: Session = Depends(get_db)):
++    """The resolved rate table for one contractor: each active worker type with
++    its default rate, this contractor's override (if any), and the effective
++    rate. Feeds the rate panel in the contractor editor."""
++    _guard(db, user)
++    c = db.query(ProjContractor).filter(ProjContractor.id == cid).first()
++    if not c:
++        raise HTTPException(status_code=404, detail="Contractor not found")
++    ov = {r.worker_type_id: r.rate_per_hour
++          for r in db.query(ProjContractorRate)
++          .filter(ProjContractorRate.contractor_id == cid).all()}
++    types = (db.query(ProjWorkerType).filter(ProjWorkerType.active == True)  # noqa: E712
++             .order_by(ProjWorkerType.id).all())
++    return {"contractor_id": cid, "standard_hours": c.standard_hours,
++            "rows": [{"worker_type_id": t.id, "name": t.name,
++                      "default_rate": t.rate_per_hour,
++                      "override": ov.get(t.id),
++                      "effective": ov.get(t.id) if t.id in ov else t.rate_per_hour}
++                     for t in types]}
++
++
++@router.post("/api/contractors")
++async def api_contractor_save(request: Request, user: Employee = Depends(get_current_user),
++                              db: Session = Depends(get_db)):
++    """Save a contractor + its rate overrides. Body:
++       {id?, name, standard_hours, overrides: {worker_type_id: rate|null}}
++       A null/blank override clears it (falls back to the type default)."""
++    _guard(db, user)
++    b = await request.json()
++    name = (b.get("name") or "").strip()
++    if not name:
++        raise HTTPException(status_code=400, detail="Contractor name is required")
++    sh = _num(b.get("standard_hours"), 8) or 8
++    if sh <= 0:
++        sh = 8
++    cid = b.get("id")
++    if cid:
++        c = db.query(ProjContractor).filter(ProjContractor.id == cid).first()
++        if not c:
++            raise HTTPException(status_code=404, detail="Contractor not found")
++        c.name, c.standard_hours = name, sh
++        if "active" in b:
++            c.active = bool(b["active"])
++    else:
++        c = ProjContractor(name=name, standard_hours=sh, active=bool(b.get("active", True)))
++        db.add(c)
++        db.flush()
++    # apply overrides
++    ov = b.get("overrides") or {}
++    valid_types = {row[0] for row in db.query(ProjWorkerType.id).all()}
++    for k, v in ov.items():
++        try:
++            wt = int(k)
++        except (TypeError, ValueError):
++            continue
++        if wt not in valid_types:
++            continue
++        existing = (db.query(ProjContractorRate)
++                    .filter(ProjContractorRate.contractor_id == c.id,
++                            ProjContractorRate.worker_type_id == wt).first())
++        if v in (None, ""):
++            if existing:
++                db.delete(existing)          # cleared -> back to default
++            continue
++        try:
++            rate = float(v)
++        except (TypeError, ValueError):
++            continue
++        if existing:
++            existing.rate_per_hour = rate
++        else:
++            db.add(ProjContractorRate(contractor_id=c.id, worker_type_id=wt,
++                                      rate_per_hour=rate))
++    db.commit()
++    return {"ok": True, "id": c.id}
++
++
++@router.delete("/api/contractors/{cid}")
++def api_contractor_delete(cid: int, user: Employee = Depends(get_current_user),
++                          db: Session = Depends(get_db)):
++    _guard(db, user)
++    c = db.query(ProjContractor).filter(ProjContractor.id == cid).first()
++    if not c:
++        raise HTTPException(status_code=404, detail="Not found")
++    # No attendance yet in Stage 1; a contractor with rate overrides is
++    # deactivated to keep them, otherwise removed.
++    has_rates = db.query(ProjContractorRate).filter(ProjContractorRate.contractor_id == cid).first()
++    if has_rates:
++        c.active = False
++        db.commit()
++        return {"ok": True, "deactivated": True}
++    db.delete(c)
++    db.commit()
++    return {"ok": True, "deleted": True}
++
++
++# --------------------------------------------------------------- part marks
++
++@router.get("/api/part-marks")
++def api_part_marks(site_id: int | None = None, include_inactive: str | None = None,
++                   user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    """Part marks, optionally filtered to one site (the work-progress dropdown
++    always passes site_id so only that site's parts show)."""
++    _guard(db, user)
++    q = db.query(ProjPartMark)
++    if site_id:
++        q = q.filter(ProjPartMark.site_id == site_id)
++    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
++        q = q.filter(ProjPartMark.active == True)  # noqa: E712
++    rows = q.order_by(ProjPartMark.site_id, ProjPartMark.id).all()
++    smap = {s.id: (f"{s.job_id} · {s.name}" if s.job_id else s.name)
++            for s in db.query(ProjSite).all()}
++    return {"part_marks": [{"id": p.id, "site_id": p.site_id,
++                            "site": smap.get(p.site_id, ""), "mark": p.mark,
++                            "description": p.description or "", "active": p.active}
++                           for p in rows]}
++
++
++@router.post("/api/part-marks")
++async def api_part_mark_save(request: Request, user: Employee = Depends(get_current_user),
++                             db: Session = Depends(get_db)):
++    _guard(db, user)
++    b = await request.json()
++    mark = (b.get("mark") or "").strip()
++    if not mark:
++        raise HTTPException(status_code=400, detail="Part mark is required")
++    site_id = b.get("site_id")
++    if not db.query(ProjSite).filter(ProjSite.id == site_id).first():
++        raise HTTPException(status_code=400, detail="A valid site is required")
++    desc = (b.get("description") or "").strip() or None
++    pid = b.get("id")
++    if pid:
++        p = db.query(ProjPartMark).filter(ProjPartMark.id == pid).first()
++        if not p:
++            raise HTTPException(status_code=404, detail="Part mark not found")
++        p.mark, p.description, p.site_id = mark, desc, site_id
++        if "active" in b:
++            p.active = bool(b["active"])
++    else:
++        db.add(ProjPartMark(site_id=site_id, mark=mark, description=desc,
++                            active=bool(b.get("active", True))))
++    db.commit()
++    return {"ok": True}
++
++
++@router.delete("/api/part-marks/{pid}")
++def api_part_mark_delete(pid: int, user: Employee = Depends(get_current_user),
++                         db: Session = Depends(get_db)):
++    _guard(db, user)
++    p = db.query(ProjPartMark).filter(ProjPartMark.id == pid).first()
++    if not p:
++        raise HTTPException(status_code=404, detail="Not found")
++    db.delete(p)          # no work lines yet in Stage 1
++    db.commit()
++    return {"ok": True, "deleted": True}
++
++
++# --------------------------------------------------------------- equipment
++
++@router.get("/api/equipment")
++def api_equipment(include_inactive: str | None = None,
++                  user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    _guard(db, user)
++    q = db.query(ProjEquipment)
++    if str(include_inactive or "").lower() not in ("1", "true", "yes"):
++        q = q.filter(ProjEquipment.active == True)  # noqa: E712
++    rows = q.order_by(ProjEquipment.active.desc(), ProjEquipment.id).all()
++    return {"equipment": [{"id": e.id, "name": e.name, "active": e.active} for e in rows]}
++
++
++@router.post("/api/equipment")
++async def api_equipment_save(request: Request, user: Employee = Depends(get_current_user),
++                             db: Session = Depends(get_db)):
++    _guard(db, user)
++    b = await request.json()
++    name = (b.get("name") or "").strip()
++    if not name:
++        raise HTTPException(status_code=400, detail="Equipment name is required")
++    eid = b.get("id")
++    if eid:
++        e = db.query(ProjEquipment).filter(ProjEquipment.id == eid).first()
++        if not e:
++            raise HTTPException(status_code=404, detail="Equipment not found")
++        e.name = name
++        if "active" in b:
++            e.active = bool(b["active"])
++    else:
++        db.add(ProjEquipment(name=name, active=bool(b.get("active", True))))
++    db.commit()
++    return {"ok": True}
++
++
++@router.delete("/api/equipment/{eid}")
++def api_equipment_delete(eid: int, user: Employee = Depends(get_current_user),
++                         db: Session = Depends(get_db)):
++    _guard(db, user)
++    e = db.query(ProjEquipment).filter(ProjEquipment.id == eid).first()
++    if not e:
++        raise HTTPException(status_code=404, detail="Not found")
++    db.delete(e)
++    db.commit()
++    return {"ok": True, "deleted": True}
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index 4304476..c0b9231 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -78,6 +78,7 @@ EXPENSE_PARITY_MIGRATIONS += [
+ # today, but any query loading the whole model would fail on Postgres — the
+ # same class of break that took out the gatepass page.
+ MISC_MIGRATIONS = [
++    "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS project_ops_admin BOOLEAN NOT NULL DEFAULT FALSE",
+     "ALTER TABLE plant_contractors ADD COLUMN IF NOT EXISTS ot_rate_per_half_hour DOUBLE PRECISION NOT NULL DEFAULT 50",
+     "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS working_hours DOUBLE PRECISION NOT NULL DEFAULT 8",
+     "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS ot_category VARCHAR(16) NOT NULL DEFAULT 'salary'",
+diff --git a/app/templates/base.html b/app/templates/base.html
+index ed6b969..6276565 100644
+--- a/app/templates/base.html
++++ b/app/templates/base.html
+@@ -205,7 +205,7 @@
+                class="h-9 w-auto"
+                onerror="this.outerHTML='<div class=&quot;flex items-baseline gap-1.5&quot;><div class=&quot;font-display font-bold text-white text-xl tracking-tight&quot;>METFRAA</div><div class=&quot;text-metfraa-blue text-[10px] uppercase tracking-widest&quot;>Steel</div></div>'" />
+           <span class="text-metfraa-gray-400 text-xs hidden sm:block">|</span>
+-          <span class="mono text-[10px] uppercase tracking-[0.18em] text-metfraa-gray-400 border border-white/15 rounded px-2 py-1 hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/gatepass') %}Outpass / Gatepass{% elif _p.startswith('/plant') %}Plant Operations{% elif _p.startswith('/people') %}Employees{% elif _p.startswith('/site-visits') %}Site Visits{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
++          <span class="mono text-[10px] uppercase tracking-[0.18em] text-metfraa-gray-400 border border-white/15 rounded px-2 py-1 hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/gatepass') %}Outpass / Gatepass{% elif _p.startswith('/plant') %}Plant Operations{% elif _p.startswith('/project-ops') %}Project Operations{% elif _p.startswith('/people') %}Employees{% elif _p.startswith('/site-visits') %}Site Visits{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
+         </a>
+ 
+         <nav class="flex items-center gap-1">
+@@ -221,6 +221,8 @@
+             <a href="/" class="{{ _navcls }} hidden sm:block">Portal Home</a>
+           {% elif _p.startswith('/plant') %}
+             <a href="/" class="{{ _navcls }}">Portal Home</a>
++          {% elif _p.startswith('/project-ops') %}
++            <a href="/" class="{{ _navcls }}">Portal Home</a>
+           {% elif _p.startswith('/people') %}
+             <a href="/" class="{{ _navcls }}">Portal Home</a>
+           {% elif _p.startswith('/site-visits') %}
+diff --git a/app/templates/home.html b/app/templates/home.html
+index 003fd29..f283c0b 100644
+--- a/app/templates/home.html
++++ b/app/templates/home.html
+@@ -199,6 +199,16 @@
+       </div>
+     </a>
+ 
++    <a href="/project-ops/"
++       class="tile card-hover group relative bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-6 flex flex-col min-h-[220px] overflow-hidden">
++      <div class="icon-tile mb-4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20h20"/><path d="M4 20V8l6-4 6 4v12"/><path d="M14 20V10l6 4v6"/><path d="M8 10h.01M8 14h.01"/></svg></div>
++      <div class="display text-lg font-semibold text-metfraa-ink tracking-wide">Project Operations</div>
++      <p class="text-sm text-metfraa-gray-500 mt-1 flex-1">Site attendance & work progress across project sites.</p>
++      <div class="mt-4 flex items-center gap-1.5 text-sm font-semibold text-metfraa-blue">
++        Open <svg class="w-4 h-4 group-hover:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12l-7.5 7.5M21 12H3"/></svg>
++      </div>
++    </a>
++
+     {% endif %}
+   </div>
+ 
+diff --git a/app/templates/people.html b/app/templates/people.html
+index 756627b..531dbd7 100644
+--- a/app/templates/people.html
++++ b/app/templates/people.html
+@@ -107,6 +107,7 @@
+           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-ehs_admin"> EHS Admin</label>
+           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-gatepass_admin"> Gatepass Admin</label>
+           <label class="flex items-center gap-1.5"><input type="checkbox" id="f-plant_admin"> Plant Admin</label>
++          <label class="flex items-center gap-1.5"><input type="checkbox" id="f-project_ops_admin"> Project Ops Admin</label>
+         </div>
+       </div>
+ 
+@@ -127,7 +128,7 @@
+ </style>
+ <script>
+ let EMPS = [], editing = null;
+-const ROLE_KEYS = ["is_superadmin","is_hr_admin","kpi_admin","expense_admin","ehs_admin","gatepass_admin","plant_admin"];
++const ROLE_KEYS = ["is_superadmin","is_hr_admin","kpi_admin","expense_admin","ehs_admin","gatepass_admin","plant_admin","project_ops_admin"];
+ const ACCESS_KEYS = ["kpi_access","expense_access","ehs_access"];
+ 
+ async function load() {
+@@ -173,6 +174,7 @@ function render() {
+         ${e.ehs_admin?badge('EHS-A','bg-amber-50 text-amber-700'):''}
+         ${e.gatepass_admin?badge('GATE-A','bg-sky-50 text-sky-700'):''}
+         ${e.plant_admin?badge('PLANT-A','bg-teal-50 text-teal-700'):''}
++        ${e.project_ops_admin?badge('PROJ-A','bg-indigo-50 text-indigo-700'):''}
+       </td>
+       <td class="px-3 py-3 text-xs font-bold">${e.expense_level}</td>
+       <td class="px-3 py-3 text-xs">${e.is_active?'Active':'Inactive'}</td>
+diff --git a/app/templates/project_ops.html b/app/templates/project_ops.html
+new file mode 100644
+index 0000000..2b7aaab
+--- /dev/null
++++ b/app/templates/project_ops.html
+@@ -0,0 +1,343 @@
++{% extends "base.html" %}
++{% block title %}Project Operations — Metfraa{% endblock %}
++
++{% block content %}
++<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="projOps()" x-init="init()" x-cloak>
++
++  <div class="mb-8">
++    <div class="lbl mb-2">Metfraa Portal</div>
++    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">Project Operations</h1>
++    <div class="flex items-center gap-3 mt-3">
++      <span class="h-px w-10 bg-metfraa-blue"></span>
++      <p class="text-sm text-metfraa-gray-500">Site attendance &amp; work progress across project sites.</p>
++    </div>
++  </div>
++
++  <!-- Tabs -->
++  <div class="flex gap-1 mb-6 border-b border-metfraa-gray-200 flex-wrap">
++    <template x-for="t in tabs" :key="t.id">
++      <button @click="tab = t.id; onTab()"
++        :class="tab === t.id ? 'border-metfraa-blue text-metfraa-ink' : 'border-transparent text-metfraa-gray-500 hover:text-metfraa-ink'"
++        class="px-4 py-2 text-sm font-bold border-b-2" x-text="t.label"></button>
++    </template>
++  </div>
++
++  <!-- ============ MASTER ============ -->
++  <div x-show="tab === 'master'">
++    <div class="flex gap-1 mb-5 border-b border-metfraa-gray-100 flex-wrap">
++      <template x-for="mt in [['sites','Sites / Jobs'],['types','Worker Types'],['contractors','Contractors'],['parts','Part Marks'],['equipment','Equipment']]" :key="mt[0]">
++        <button @click="masterTab = mt[0]; onMasterTab()"
++          :class="masterTab === mt[0] ? 'border-metfraa-blue text-metfraa-ink' : 'border-transparent text-metfraa-gray-500 hover:text-metfraa-ink'"
++          class="px-3 py-2 text-sm font-bold border-b-2" x-text="mt[1]"></button>
++      </template>
++    </div>
++
++    <!-- Sites / Jobs -->
++    <div x-show="masterTab === 'sites'">
++      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++        <div class="flex items-center justify-between mb-4">
++          <div class="lbl">Sites / Jobs</div>
++          <button @click="editSite(null)" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add site</button>
++        </div>
++        <table class="w-full text-sm">
++          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Job ID</th><th class="py-2">Site name</th><th class="py-2">Status</th><th></th></tr></thead>
++          <tbody class="divide-y divide-metfraa-gray-100">
++            <template x-for="s in sites" :key="s.id">
++              <tr :class="!s.active && 'opacity-50'">
++                <td class="py-2 font-semibold mono" x-text="s.job_id || '—'"></td>
++                <td class="py-2" x-text="s.name"></td>
++                <td class="py-2"><span :class="s.active?'text-green-700':'text-metfraa-gray-400'" class="text-xs font-semibold" x-text="s.active?'Active':'Inactive'"></span></td>
++                <td class="py-2 text-right whitespace-nowrap">
++                  <button @click="editSite(s)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
++                  <button @click="delRow('sites',s)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
++                </td>
++              </tr>
++            </template>
++          </tbody>
++        </table>
++        <label class="flex items-center gap-2 text-xs text-metfraa-gray-500 mt-3">
++          <input type="checkbox" x-model="showInactive.sites" @change="loadSites()" class="rounded border-metfraa-gray-300"> Show inactive
++        </label>
++      </div>
++    </div>
++
++    <!-- Worker Types -->
++    <div x-show="masterTab === 'types'">
++      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++        <div class="flex items-center justify-between mb-4">
++          <div class="lbl">Worker Types <span class="text-metfraa-gray-400 font-normal">· default hourly rate</span></div>
++          <button @click="editType(null)" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add type</button>
++        </div>
++        <table class="w-full text-sm">
++          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Worker type</th><th class="py-2 text-right">Default rate/hr</th><th class="py-2">Status</th><th></th></tr></thead>
++          <tbody class="divide-y divide-metfraa-gray-100">
++            <template x-for="w in types" :key="w.id">
++              <tr :class="!w.active && 'opacity-50'">
++                <td class="py-2 font-semibold" x-text="w.name"></td>
++                <td class="py-2 text-right mono" x-text="'₹ ' + (w.rate_per_hour||0).toLocaleString('en-IN')"></td>
++                <td class="py-2"><span :class="w.active?'text-green-700':'text-metfraa-gray-400'" class="text-xs font-semibold" x-text="w.active?'Active':'Inactive'"></span></td>
++                <td class="py-2 text-right whitespace-nowrap">
++                  <button @click="editType(w)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
++                  <button @click="delRow('worker-types',w)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
++                </td>
++              </tr>
++            </template>
++          </tbody>
++        </table>
++        <p class="text-xs text-metfraa-gray-500 mt-3">This rate applies to every contractor. Override it per contractor only where they differ.</p>
++      </div>
++    </div>
++
++    <!-- Contractors -->
++    <div x-show="masterTab === 'contractors'">
++      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++        <div class="flex items-center justify-between mb-4">
++          <div class="lbl">Contractors</div>
++          <button @click="editContractor(null)" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add contractor</button>
++        </div>
++        <table class="w-full text-sm">
++          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Contractor</th><th class="py-2 text-right">Standard hours</th><th class="py-2 text-right">Custom rates</th><th class="py-2">Status</th><th></th></tr></thead>
++          <tbody class="divide-y divide-metfraa-gray-100">
++            <template x-for="c in contractors" :key="c.id">
++              <tr :class="!c.active && 'opacity-50'">
++                <td class="py-2 font-semibold" x-text="c.name"></td>
++                <td class="py-2 text-right mono" x-text="(c.standard_hours||8)+' hrs'"></td>
++                <td class="py-2 text-right" x-text="Object.keys(c.overrides||{}).length || '—'"></td>
++                <td class="py-2"><span :class="c.active?'text-green-700':'text-metfraa-gray-400'" class="text-xs font-semibold" x-text="c.active?'Active':'Inactive'"></span></td>
++                <td class="py-2 text-right whitespace-nowrap">
++                  <button @click="editContractor(c)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
++                  <button @click="delRow('contractors',c)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
++                </td>
++              </tr>
++            </template>
++          </tbody>
++        </table>
++      </div>
++    </div>
++
++    <!-- Part Marks -->
++    <div x-show="masterTab === 'parts'">
++      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++        <div class="flex items-center justify-between mb-4">
++          <div class="lbl">Part Marks <span class="text-metfraa-gray-400 font-normal">· per site</span></div>
++          <div class="flex items-center gap-2">
++            <select x-model.number="partFilterSite" @change="loadParts()" class="text-sm rounded-lg border-metfraa-gray-300">
++              <option :value="null">All sites</option>
++              <template x-for="s in sites" :key="s.id"><option :value="s.id" x-text="(s.job_id?s.job_id+' · ':'')+s.name"></option></template>
++            </select>
++            <button @click="editPart(null)" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add part</button>
++          </div>
++        </div>
++        <table class="w-full text-sm">
++          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Site</th><th class="py-2">Part mark</th><th class="py-2">Description</th><th></th></tr></thead>
++          <tbody class="divide-y divide-metfraa-gray-100">
++            <template x-for="p in parts" :key="p.id">
++              <tr>
++                <td class="py-2 text-metfraa-gray-500" x-text="p.site"></td>
++                <td class="py-2 font-semibold mono" x-text="p.mark"></td>
++                <td class="py-2" x-text="p.description || '—'"></td>
++                <td class="py-2 text-right whitespace-nowrap">
++                  <button @click="editPart(p)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
++                  <button @click="delRow('part-marks',p)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
++                </td>
++              </tr>
++            </template>
++            <template x-if="!parts.length"><tr><td colspan="4" class="py-4 text-center text-metfraa-gray-400 text-sm">No part marks. Pick a site and add.</td></tr></template>
++          </tbody>
++        </table>
++      </div>
++    </div>
++
++    <!-- Equipment -->
++    <div x-show="masterTab === 'equipment'">
++      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++        <div class="flex items-center justify-between mb-4">
++          <div class="lbl">Equipment</div>
++          <button @click="editEquip(null)" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add equipment</button>
++        </div>
++        <table class="w-full text-sm">
++          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++            <th class="py-2">Equipment</th><th class="py-2">Status</th><th></th></tr></thead>
++          <tbody class="divide-y divide-metfraa-gray-100">
++            <template x-for="e in equipment" :key="e.id">
++              <tr :class="!e.active && 'opacity-50'">
++                <td class="py-2 font-semibold" x-text="e.name"></td>
++                <td class="py-2"><span :class="e.active?'text-green-700':'text-metfraa-gray-400'" class="text-xs font-semibold" x-text="e.active?'Active':'Inactive'"></span></td>
++                <td class="py-2 text-right whitespace-nowrap">
++                  <button @click="editEquip(e)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
++                  <button @click="delRow('equipment',e)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
++                </td>
++              </tr>
++            </template>
++          </tbody>
++        </table>
++      </div>
++    </div>
++  </div>
++
++  <!-- edit drawer -->
++  <div x-show="drawer" x-cloak class="fixed inset-0 bg-black/30 flex justify-end z-50" @click.self="drawer=null">
++    <div class="bg-white w-full max-w-md h-full p-6 overflow-y-auto">
++      <div class="flex items-center justify-between mb-5">
++        <div class="display text-lg font-bold" x-text="drawerTitle"></div>
++        <button @click="drawer=null" class="text-metfraa-gray-400 text-xl">&times;</button>
++      </div>
++
++      <template x-if="drawer === 'site'">
++        <div class="space-y-4">
++          <div><label class="lbl block mb-1">Job ID</label><input x-model="form.job_id" placeholder="e.g. KGISL-01" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div><label class="lbl block mb-1">Site name</label><input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
++          <button @click="save('sites')" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
++        </div>
++      </template>
++
++      <template x-if="drawer === 'type'">
++        <div class="space-y-4">
++          <div><label class="lbl block mb-1">Worker type name</label><input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div><label class="lbl block mb-1">Default rate per hour (₹)</label><input type="number" min="0" step="0.5" x-model.number="form.rate_per_hour" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
++          <button @click="save('worker-types')" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
++        </div>
++      </template>
++
++      <template x-if="drawer === 'contractor'">
++        <div class="space-y-4">
++          <div><label class="lbl block mb-1">Contractor name</label><input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div><label class="lbl block mb-1">Standard hours per day</label><input type="number" min="1" step="0.5" x-model.number="form.standard_hours" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div>
++            <div class="lbl mb-2">Rates per worker type</div>
++            <p class="text-xs text-metfraa-gray-500 mb-2">Leave blank to use the default. Enter a number only where this contractor differs.</p>
++            <table class="w-full text-sm">
++              <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++                <th class="py-1">Type</th><th class="py-1 text-right">Default</th><th class="py-1 text-right w-28">This contractor</th></tr></thead>
++              <tbody class="divide-y divide-metfraa-gray-100">
++                <template x-for="r in rateRows" :key="r.worker_type_id">
++                  <tr>
++                    <td class="py-1.5" x-text="r.name"></td>
++                    <td class="py-1.5 text-right text-metfraa-gray-500 mono" x-text="'₹'+(r.default_rate||0)"></td>
++                    <td class="py-1.5 text-right">
++                      <input type="number" min="0" step="0.5" :placeholder="r.default_rate"
++                             x-model="r.override" class="w-24 rounded border-metfraa-gray-300 text-sm text-right">
++                    </td>
++                  </tr>
++                </template>
++                <template x-if="!rateRows.length"><tr><td colspan="3" class="py-3 text-metfraa-gray-400 text-sm">Add worker types first.</td></tr></template>
++              </tbody>
++            </table>
++          </div>
++          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
++          <button @click="saveContractor()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
++        </div>
++      </template>
++
++      <template x-if="drawer === 'part'">
++        <div class="space-y-4">
++          <div><label class="lbl block mb-1">Site</label>
++            <select x-model.number="form.site_id" class="w-full rounded-lg border-metfraa-gray-300 text-sm">
++              <option :value="null">— select site —</option>
++              <template x-for="s in sites" :key="s.id"><option :value="s.id" x-text="(s.job_id?s.job_id+' · ':'')+s.name"></option></template>
++            </select>
++          </div>
++          <div><label class="lbl block mb-1">Part mark</label><input x-model="form.mark" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <div><label class="lbl block mb-1">Description</label><input x-model="form.description" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
++          <button @click="save('part-marks')" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
++        </div>
++      </template>
++
++      <template x-if="drawer === 'equip'">
++        <div class="space-y-4">
++          <div><label class="lbl block mb-1">Equipment name</label><input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
++          <button @click="save('equipment')" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
++        </div>
++      </template>
++    </div>
++  </div>
++</div>
++
++<script>
++function projOps() {
++  return {
++    tab: 'master', masterTab: 'sites',
++    sites: [], types: [], contractors: [], parts: [], equipment: [],
++    partFilterSite: null, rateRows: [],
++    showInactive: { sites: false },
++    drawer: null, drawerTitle: '', form: {},
++
++    tabs: [{ id: 'master', label: 'Master' }],
++
++    init() { this.loadSites(); this.loadSitesForDropdowns(); },
++    onTab() { if (this.tab === 'master') this.onMasterTab(); },
++    onMasterTab() {
++      if (this.masterTab === 'sites') this.loadSites();
++      if (this.masterTab === 'types') this.loadTypes();
++      if (this.masterTab === 'contractors') this.loadContractors();
++      if (this.masterTab === 'parts') { this.loadSitesForDropdowns(); this.loadParts(); }
++      if (this.masterTab === 'equipment') this.loadEquipment();
++    },
++
++    async _get(path) { const r = await fetch(path); return r.ok ? r.json() : null; },
++    async loadSites() {
++      const d = await this._get('/project-ops/api/sites?include_inactive=' + (this.showInactive.sites ? 1 : 0));
++      if (d) { this.sites = d.sites; }
++    },
++    async loadSitesForDropdowns() {
++      const d = await this._get('/project-ops/api/sites'); if (d) this.sites = d.sites;
++    },
++    async loadTypes() { const d = await this._get('/project-ops/api/worker-types'); if (d) this.types = d.worker_types; },
++    async loadContractors() { const d = await this._get('/project-ops/api/contractors'); if (d) this.contractors = d.contractors; },
++    async loadParts() {
++      const q = this.partFilterSite ? ('?site_id=' + this.partFilterSite) : '';
++      const d = await this._get('/project-ops/api/part-marks' + q); if (d) this.parts = d.part_marks;
++    },
++    async loadEquipment() { const d = await this._get('/project-ops/api/equipment'); if (d) this.equipment = d.equipment; },
++
++    editSite(s) { this.form = s ? {...s} : { job_id: '', name: '', active: true }; this.drawer = 'site'; this.drawerTitle = s ? 'Edit site' : 'Add site'; },
++    editType(w) { this.form = w ? {...w} : { name: '', rate_per_hour: 0, active: true }; this.drawer = 'type'; this.drawerTitle = w ? 'Edit worker type' : 'Add worker type'; },
++    editPart(p) { this.form = p ? {...p} : { site_id: this.partFilterSite || null, mark: '', description: '', active: true }; this.drawer = 'part'; this.drawerTitle = p ? 'Edit part mark' : 'Add part mark'; },
++    editEquip(e) { this.form = e ? {...e} : { name: '', active: true }; this.drawer = 'equip'; this.drawerTitle = e ? 'Edit equipment' : 'Add equipment'; },
++    async editContractor(c) {
++      this.form = c ? {...c} : { name: '', standard_hours: 8, active: true };
++      this.drawer = 'contractor'; this.drawerTitle = c ? 'Edit contractor' : 'Add contractor';
++      if (c) {
++        const d = await this._get('/project-ops/api/contractors/' + c.id + '/rates');
++        this.rateRows = d ? d.rows.map(r => ({...r, override: r.override ?? ''})) : [];
++      } else {
++        const d = await this._get('/project-ops/api/worker-types');
++        this.rateRows = d ? d.worker_types.map(t => ({ worker_type_id: t.id, name: t.name, default_rate: t.rate_per_hour, override: '' })) : [];
++      }
++    },
++
++    async save(path) {
++      const r = await fetch('/project-ops/api/' + path, {
++        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(this.form),
++      });
++      if (!r.ok) { const d = await r.json().catch(()=>({})); alert(d.detail || 'Failed'); return; }
++      this.drawer = null; this.onMasterTab();
++    },
++    async saveContractor() {
++      const overrides = {};
++      this.rateRows.forEach(r => { overrides[r.worker_type_id] = (r.override === '' || r.override == null) ? null : +r.override; });
++      const r = await fetch('/project-ops/api/contractors', {
++        method: 'POST', headers: {'Content-Type':'application/json'},
++        body: JSON.stringify({ ...this.form, overrides }),
++      });
++      if (!r.ok) { const d = await r.json().catch(()=>({})); alert(d.detail || 'Failed'); return; }
++      this.drawer = null; this.loadContractors();
++    },
++    async delRow(path, row) {
++      if (!confirm('Remove ' + (row.name || row.mark) + '?')) return;
++      const r = await fetch('/project-ops/api/' + path + '/' + row.id, { method: 'DELETE' });
++      if (!r.ok) { alert('Failed'); return; }
++      this.onMasterTab();
++    },
++  };
++}
++</script>
++{% endblock %}

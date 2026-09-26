@@ -549,6 +549,7 @@ class EmployeeAccess(Base):
     ehs_admin = Column(Boolean, default=False, nullable=False)
     gatepass_admin = Column(Boolean, default=False, nullable=False)
     plant_admin = Column(Boolean, default=False, nullable=False)
+    project_ops_admin = Column(Boolean, default=False, nullable=False)
     kpi_access = Column(Boolean, default=True, nullable=False)
     expense_access = Column(Boolean, default=True, nullable=False)
     ehs_access = Column(Boolean, default=True, nullable=False)
@@ -953,3 +954,84 @@ class PlantContractorWorkLog(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     contractor = relationship("PlantContractor")
+
+
+# ===================== Project Operations — Site attendance & work ==========
+
+class ProjSite(Base):
+    """Site / Job master — each project site has a Job ID (code) and a name."""
+    __tablename__ = "proj_sites"
+
+    id = Column(Integer, primary_key=True)
+    job_id = Column(String(64), nullable=True)      # the human Job ID
+    name = Column(String(255), nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjWorkerType(Base):
+    """Worker type master — name + DEFAULT hourly rate applied to every
+    contractor unless the contractor overrides it (see ProjContractorRate)."""
+    __tablename__ = "proj_worker_types"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), nullable=False)
+    rate_per_hour = Column(Float, nullable=False, default=0)   # default rate
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjContractor(Base):
+    """Contractor master — name + standard hours (drives the regular day and
+    the OT-hour boundary). Per-type rate overrides live in ProjContractorRate;
+    where none exists the worker-type default applies."""
+    __tablename__ = "proj_contractors"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    standard_hours = Column(Float, nullable=False, default=8)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjContractorRate(Base):
+    """A per-contractor override of a worker type's hourly rate. Absent = the
+    worker type's default rate is used. Keeps the master a defaults-plus-
+    overrides model rather than a full manual matrix."""
+    __tablename__ = "proj_contractor_rates"
+
+    id = Column(Integer, primary_key=True)
+    contractor_id = Column(Integer, ForeignKey("proj_contractors.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    worker_type_id = Column(Integer, ForeignKey("proj_worker_types.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    rate_per_hour = Column(Float, nullable=False, default=0)
+    __table_args__ = (UniqueConstraint("contractor_id", "worker_type_id",
+                                       name="uq_proj_contractor_rate"),)
+
+
+class ProjPartMark(Base):
+    """Part mark master — STRICTLY linked to a site; only that site's parts show
+    in the work-progress dropdown."""
+    __tablename__ = "proj_part_marks"
+
+    id = Column(Integer, primary_key=True)
+    site_id = Column(Integer, ForeignKey("proj_sites.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    mark = Column(String(120), nullable=False)
+    description = Column(String(255), nullable=True)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ProjEquipment(Base):
+    """Equipment master — flat list, multi-selected on work-progress lines."""
+    __tablename__ = "proj_equipment"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

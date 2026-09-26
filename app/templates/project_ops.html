@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% block title %}Project Operations — Metfraa{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="projOps()" x-init="init()" x-cloak>
+
+  <div class="mb-8">
+    <div class="lbl mb-2">Metfraa Portal</div>
+    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">Project Operations</h1>
+    <div class="flex items-center gap-3 mt-3">
+      <span class="h-px w-10 bg-metfraa-blue"></span>
+      <p class="text-sm text-metfraa-gray-500">Site attendance &amp; work progress across project sites.</p>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex gap-1 mb-6 border-b border-metfraa-gray-200 flex-wrap">
+    <template x-for="t in tabs" :key="t.id">
+      <button @click="tab = t.id; onTab()"
+        :class="tab === t.id ? 'border-metfraa-blue text-metfraa-ink' : 'border-transparent text-metfraa-gray-500 hover:text-metfraa-ink'"
+        class="px-4 py-2 text-sm font-bold border-b-2" x-text="t.label"></button>
+    </template>
+  </div>
+
+  <!-- ============ MASTER ============ -->
+  <div x-show="tab === 'master'">
+    <div class="flex gap-1 mb-5 border-b border-metfraa-gray-100 flex-wrap">
+      <template x-for="mt in [['sites','Sites / Jobs'],['types','Worker Types'],['contractors','Contractors'],['parts','Part Marks'],['equipment','Equipment']]" :key="mt[0]">
+        <button @click="masterTab = mt[0]; onMasterTab()"
+          :class="masterTab === mt[0] ? 'border-metfraa-blue text-metfraa-ink' : 'border-transparent text-metfraa-gray-500 hover:text-metfraa-ink'"
+          class="px-3 py-2 text-sm font-bold border-b-2" x-text="mt[1]"></button>
+      </template>
+    </div>
+
+    <!-- Sites / Jobs -->
+    <div x-show="masterTab === 'sites'">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div class="lbl">Sites / Jobs</div>
+          <button @click="editSite(null)" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add site</button>
+        </div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-2">Job ID</th><th class="py-2">Site name</th><th class="py-2">Status</th><th></th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="s in sites" :key="s.id">
+              <tr :class="!s.active && 'opacity-50'">
+                <td class="py-2 font-semibold mono" x-text="s.job_id || '—'"></td>
+                <td class="py-2" x-text="s.name"></td>
+                <td class="py-2"><span :class="s.active?'text-green-700':'text-metfraa-gray-400'" class="text-xs font-semibold" x-text="s.active?'Active':'Inactive'"></span></td>
+                <td class="py-2 text-right whitespace-nowrap">
+                  <button @click="editSite(s)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
+                  <button @click="delRow('sites',s)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <label class="flex items-center gap-2 text-xs text-metfraa-gray-500 mt-3">
+          <input type="checkbox" x-model="showInactive.sites" @change="loadSites()" class="rounded border-metfraa-gray-300"> Show inactive
+        </label>
+      </div>
+    </div>
+
+    <!-- Worker Types -->
+    <div x-show="masterTab === 'types'">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div class="lbl">Worker Types <span class="text-metfraa-gray-400 font-normal">· default hourly rate</span></div>
+          <button @click="editType(null)" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add type</button>
+        </div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-2">Worker type</th><th class="py-2 text-right">Default rate/hr</th><th class="py-2">Status</th><th></th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="w in types" :key="w.id">
+              <tr :class="!w.active && 'opacity-50'">
+                <td class="py-2 font-semibold" x-text="w.name"></td>
+                <td class="py-2 text-right mono" x-text="'₹ ' + (w.rate_per_hour||0).toLocaleString('en-IN')"></td>
+                <td class="py-2"><span :class="w.active?'text-green-700':'text-metfraa-gray-400'" class="text-xs font-semibold" x-text="w.active?'Active':'Inactive'"></span></td>
+                <td class="py-2 text-right whitespace-nowrap">
+                  <button @click="editType(w)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
+                  <button @click="delRow('worker-types',w)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <p class="text-xs text-metfraa-gray-500 mt-3">This rate applies to every contractor. Override it per contractor only where they differ.</p>
+      </div>
+    </div>
+
+    <!-- Contractors -->
+    <div x-show="masterTab === 'contractors'">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div class="lbl">Contractors</div>
+          <button @click="editContractor(null)" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add contractor</button>
+        </div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-2">Contractor</th><th class="py-2 text-right">Standard hours</th><th class="py-2 text-right">Custom rates</th><th class="py-2">Status</th><th></th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="c in contractors" :key="c.id">
+              <tr :class="!c.active && 'opacity-50'">
+                <td class="py-2 font-semibold" x-text="c.name"></td>
+                <td class="py-2 text-right mono" x-text="(c.standard_hours||8)+' hrs'"></td>
+                <td class="py-2 text-right" x-text="Object.keys(c.overrides||{}).length || '—'"></td>
+                <td class="py-2"><span :class="c.active?'text-green-700':'text-metfraa-gray-400'" class="text-xs font-semibold" x-text="c.active?'Active':'Inactive'"></span></td>
+                <td class="py-2 text-right whitespace-nowrap">
+                  <button @click="editContractor(c)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
+                  <button @click="delRow('contractors',c)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Part Marks -->
+    <div x-show="masterTab === 'parts'">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div class="lbl">Part Marks <span class="text-metfraa-gray-400 font-normal">· per site</span></div>
+          <div class="flex items-center gap-2">
+            <select x-model.number="partFilterSite" @change="loadParts()" class="text-sm rounded-lg border-metfraa-gray-300">
+              <option :value="null">All sites</option>
+              <template x-for="s in sites" :key="s.id"><option :value="s.id" x-text="(s.job_id?s.job_id+' · ':'')+s.name"></option></template>
+            </select>
+            <button @click="editPart(null)" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add part</button>
+          </div>
+        </div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-2">Site</th><th class="py-2">Part mark</th><th class="py-2">Description</th><th></th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="p in parts" :key="p.id">
+              <tr>
+                <td class="py-2 text-metfraa-gray-500" x-text="p.site"></td>
+                <td class="py-2 font-semibold mono" x-text="p.mark"></td>
+                <td class="py-2" x-text="p.description || '—'"></td>
+                <td class="py-2 text-right whitespace-nowrap">
+                  <button @click="editPart(p)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
+                  <button @click="delRow('part-marks',p)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
+                </td>
+              </tr>
+            </template>
+            <template x-if="!parts.length"><tr><td colspan="4" class="py-4 text-center text-metfraa-gray-400 text-sm">No part marks. Pick a site and add.</td></tr></template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Equipment -->
+    <div x-show="masterTab === 'equipment'">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div class="lbl">Equipment</div>
+          <button @click="editEquip(null)" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add equipment</button>
+        </div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-2">Equipment</th><th class="py-2">Status</th><th></th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="e in equipment" :key="e.id">
+              <tr :class="!e.active && 'opacity-50'">
+                <td class="py-2 font-semibold" x-text="e.name"></td>
+                <td class="py-2"><span :class="e.active?'text-green-700':'text-metfraa-gray-400'" class="text-xs font-semibold" x-text="e.active?'Active':'Inactive'"></span></td>
+                <td class="py-2 text-right whitespace-nowrap">
+                  <button @click="editEquip(e)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
+                  <button @click="delRow('equipment',e)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- edit drawer -->
+  <div x-show="drawer" x-cloak class="fixed inset-0 bg-black/30 flex justify-end z-50" @click.self="drawer=null">
+    <div class="bg-white w-full max-w-md h-full p-6 overflow-y-auto">
+      <div class="flex items-center justify-between mb-5">
+        <div class="display text-lg font-bold" x-text="drawerTitle"></div>
+        <button @click="drawer=null" class="text-metfraa-gray-400 text-xl">&times;</button>
+      </div>
+
+      <template x-if="drawer === 'site'">
+        <div class="space-y-4">
+          <div><label class="lbl block mb-1">Job ID</label><input x-model="form.job_id" placeholder="e.g. KGISL-01" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div><label class="lbl block mb-1">Site name</label><input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
+          <button @click="save('sites')" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+        </div>
+      </template>
+
+      <template x-if="drawer === 'type'">
+        <div class="space-y-4">
+          <div><label class="lbl block mb-1">Worker type name</label><input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div><label class="lbl block mb-1">Default rate per hour (₹)</label><input type="number" min="0" step="0.5" x-model.number="form.rate_per_hour" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
+          <button @click="save('worker-types')" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+        </div>
+      </template>
+
+      <template x-if="drawer === 'contractor'">
+        <div class="space-y-4">
+          <div><label class="lbl block mb-1">Contractor name</label><input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div><label class="lbl block mb-1">Standard hours per day</label><input type="number" min="1" step="0.5" x-model.number="form.standard_hours" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div>
+            <div class="lbl mb-2">Rates per worker type</div>
+            <p class="text-xs text-metfraa-gray-500 mb-2">Leave blank to use the default. Enter a number only where this contractor differs.</p>
+            <table class="w-full text-sm">
+              <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+                <th class="py-1">Type</th><th class="py-1 text-right">Default</th><th class="py-1 text-right w-28">This contractor</th></tr></thead>
+              <tbody class="divide-y divide-metfraa-gray-100">
+                <template x-for="r in rateRows" :key="r.worker_type_id">
+                  <tr>
+                    <td class="py-1.5" x-text="r.name"></td>
+                    <td class="py-1.5 text-right text-metfraa-gray-500 mono" x-text="'₹'+(r.default_rate||0)"></td>
+                    <td class="py-1.5 text-right">
+                      <input type="number" min="0" step="0.5" :placeholder="r.default_rate"
+                             x-model="r.override" class="w-24 rounded border-metfraa-gray-300 text-sm text-right">
+                    </td>
+                  </tr>
+                </template>
+                <template x-if="!rateRows.length"><tr><td colspan="3" class="py-3 text-metfraa-gray-400 text-sm">Add worker types first.</td></tr></template>
+              </tbody>
+            </table>
+          </div>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
+          <button @click="saveContractor()" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+        </div>
+      </template>
+
+      <template x-if="drawer === 'part'">
+        <div class="space-y-4">
+          <div><label class="lbl block mb-1">Site</label>
+            <select x-model.number="form.site_id" class="w-full rounded-lg border-metfraa-gray-300 text-sm">
+              <option :value="null">— select site —</option>
+              <template x-for="s in sites" :key="s.id"><option :value="s.id" x-text="(s.job_id?s.job_id+' · ':'')+s.name"></option></template>
+            </select>
+          </div>
+          <div><label class="lbl block mb-1">Part mark</label><input x-model="form.mark" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <div><label class="lbl block mb-1">Description</label><input x-model="form.description" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
+          <button @click="save('part-marks')" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+        </div>
+      </template>
+
+      <template x-if="drawer === 'equip'">
+        <div class="space-y-4">
+          <div><label class="lbl block mb-1">Equipment name</label><input x-model="form.name" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300"> Active</label>
+          <button @click="save('equipment')" class="w-full py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<script>
+function projOps() {
+  return {
+    tab: 'master', masterTab: 'sites',
+    sites: [], types: [], contractors: [], parts: [], equipment: [],
+    partFilterSite: null, rateRows: [],
+    showInactive: { sites: false },
+    drawer: null, drawerTitle: '', form: {},
+
+    tabs: [{ id: 'master', label: 'Master' }],
+
+    init() { this.loadSites(); this.loadSitesForDropdowns(); },
+    onTab() { if (this.tab === 'master') this.onMasterTab(); },
+    onMasterTab() {
+      if (this.masterTab === 'sites') this.loadSites();
+      if (this.masterTab === 'types') this.loadTypes();
+      if (this.masterTab === 'contractors') this.loadContractors();
+      if (this.masterTab === 'parts') { this.loadSitesForDropdowns(); this.loadParts(); }
+      if (this.masterTab === 'equipment') this.loadEquipment();
+    },
+
+    async _get(path) { const r = await fetch(path); return r.ok ? r.json() : null; },
+    async loadSites() {
+      const d = await this._get('/project-ops/api/sites?include_inactive=' + (this.showInactive.sites ? 1 : 0));
+      if (d) { this.sites = d.sites; }
+    },
+    async loadSitesForDropdowns() {
+      const d = await this._get('/project-ops/api/sites'); if (d) this.sites = d.sites;
+    },
+    async loadTypes() { const d = await this._get('/project-ops/api/worker-types'); if (d) this.types = d.worker_types; },
+    async loadContractors() { const d = await this._get('/project-ops/api/contractors'); if (d) this.contractors = d.contractors; },
+    async loadParts() {
+      const q = this.partFilterSite ? ('?site_id=' + this.partFilterSite) : '';
+      const d = await this._get('/project-ops/api/part-marks' + q); if (d) this.parts = d.part_marks;
+    },
+    async loadEquipment() { const d = await this._get('/project-ops/api/equipment'); if (d) this.equipment = d.equipment; },
+
+    editSite(s) { this.form = s ? {...s} : { job_id: '', name: '', active: true }; this.drawer = 'site'; this.drawerTitle = s ? 'Edit site' : 'Add site'; },
+    editType(w) { this.form = w ? {...w} : { name: '', rate_per_hour: 0, active: true }; this.drawer = 'type'; this.drawerTitle = w ? 'Edit worker type' : 'Add worker type'; },
+    editPart(p) { this.form = p ? {...p} : { site_id: this.partFilterSite || null, mark: '', description: '', active: true }; this.drawer = 'part'; this.drawerTitle = p ? 'Edit part mark' : 'Add part mark'; },
+    editEquip(e) { this.form = e ? {...e} : { name: '', active: true }; this.drawer = 'equip'; this.drawerTitle = e ? 'Edit equipment' : 'Add equipment'; },
+    async editContractor(c) {
+      this.form = c ? {...c} : { name: '', standard_hours: 8, active: true };
+      this.drawer = 'contractor'; this.drawerTitle = c ? 'Edit contractor' : 'Add contractor';
+      if (c) {
+        const d = await this._get('/project-ops/api/contractors/' + c.id + '/rates');
+        this.rateRows = d ? d.rows.map(r => ({...r, override: r.override ?? ''})) : [];
+      } else {
+        const d = await this._get('/project-ops/api/worker-types');
+        this.rateRows = d ? d.worker_types.map(t => ({ worker_type_id: t.id, name: t.name, default_rate: t.rate_per_hour, override: '' })) : [];
+      }
+    },
+
+    async save(path) {
+      const r = await fetch('/project-ops/api/' + path, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(this.form),
+      });
+      if (!r.ok) { const d = await r.json().catch(()=>({})); alert(d.detail || 'Failed'); return; }
+      this.drawer = null; this.onMasterTab();
+    },
+    async saveContractor() {
+      const overrides = {};
+      this.rateRows.forEach(r => { overrides[r.worker_type_id] = (r.override === '' || r.override == null) ? null : +r.override; });
+      const r = await fetch('/project-ops/api/contractors', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ ...this.form, overrides }),
+      });
+      if (!r.ok) { const d = await r.json().catch(()=>({})); alert(d.detail || 'Failed'); return; }
+      this.drawer = null; this.loadContractors();
+    },
+    async delRow(path, row) {
+      if (!confirm('Remove ' + (row.name || row.mark) + '?')) return;
+      const r = await fetch('/project-ops/api/' + path + '/' + row.id, { method: 'DELETE' });
+      if (!r.ok) { alert('Failed'); return; }
+      this.onMasterTab();
+    },
+  };
+}
+</script>
+{% endblock %}

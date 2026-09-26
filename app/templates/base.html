@@ -205,7 +205,7 @@
                class="h-9 w-auto"
                onerror="this.outerHTML='<div class=&quot;flex items-baseline gap-1.5&quot;><div class=&quot;font-display font-bold text-white text-xl tracking-tight&quot;>METFRAA</div><div class=&quot;text-metfraa-blue text-[10px] uppercase tracking-widest&quot;>Steel</div></div>'" />
           <span class="text-metfraa-gray-400 text-xs hidden sm:block">|</span>
-          <span class="mono text-[10px] uppercase tracking-[0.18em] text-metfraa-gray-400 border border-white/15 rounded px-2 py-1 hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/gatepass') %}Outpass / Gatepass{% elif _p.startswith('/plant') %}Plant Operations{% elif _p.startswith('/people') %}Employees{% elif _p.startswith('/site-visits') %}Site Visits{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
+          <span class="mono text-[10px] uppercase tracking-[0.18em] text-metfraa-gray-400 border border-white/15 rounded px-2 py-1 hidden sm:block">{% set _p = request.url.path %}{% if _p.startswith('/ehs') %}EHS Portal{% elif _p.startswith('/expense') %}Expense Portal{% elif _p.startswith('/gatepass') %}Outpass / Gatepass{% elif _p.startswith('/plant') %}Plant Operations{% elif _p.startswith('/project-ops') %}Project Operations{% elif _p.startswith('/people') %}Employees{% elif _p.startswith('/site-visits') %}Site Visits{% elif _p == '/' %}Portal{% else %}KPI Tracker{% endif %}</span>
         </a>
 
         <nav class="flex items-center gap-1">
@@ -220,6 +220,8 @@
             <a href="/gatepass/" class="{{ _navcls }}">Gatepass Home</a>
             <a href="/" class="{{ _navcls }} hidden sm:block">Portal Home</a>
           {% elif _p.startswith('/plant') %}
+            <a href="/" class="{{ _navcls }}">Portal Home</a>
+          {% elif _p.startswith('/project-ops') %}
             <a href="/" class="{{ _navcls }}">Portal Home</a>
           {% elif _p.startswith('/people') %}
             <a href="/" class="{{ _navcls }}">Portal Home</a>
