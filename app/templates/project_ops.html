@@ -184,6 +184,136 @@
     <button @click="addWorkRow()" class="mt-4 px-4 py-2 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold">+ Add work line</button>
   </div>
 
+  <!-- ============ DASHBOARD ============ -->
+  <div x-show="tab === 'dashboard'">
+    <div class="flex items-center gap-3 flex-wrap mb-5">
+      <div class="lbl">From</div><input type="date" x-model="dbStart" @change="loadDash()" class="rounded-lg border-metfraa-gray-300 text-sm">
+      <div class="lbl">To</div><input type="date" x-model="dbEnd" @change="loadDash()" class="rounded-lg border-metfraa-gray-300 text-sm">
+      <div class="flex gap-1 ml-auto">
+        <template x-for="q in [[7,'7d'],[30,'30d'],[90,'90d']]" :key="q[0]">
+          <button @click="dbQuick(q[0])" class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-bold text-metfraa-gray-600" x-text="q[1]"></button>
+        </template>
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-3 mb-5" x-show="dash">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4"><div class="lbl">Labour pay</div>
+        <div class="display text-2xl font-bold text-metfraa-blue mt-1" x-text="dash ? '₹ '+(dash.totals.pay||0).toLocaleString('en-IN') : ''"></div></div>
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4"><div class="lbl">Total weight</div>
+        <div class="display text-2xl font-bold text-metfraa-ink mt-1" x-text="dash ? (dash.totals.weight||0).toLocaleString('en-IN',{maximumFractionDigits:0})+' Kg' : ''"></div></div>
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4"><div class="lbl">Total qty</div>
+        <div class="display text-2xl font-bold text-metfraa-ink mt-1" x-text="dash ? (dash.totals.qty||0).toLocaleString('en-IN') : ''"></div></div>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="lbl mb-3">Daily labour pay</div>
+        <div style="position:relative;height:260px"><canvas id="poPayChart"></canvas></div>
+      </div>
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="lbl mb-3">Daily weight produced</div>
+        <div style="position:relative;height:260px"><canvas id="poWtChart"></canvas></div>
+      </div>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="lbl mb-3">Pay by contractor</div>
+        <table class="w-full text-sm"><thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+          <th class="py-2">Contractor</th><th class="py-2 text-right">Regular</th><th class="py-2 text-right">OT</th><th class="py-2 text-right">Total</th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="c in (dash?dash.contractors:[])" :key="c.contractor">
+              <tr><td class="py-2 font-semibold" x-text="c.contractor"></td>
+                <td class="py-2 text-right mono" x-text="c.regular.toLocaleString('en-IN')"></td>
+                <td class="py-2 text-right mono" x-text="c.ot.toLocaleString('en-IN')"></td>
+                <td class="py-2 text-right mono font-semibold" x-text="c.total.toLocaleString('en-IN')"></td></tr>
+            </template>
+            <template x-if="dash && !dash.contractors.length"><tr><td colspan="4" class="py-6 text-center text-metfraa-gray-400 text-sm">No attendance in range.</td></tr></template>
+          </tbody></table>
+      </div>
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+        <div class="lbl mb-3">Output by site</div>
+        <table class="w-full text-sm"><thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+          <th class="py-2">Site</th><th class="py-2 text-right">Qty</th><th class="py-2 text-right">Weight (Kg)</th><th class="py-2 w-1/3">Share</th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="st in (dash?dash.sites:[])" :key="st.site">
+              <tr><td class="py-2 font-semibold" x-text="st.site"></td>
+                <td class="py-2 text-right mono" x-text="st.qty.toLocaleString('en-IN')"></td>
+                <td class="py-2 text-right mono" x-text="st.weight.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                <td class="py-2"><div class="h-2 rounded-full bg-metfraa-gray-100 overflow-hidden"><div class="h-full bg-metfraa-blue rounded-full" :style="`width:${dashMaxWt?(st.weight/dashMaxWt*100):0}%`"></div></div></td></tr>
+            </template>
+            <template x-if="dash && !dash.sites.length"><tr><td colspan="4" class="py-6 text-center text-metfraa-gray-400 text-sm">No work in range.</td></tr></template>
+          </tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ BROWSE ============ -->
+  <div x-show="tab === 'browse'">
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="lbl">From</div><input type="date" x-model="brStart" @change="loadRange()" class="rounded-lg border-metfraa-gray-300 text-sm">
+        <div class="lbl">To</div><input type="date" x-model="brEnd" @change="loadRange()" class="rounded-lg border-metfraa-gray-300 text-sm">
+      </div>
+      <div class="overflow-x-auto mt-4">
+        <table class="w-full text-sm"><thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+          <th class="py-2">Date</th><th class="py-2 text-right">Labour pay</th><th class="py-2 text-center">Work lines</th>
+          <th class="py-2 text-right">Qty</th><th class="py-2 text-right">Weight</th><th></th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="r in rangeDays" :key="r.date">
+              <tr class="hover:bg-metfraa-gray-50 cursor-pointer" @click="openDay(r.date)">
+                <td class="py-2 font-semibold" x-text="fmtDate(r.date)"></td>
+                <td class="py-2 text-right mono text-metfraa-blue" x-text="'₹ '+r.pay.toLocaleString('en-IN')"></td>
+                <td class="py-2 text-center" x-text="r.work_lines"></td>
+                <td class="py-2 text-right mono" x-text="r.qty.toLocaleString('en-IN')"></td>
+                <td class="py-2 text-right mono" x-text="r.weight.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                <td class="py-2 text-right text-metfraa-blue text-xs font-bold">View →</td></tr>
+            </template>
+            <template x-if="!rangeDays.length"><tr><td colspan="6" class="py-6 text-center text-metfraa-gray-400 text-sm">No records in range.</td></tr></template>
+          </tbody></table>
+      </div>
+    </div>
+
+    <div x-show="brDay" class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div class="display text-lg font-bold" x-text="brDay ? fmtDate(brDay.date) : ''"></div>
+        <div class="text-xs text-metfraa-gray-500" x-show="brDay">Labour pay ₹ <span class="font-semibold" x-text="brDay?(brDay.summary.pay||0).toLocaleString('en-IN'):''"></span> · <span x-text="brDay?brDay.summary.work_lines:0"></span> work lines</div>
+      </div>
+      <template x-if="brDay && !brDay.summary.has_data"><div class="text-sm text-metfraa-gray-400 py-4">Nothing recorded.</div></template>
+
+      <template x-if="brDay && brDay.attendance.length">
+        <div class="mb-5"><div class="lbl mb-2">Attendance</div>
+          <template x-for="a in brDay.attendance" :key="a.site+a.contractor">
+            <div class="mb-2 p-3 rounded ring-1 ring-metfraa-gray-100">
+              <div class="flex justify-between text-sm font-semibold"><span x-text="a.site + ' · ' + a.contractor"></span><span class="text-metfraa-blue" x-text="'₹ '+a.total.toLocaleString('en-IN')"></span></div>
+              <div class="text-xs text-metfraa-gray-600 mt-1">
+                <template x-for="t in a.types" :key="t.type"><span class="mr-3" x-text="t.type+': '+t.headcount+(t.ot_people?(' +OT '+t.ot_people+'×'+t.ot_hours+'h'):'')"></span></template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <template x-if="brDay && brDay.work.length">
+        <div><div class="lbl mb-2">Work progress</div>
+          <div class="overflow-x-auto"><table class="w-full text-sm">
+            <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+              <th class="py-1">Site</th><th class="py-1">Contractor</th><th class="py-1">Part</th><th class="py-1">Nature</th>
+              <th class="py-1">Workers</th><th class="py-1 text-right">Qty</th><th class="py-1 text-right">Weight</th>
+              <th class="py-1">Time</th><th class="py-1">Equipment</th></tr></thead>
+            <tbody class="divide-y divide-metfraa-gray-100">
+              <template x-for="(w,i) in brDay.work" :key="i">
+                <tr><td class="py-1.5" x-text="w.site"></td><td class="py-1.5" x-text="w.contractor"></td>
+                  <td class="py-1.5 mono" x-text="w.part_mark||'—'"></td><td class="py-1.5" x-text="w.nature_of_work"></td>
+                  <td class="py-1.5 text-xs" x-text="w.workers"></td>
+                  <td class="py-1.5 text-right mono" x-text="w.qty_nos ?? '—'"></td>
+                  <td class="py-1.5 text-right mono" x-text="w.weight_kg ?? '—'"></td>
+                  <td class="py-1.5 text-xs" x-text="(w.start_time||'')+(w.end_time?('–'+w.end_time):'')"></td>
+                  <td class="py-1.5 text-xs text-metfraa-gray-500" x-text="w.equipment"></td></tr>
+              </template>
+            </tbody></table></div>
+        </div>
+      </template>
+    </div>
+  </div>
+
   <!-- ============ MASTER ============ -->
   <div x-show="tab === 'master'">
     <div class="flex gap-1 mb-5 border-b border-metfraa-gray-100 flex-wrap">
@@ -433,10 +563,14 @@ function projOps() {
     wday: new Date().toISOString().slice(0,10),
     wSites: [], wContractors: [], wTypes: [], wEquipment: [], wPartsBySite: {},
     workRows: [], workSaved: false, workSaving: false,
+    dbStart: new Date(Date.now()-29*864e5).toISOString().slice(0,10), dbEnd: new Date().toISOString().slice(0,10),
+    dash: null, poPayChart: null, poWtChart: null,
+    brStart: new Date(Date.now()-13*864e5).toISOString().slice(0,10), brEnd: new Date().toISOString().slice(0,10),
+    rangeDays: [], brDay: null,
     showInactive: { sites: false },
     drawer: null, drawerTitle: '', form: {},
 
-    tabs: [{ id: 'attendance', label: 'Site Attendance' }, { id: 'work', label: 'Work Progress' }, { id: 'master', label: 'Master' }],
+    tabs: [{ id: 'attendance', label: 'Site Attendance' }, { id: 'work', label: 'Work Progress' }, { id: 'dashboard', label: 'Dashboard' }, { id: 'browse', label: 'Browse' }, { id: 'master', label: 'Master' }],
     day: new Date().toISOString().slice(0,10),
 
     init() { this.loadAtt(); },
@@ -444,6 +578,8 @@ function projOps() {
       if (this.tab === 'master') this.onMasterTab();
       if (this.tab === 'attendance') this.loadAtt();
       if (this.tab === 'work') this.loadWork();
+      if (this.tab === 'dashboard') this.loadDash();
+      if (this.tab === 'browse') this.loadRange();
     },
     onMasterTab() {
       if (this.masterTab === 'sites') this.loadSites();
@@ -537,6 +673,27 @@ function projOps() {
         this.workSaved = true;
       } finally { this.workSaving = false; }
     },
+    get dashMaxWt() { return this.dash && this.dash.sites.length ? Math.max(...this.dash.sites.map(s=>s.weight)) : 0; },
+    dbQuick(n) { this.dbEnd = new Date().toISOString().slice(0,10); this.dbStart = new Date(Date.now()-(n-1)*864e5).toISOString().slice(0,10); this.loadDash(); },
+    async loadDash() {
+      const d = await this._get(`/project-ops/api/dashboard?start=${this.dbStart}&end=${this.dbEnd}`);
+      if (!d) return; this.dash = d; this.$nextTick(() => this.drawDash());
+    },
+    drawDash() {
+      if (typeof Chart === 'undefined') { setTimeout(()=>this.drawDash(),200); return; }
+      const labels = this.dash.days.map(d=>d.date.slice(5));
+      if (this.poPayChart) this.poPayChart.destroy();
+      this.poPayChart = new Chart(document.getElementById('poPayChart'), {
+        type:'line', data:{labels, datasets:[{label:'Pay ₹', data:this.dash.days.map(d=>d.pay), borderColor:'#1F7CCB', backgroundColor:'rgba(31,124,203,.1)', fill:true, tension:.3}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}} });
+      if (this.poWtChart) this.poWtChart.destroy();
+      this.poWtChart = new Chart(document.getElementById('poWtChart'), {
+        type:'bar', data:{labels, datasets:[{label:'Weight Kg', data:this.dash.days.map(d=>d.weight), backgroundColor:'#0d1421'}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}} });
+    },
+    fmtDate(iso) { return new Date(iso+'T00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); },
+    async loadRange() { const d = await this._get(`/project-ops/api/browse/range?start=${this.brStart}&end=${this.brEnd}`); if (d) this.rangeDays = d.days; },
+    async openDay(date) { const d = await this._get('/project-ops/api/browse/day?date='+date); if (d) { this.brDay = d; window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); } },
     async _get(path) { const r = await fetch(path); return r.ok ? r.json() : null; },
     async loadSites() {
       const d = await this._get('/project-ops/api/sites?include_inactive=' + (this.showInactive.sites ? 1 : 0));

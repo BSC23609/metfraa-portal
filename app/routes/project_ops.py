@@ -615,3 +615,129 @@ async def api_work_save(request: Request, user: Employee = Depends(get_current_u
             seq=i, marked_by=user.employee_code, updated_at=now))
     db.commit()
     return {"ok": True, "date": d.isoformat()}
+
+
+# --------------------------------------------------------------- browse
+
+@router.get("/api/browse/day")
+def api_browse_day(date: str | None = None,
+                   user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Read-only view of one day: attendance (with names + amounts) and the work
+    lines (names, part marks, equipment resolved)."""
+    _guard(db, user)
+    d = _parse_date(date)
+    smap = {s.id: (f"{s.job_id} · {s.name}" if s.job_id else s.name) for s in db.query(ProjSite).all()}
+    cmap = {c.id: c.name for c in db.query(ProjContractor).all()}
+    tmap = {t.id: t.name for t in db.query(ProjWorkerType).all()}
+    emap = {e.id: e.name for e in db.query(ProjEquipment).all()}
+    pmap = {p.id: p.mark for p in db.query(ProjPartMark).all()}
+
+    att = (db.query(ProjSiteAttendance).filter(ProjSiteAttendance.att_date == d)
+           .order_by(ProjSiteAttendance.site_id, ProjSiteAttendance.contractor_id).all())
+    # group attendance by (site, contractor)
+    ag = {}
+    for a in att:
+        key = (a.site_id, a.contractor_id)
+        g = ag.setdefault(key, {"site": smap.get(a.site_id, "—"),
+                                "contractor": cmap.get(a.contractor_id, "—"),
+                                "types": [], "regular": 0.0, "ot": 0.0})
+        g["types"].append({"type": tmap.get(a.worker_type_id, "—"),
+                           "headcount": a.headcount, "ot_people": a.ot_people,
+                           "ot_hours": a.ot_hours, "regular": a.regular_amount,
+                           "ot_amount": a.ot_amount})
+        g["regular"] += a.regular_amount
+        g["ot"] += a.ot_amount
+    attendance = [{**v, "total": round(v["regular"] + v["ot"], 2)} for v in ag.values()]
+
+    work = []
+    for w in (db.query(ProjWorkProgress).filter(ProjWorkProgress.log_date == d)
+              .order_by(ProjWorkProgress.seq, ProjWorkProgress.id).all()):
+        workers = ", ".join(f"{tmap.get(int(k), '?')} {v}" for k, v in (w.workers or {}).items())
+        work.append({"site": smap.get(w.site_id, "—"), "contractor": cmap.get(w.contractor_id, "—"),
+                     "part_mark": pmap.get(w.part_mark_id, ""), "nature_of_work": w.nature_of_work or "",
+                     "workers": workers, "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
+                     "start_time": w.start_time or "", "end_time": w.end_time or "",
+                     "equipment": ", ".join(emap.get(e, "?") for e in (w.equipment_ids or [])),
+                     "remarks": w.remarks or ""})
+
+    pay = round(sum(a["total"] for a in attendance), 2)
+    return {"date": d.isoformat(), "attendance": attendance, "work": work,
+            "summary": {"pay": pay, "work_lines": len(work),
+                        "has_data": bool(attendance or work)}}
+
+
+@router.get("/api/browse/range")
+def api_browse_range(start: str | None = None, end: str | None = None,
+                     user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Per-day roll-up over a range: labour pay, work lines, qty & weight."""
+    _guard(db, user)
+    e = _parse_date(end); s_ = _parse_date(start)
+    if s_ > e:
+        s_, e = e, s_
+    from collections import defaultdict
+    days = defaultdict(lambda: {"pay": 0.0, "work_lines": 0, "qty": 0.0, "weight": 0.0})
+    for a in (db.query(ProjSiteAttendance)
+              .filter(ProjSiteAttendance.att_date >= s_, ProjSiteAttendance.att_date <= e).all()):
+        days[a.att_date.isoformat()]["pay"] += a.regular_amount + a.ot_amount
+    for w in (db.query(ProjWorkProgress)
+              .filter(ProjWorkProgress.log_date >= s_, ProjWorkProgress.log_date <= e).all()):
+        k = w.log_date.isoformat()
+        days[k]["work_lines"] += 1
+        days[k]["qty"] += w.qty_nos or 0
+        days[k]["weight"] += w.weight_kg or 0
+    rows = [{"date": k, "pay": round(v["pay"], 2), "work_lines": v["work_lines"],
+             "qty": round(v["qty"], 2), "weight": round(v["weight"], 2)} for k, v in days.items()]
+    rows.sort(key=lambda r: r["date"], reverse=True)
+    return {"start": s_.isoformat(), "end": e.isoformat(), "days": rows}
+
+
+# --------------------------------------------------------------- dashboard
+
+@router.get("/api/dashboard")
+def api_dashboard(start: str | None = None, end: str | None = None,
+                  user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Range aggregates: daily pay + weight trend; pay by contractor; weight by
+    site; headline totals."""
+    _guard(db, user)
+    e = _parse_date(end); s_ = _parse_date(start)
+    if s_ > e:
+        s_, e = e, s_
+    from collections import defaultdict
+    from datetime import timedelta
+    smap = {s.id: (f"{s.job_id} · {s.name}" if s.job_id else s.name) for s in db.query(ProjSite).all()}
+    cmap = {c.id: c.name for c in db.query(ProjContractor).all()}
+
+    trend = defaultdict(lambda: {"pay": 0.0, "weight": 0.0})
+    by_contractor = defaultdict(lambda: {"regular": 0.0, "ot": 0.0})
+    by_site = defaultdict(lambda: {"qty": 0.0, "weight": 0.0})
+
+    for a in (db.query(ProjSiteAttendance)
+              .filter(ProjSiteAttendance.att_date >= s_, ProjSiteAttendance.att_date <= e).all()):
+        trend[a.att_date.isoformat()]["pay"] += a.regular_amount + a.ot_amount
+        c = by_contractor[cmap.get(a.contractor_id, "—")]
+        c["regular"] += a.regular_amount; c["ot"] += a.ot_amount
+    for w in (db.query(ProjWorkProgress)
+              .filter(ProjWorkProgress.log_date >= s_, ProjWorkProgress.log_date <= e).all()):
+        trend[w.log_date.isoformat()]["weight"] += w.weight_kg or 0
+        bs = by_site[smap.get(w.site_id, "—")]
+        bs["qty"] += w.qty_nos or 0; bs["weight"] += w.weight_kg or 0
+
+    days = []
+    cur = s_
+    while cur <= e:
+        k = cur.isoformat()
+        t = trend.get(k, {"pay": 0.0, "weight": 0.0})
+        days.append({"date": k, "pay": round(t["pay"], 2), "weight": round(t["weight"], 2)})
+        cur += timedelta(days=1)
+
+    contractors = sorted(({"contractor": n, "regular": round(v["regular"], 2),
+                           "ot": round(v["ot"], 2), "total": round(v["regular"] + v["ot"], 2)}
+                          for n, v in by_contractor.items()),
+                         key=lambda r: r["total"], reverse=True)
+    sites = sorted(({"site": n, "qty": round(v["qty"], 2), "weight": round(v["weight"], 2)}
+                    for n, v in by_site.items()), key=lambda r: r["weight"], reverse=True)
+    totals = {"pay": round(sum(d["pay"] for d in days), 2),
+              "weight": round(sum(d["weight"] for d in days), 2),
+              "qty": round(sum(s["qty"] for s in sites), 2)}
+    return {"start": s_.isoformat(), "end": e.isoformat(), "days": days,
+            "contractors": contractors, "sites": sites, "totals": totals}
