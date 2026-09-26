@@ -27,7 +27,8 @@ from datetime import date, datetime
 
 from ..models import (Employee, ProjContractor, ProjContractorRate, ProjEquipment,
                       ProjPartMark, ProjSite, ProjSiteAttendance, ProjWorkerType,
-                      ProjWorkProgress)
+                      ProjWorkProgress, ProjReportRecipients)
+from ..services import onedrive as _od
 
 router = APIRouter(prefix="/project-ops", tags=["project-ops"])
 log = logging.getLogger("project_ops")
@@ -650,7 +651,8 @@ def api_browse_day(date: str | None = None,
     attendance = [{**v, "total": round(v["regular"] + v["ot"], 2)} for v in ag.values()]
 
     work = []
-    for w in (db.query(ProjWorkProgress).filter(ProjWorkProgress.log_date == d)
+    for w in (db.query(ProjWorkProgress)
+              .filter(ProjWorkProgress.log_date == d)
               .order_by(ProjWorkProgress.seq, ProjWorkProgress.id).all()):
         workers = ", ".join(f"{tmap.get(int(k), '?')} {v}" for k, v in (w.workers or {}).items())
         work.append({"site": smap.get(w.site_id, "—"), "contractor": cmap.get(w.contractor_id, "—"),
@@ -741,3 +743,292 @@ def api_dashboard(start: str | None = None, end: str | None = None,
               "qty": round(sum(s["qty"] for s in sites), 2)}
     return {"start": s_.isoformat(), "end": e.isoformat(), "days": days,
             "contractors": contractors, "sites": sites, "totals": totals}
+
+
+PROJ_ROOT = "Project Operations/Attendance and Work"
+DAILY_DIR = PROJ_ROOT + "/DAILY REPORT"
+WEEKLY_DIR = PROJ_ROOT + "/WEEKLY REPORT"
+DEFAULT_TO = "accounts@metfraa.com"
+DEFAULT_CC = ["vp@metfraa.com", "nirmal@metfraa.com", "pc@metfraa.com",
+              "arasu@metfraa.com", "info@metfraa.com"]
+
+
+def _safe(name):
+    return "".join(ch if ch.isalnum() or ch in " _-" else "_" for ch in (name or "x")).strip() or "x"
+
+
+def _week_window(anchor=None):
+    """The most recently COMPLETED Sat->Fri week. Report runs on a Saturday for
+    the week that ended the day before (Friday). Returns (start_sat, end_fri)."""
+    from datetime import date as _d, timedelta
+    t = anchor or _d.today()
+    # weekday(): Mon=0..Sun=6; Saturday=5. Find the most recent Friday (end).
+    # days since last Friday:
+    days_since_fri = (t.weekday() - 4) % 7   # Friday=4
+    if days_since_fri == 0:
+        days_since_fri = 7 if False else 0
+    end_fri = t - timedelta(days=days_since_fri if days_since_fri else 0)
+    if t.weekday() == 4:            # today is Friday -> last completed ended last Fri
+        end_fri = t - timedelta(days=7)
+    elif days_since_fri == 0:       # safety
+        end_fri = t - timedelta(days=7)
+    start_sat = end_fri - timedelta(days=6)
+    return start_sat, end_fri
+
+
+def _week_from_end(end_iso):
+    from datetime import timedelta
+    end = _parse_date(end_iso)
+    return end - timedelta(days=6), end
+
+
+def _week_label(start, end):
+    if start.year == end.year:
+        return f"{start.strftime('%d %b')}-{end.strftime('%d %b %Y')}"
+    return f"{start.strftime('%d %b %Y')}-{end.strftime('%d %b %Y')}"
+
+
+def _recipients(db):
+    r = db.query(ProjReportRecipients).filter(ProjReportRecipients.id == 1).first()
+    if not r:
+        return DEFAULT_TO, list(DEFAULT_CC)
+    cc = [x.strip() for x in (r.cc_emails or "").split(",") if x.strip()]
+    return (r.to_email or DEFAULT_TO), cc
+
+
+# ---- shared data assembly ----
+
+def _att_rows_for(db, start, end, contractor_id=None):
+    """Attendance rows resolved to names, within [start,end], optionally one
+    contractor. Returns list of {site, contractor, contractor_id, worker_type,
+    headcount, ot_text, amount, regular, ot}."""
+    smap = {s.id: (f"{s.job_id} · {s.name}" if s.job_id else s.name) for s in db.query(ProjSite).all()}
+    cmap = {c.id: c.name for c in db.query(ProjContractor).all()}
+    tmap = {t.id: t.name for t in db.query(ProjWorkerType).all()}
+    q = (db.query(ProjSiteAttendance)
+         .filter(ProjSiteAttendance.att_date >= start, ProjSiteAttendance.att_date <= end))
+    if contractor_id:
+        q = q.filter(ProjSiteAttendance.contractor_id == contractor_id)
+    out = []
+    for a in q.order_by(ProjSiteAttendance.att_date, ProjSiteAttendance.site_id).all():
+        ot_text = f"{a.ot_people}×{_fmt_hours(a.ot_hours)}h" if a.ot else ""
+        out.append({"site": smap.get(a.site_id, "—"), "contractor": cmap.get(a.contractor_id, "—"),
+                    "contractor_id": a.contractor_id, "worker_type": tmap.get(a.worker_type_id, "—"),
+                    "headcount": a.headcount, "ot_text": ot_text,
+                    "amount": a.regular_amount + a.ot_amount,
+                    "regular": a.regular_amount, "ot": a.ot_amount})
+    return out
+
+
+def _fmt_hours(h):
+    h = h or 0
+    return str(int(h)) if h == int(h) else str(h)
+
+
+def _work_rows_for(db, start, end, contractor_id=None):
+    smap = {s.id: (f"{s.job_id} · {s.name}" if s.job_id else s.name) for s in db.query(ProjSite).all()}
+    cmap = {c.id: c.name for c in db.query(ProjContractor).all()}
+    tmap = {t.id: t.name for t in db.query(ProjWorkerType).all()}
+    emap = {e.id: e.name for e in db.query(ProjEquipment).all()}
+    pmap = {p.id: p.mark for p in db.query(ProjPartMark).all()}
+    q = (db.query(ProjWorkProgress)
+         .filter(ProjWorkProgress.log_date >= start, ProjWorkProgress.log_date <= end))
+    if contractor_id:
+        q = q.filter(ProjWorkProgress.contractor_id == contractor_id)
+    out = []
+    for w in q.order_by(ProjWorkProgress.log_date, ProjWorkProgress.seq).all():
+        workers = ", ".join(f"{tmap.get(int(k), '?')} {v}" for k, v in (w.workers or {}).items())
+        t = (w.start_time or "") + (("-" + w.end_time) if w.end_time else "")
+        out.append({"site": smap.get(w.site_id, "—"), "contractor": cmap.get(w.contractor_id, "—"),
+                    "contractor_id": w.contractor_id, "part_mark": pmap.get(w.part_mark_id, ""),
+                    "nature_of_work": w.nature_of_work or "", "workers": workers,
+                    "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "time": t,
+                    "equipment": ", ".join(emap.get(e, "?") for e in (w.equipment_ids or []))})
+    return out
+
+
+# --------------------------------------------------------------- recipients master
+
+@router.get("/api/recipients")
+def api_recipients(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    to, cc = _recipients(db)
+    return {"to_email": to, "cc_emails": cc}
+
+
+@router.post("/api/recipients")
+async def api_recipients_save(request: Request, user: Employee = Depends(get_current_user),
+                              db: Session = Depends(get_db)):
+    _guard(db, user)
+    b = await request.json()
+    to = (b.get("to_email") or "").strip() or DEFAULT_TO
+    cc = b.get("cc_emails")
+    if isinstance(cc, list):
+        cc = ",".join(x.strip() for x in cc if x.strip())
+    else:
+        cc = (cc or "").strip()
+    r = db.query(ProjReportRecipients).filter(ProjReportRecipients.id == 1).first()
+    if not r:
+        r = ProjReportRecipients(id=1)
+        db.add(r)
+    r.to_email, r.cc_emails, r.updated_by = to, cc, user.employee_code
+    db.commit()
+    return {"ok": True}
+
+
+# --------------------------------------------------------------- daily report
+
+@router.post("/api/reports/daily")
+async def api_daily_submit(request: Request, user: Employee = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    _guard(db, user)
+    b = await request.json()
+    d = _parse_date(b.get("date"))
+    att = _att_rows_for(db, d, d)
+    work = _work_rows_for(db, d, d)
+    if not (att or work):
+        return {"ok": True, "uploaded": False, "message": "Nothing recorded — nothing to submit."}
+    pay = sum(a["amount"] for a in att)
+    weight = sum((w["weight_kg"] or 0) for w in work)
+    summary = {"pay": pay, "weight": weight, "work_lines": len(work)}
+    try:
+        from ..services.project_pdf import build_daily_pdf
+        pdf = build_daily_pdf(d, att, work, summary)
+        path = f"{DAILY_DIR}/{d.strftime('%Y-%m')}/{d.isoformat()}.pdf"
+        info = _od.upload_to_path(pdf, path, "application/pdf")
+        return {"ok": True, "uploaded": True, "url": (info or {}).get("webUrl"),
+                "message": "Daily report submitted to OneDrive."}
+    except Exception as e:
+        log.error("[project-ops] daily submit failed: %s", e, exc_info=True)
+        return {"ok": True, "uploaded": False, "message": f"OneDrive upload failed: {e}"}
+
+
+# --------------------------------------------------------------- weekly report
+
+def _weekly_by_contractor(db, start, end):
+    """Group the week's data per contractor. Returns list of
+    {contractor_id, name, att_rows, work_rows, totals}."""
+    cmap = {c.id: c.name for c in db.query(ProjContractor).all()}
+    att = _att_rows_for(db, start, end)
+    work = _work_rows_for(db, start, end)
+    ids = {a["contractor_id"] for a in att} | {w["contractor_id"] for w in work}
+    out = []
+    for cid in sorted(i for i in ids if i is not None):
+        crows = [a for a in att if a["contractor_id"] == cid]
+        wrows = [w for w in work if w["contractor_id"] == cid]
+        reg = sum(a["regular"] for a in crows)
+        ot = sum(a["ot"] for a in crows)
+        out.append({"contractor_id": cid, "name": cmap.get(cid, "—"),
+                    "att_rows": crows, "work_rows": wrows,
+                    "totals": {"regular": reg, "ot": ot, "grand": reg + ot}})
+    return out
+
+
+@router.get("/api/reports/weekly")
+def api_weekly_preview(end: str | None = None,
+                       user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Per-contractor totals for a week. `end` = the Friday; defaults to the last
+    completed week's Friday."""
+    _guard(db, user)
+    if end:
+        start, endd = _week_from_end(end)
+    else:
+        start, endd = _week_window()
+    groups = _weekly_by_contractor(db, start, endd)
+    return {"start": start.isoformat(), "end": endd.isoformat(),
+            "label": _week_label(start, endd),
+            "default_end": _week_window()[1].isoformat(),
+            "contractors": [{"contractor_id": g["contractor_id"], "name": g["name"],
+                             "regular": g["totals"]["regular"], "ot": g["totals"]["ot"],
+                             "grand": g["totals"]["grand"],
+                             "work_lines": len(g["work_rows"])} for g in groups],
+            "grand_total": sum(g["totals"]["grand"] for g in groups),
+            "has_data": bool(groups)}
+
+
+@router.post("/api/reports/weekly/submit")
+async def api_weekly_submit(request: Request, user: Employee = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """Build one PDF per contractor and upload each to its contractor folder."""
+    _guard(db, user)
+    b = await request.json()
+    if b.get("end"):
+        start, end = _week_from_end(b["end"])
+    else:
+        start, end = _week_window()
+    groups = _weekly_by_contractor(db, start, end)
+    if not groups:
+        return {"ok": True, "uploaded": 0, "message": "Nothing recorded for this week."}
+    label = _week_label(start, end)
+    from ..services.project_pdf import build_weekly_contractor_pdf
+    done, errors = 0, []
+    for g in groups:
+        try:
+            pdf = build_weekly_contractor_pdf(g["name"], label, g["att_rows"],
+                                              g["work_rows"], g["totals"])
+            path = f"{WEEKLY_DIR}/{_safe(g['name'])}/{label}.pdf"
+            _od.upload_to_path(pdf, path, "application/pdf")
+            done += 1
+        except Exception as e:
+            log.error("[project-ops] weekly submit failed for %s: %s", g["name"], e, exc_info=True)
+            errors.append(g["name"])
+    msg = f"Uploaded {done} contractor report(s) to OneDrive."
+    if errors:
+        msg += " Failed: " + ", ".join(errors)
+    return {"ok": True, "uploaded": done, "errors": errors, "message": msg}
+
+
+@router.post("/api/reports/weekly/send-hr")
+async def api_weekly_send_hr(request: Request, user: Employee = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    """One email to accounts (+CC) with every contractor's weekly PDF attached."""
+    _guard(db, user)
+    b = await request.json()
+    if b.get("end"):
+        start, end = _week_from_end(b["end"])
+    else:
+        start, end = _week_window()
+    groups = _weekly_by_contractor(db, start, end)
+    if not groups:
+        return {"ok": True, "sent": False, "message": "Nothing recorded for this week."}
+    label = _week_label(start, end)
+    from ..services.project_pdf import build_weekly_contractor_pdf
+    attachments = []
+    for g in groups:
+        try:
+            pdf = build_weekly_contractor_pdf(g["name"], label, g["att_rows"],
+                                              g["work_rows"], g["totals"])
+            attachments.append((f"{_safe(g['name'])} — {label}.pdf", pdf, "application/pdf"))
+        except Exception as e:
+            log.error("[project-ops] weekly PDF build failed for %s: %s", g["name"], e, exc_info=True)
+    if not attachments:
+        return {"ok": False, "sent": False, "message": "Could not build any reports."}
+    to, cc = _recipients(db)
+    grand = sum(g["totals"]["grand"] for g in groups)
+    subject = f"[Metfraa] Project Weekly Report — {label}"
+    lines = "".join(
+        f"<tr><td style='padding:3px 16px 3px 0'>{g['name']}</td>"
+        f"<td style='text-align:right;font-weight:600'>INR {g['totals']['grand']:,.0f}</td></tr>"
+        for g in groups)
+    html = f"""<div style="font-family:Arial,sans-serif;color:#0d1421;max-width:600px">
+      <div style="border-top:4px solid #1F7CCB;padding-top:14px">
+        <div style="font-family:monospace;font-size:11px;letter-spacing:.15em;color:#6b7689;text-transform:uppercase">Metfraa · Project Operations</div>
+        <h2 style="margin:6px 0 0;font-size:20px">Weekly Contractor Reports — {label}</h2>
+      </div>
+      <p style="font-size:14px;line-height:1.6">Weekly contractor reports are attached (one PDF per contractor).</p>
+      <table style="font-size:13px;border-collapse:collapse;margin:14px 0">{lines}
+        <tr><td style="padding:6px 16px 3px 0;border-top:1px solid #d6dde6">Grand total</td>
+            <td style="text-align:right;font-weight:700;font-size:15px;border-top:1px solid #d6dde6;padding-top:6px">INR {grand:,.0f}</td></tr>
+      </table>
+      <p style="font-size:11px;color:#6b7689;font-family:monospace;letter-spacing:.05em;border-top:1px dashed #d6dde6;padding-top:12px">METFRAA · PROJECT OPERATIONS · AUTOMATED MESSAGE</p>
+    </div>"""
+    try:
+        from ..services.email_service import send_email_async
+        ok = await send_email_async(to, subject, html, cc=cc, attachments=attachments)
+        if not ok:
+            return {"ok": True, "sent": False, "message": "Send failed — check SMTP config."}
+        return {"ok": True, "sent": True,
+                "message": f"Sent {len(attachments)} report(s) to {to}."}
+    except Exception as e:
+        log.error("[project-ops] weekly HR mail failed: %s", e, exc_info=True)
+        return {"ok": True, "sent": False, "message": f"Send failed: {e}"}

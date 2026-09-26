@@ -1092,3 +1092,14 @@ class ProjWorkProgress(Base):
     seq = Column(Integer, nullable=False, default=0)
     marked_by = Column(String(255), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjReportRecipients(Base):
+    """Single-row (id=1) editable recipients for the weekly HR email."""
+    __tablename__ = "proj_report_recipients"
+
+    id = Column(Integer, primary_key=True, default=1)
+    to_email = Column(String(255), nullable=False, default="accounts@metfraa.com")
+    cc_emails = Column(Text, nullable=True)   # comma-separated
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(String(255), nullable=True)

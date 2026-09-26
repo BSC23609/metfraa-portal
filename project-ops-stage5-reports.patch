@@ -1,0 +1,860 @@
+diff --git a/app/models.py b/app/models.py
+index 307c425..4deaa61 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -1092,3 +1092,14 @@ class ProjWorkProgress(Base):
+     seq = Column(Integer, nullable=False, default=0)
+     marked_by = Column(String(255), nullable=True)
+     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++
++class ProjReportRecipients(Base):
++    """Single-row (id=1) editable recipients for the weekly HR email."""
++    __tablename__ = "proj_report_recipients"
++
++    id = Column(Integer, primary_key=True, default=1)
++    to_email = Column(String(255), nullable=False, default="accounts@metfraa.com")
++    cc_emails = Column(Text, nullable=True)   # comma-separated
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++    updated_by = Column(String(255), nullable=True)
+diff --git a/app/routes/project_ops.py b/app/routes/project_ops.py
+index bdaca17..d4e41fa 100644
+--- a/app/routes/project_ops.py
++++ b/app/routes/project_ops.py
+@@ -27,7 +27,8 @@ from datetime import date, datetime
+ 
+ from ..models import (Employee, ProjContractor, ProjContractorRate, ProjEquipment,
+                       ProjPartMark, ProjSite, ProjSiteAttendance, ProjWorkerType,
+-                      ProjWorkProgress)
++                      ProjWorkProgress, ProjReportRecipients)
++from ..services import onedrive as _od
+ 
+ router = APIRouter(prefix="/project-ops", tags=["project-ops"])
+ log = logging.getLogger("project_ops")
+@@ -650,7 +651,8 @@ def api_browse_day(date: str | None = None,
+     attendance = [{**v, "total": round(v["regular"] + v["ot"], 2)} for v in ag.values()]
+ 
+     work = []
+-    for w in (db.query(ProjWorkProgress).filter(ProjWorkProgress.log_date == d)
++    for w in (db.query(ProjWorkProgress)
++              .filter(ProjWorkProgress.log_date == d)
+               .order_by(ProjWorkProgress.seq, ProjWorkProgress.id).all()):
+         workers = ", ".join(f"{tmap.get(int(k), '?')} {v}" for k, v in (w.workers or {}).items())
+         work.append({"site": smap.get(w.site_id, "—"), "contractor": cmap.get(w.contractor_id, "—"),
+@@ -741,3 +743,292 @@ def api_dashboard(start: str | None = None, end: str | None = None,
+               "qty": round(sum(s["qty"] for s in sites), 2)}
+     return {"start": s_.isoformat(), "end": e.isoformat(), "days": days,
+             "contractors": contractors, "sites": sites, "totals": totals}
++
++
++PROJ_ROOT = "Project Operations/Attendance and Work"
++DAILY_DIR = PROJ_ROOT + "/DAILY REPORT"
++WEEKLY_DIR = PROJ_ROOT + "/WEEKLY REPORT"
++DEFAULT_TO = "accounts@metfraa.com"
++DEFAULT_CC = ["vp@metfraa.com", "nirmal@metfraa.com", "pc@metfraa.com",
++              "arasu@metfraa.com", "info@metfraa.com"]
++
++
++def _safe(name):
++    return "".join(ch if ch.isalnum() or ch in " _-" else "_" for ch in (name or "x")).strip() or "x"
++
++
++def _week_window(anchor=None):
++    """The most recently COMPLETED Sat->Fri week. Report runs on a Saturday for
++    the week that ended the day before (Friday). Returns (start_sat, end_fri)."""
++    from datetime import date as _d, timedelta
++    t = anchor or _d.today()
++    # weekday(): Mon=0..Sun=6; Saturday=5. Find the most recent Friday (end).
++    # days since last Friday:
++    days_since_fri = (t.weekday() - 4) % 7   # Friday=4
++    if days_since_fri == 0:
++        days_since_fri = 7 if False else 0
++    end_fri = t - timedelta(days=days_since_fri if days_since_fri else 0)
++    if t.weekday() == 4:            # today is Friday -> last completed ended last Fri
++        end_fri = t - timedelta(days=7)
++    elif days_since_fri == 0:       # safety
++        end_fri = t - timedelta(days=7)
++    start_sat = end_fri - timedelta(days=6)
++    return start_sat, end_fri
++
++
++def _week_from_end(end_iso):
++    from datetime import timedelta
++    end = _parse_date(end_iso)
++    return end - timedelta(days=6), end
++
++
++def _week_label(start, end):
++    if start.year == end.year:
++        return f"{start.strftime('%d %b')}-{end.strftime('%d %b %Y')}"
++    return f"{start.strftime('%d %b %Y')}-{end.strftime('%d %b %Y')}"
++
++
++def _recipients(db):
++    r = db.query(ProjReportRecipients).filter(ProjReportRecipients.id == 1).first()
++    if not r:
++        return DEFAULT_TO, list(DEFAULT_CC)
++    cc = [x.strip() for x in (r.cc_emails or "").split(",") if x.strip()]
++    return (r.to_email or DEFAULT_TO), cc
++
++
++# ---- shared data assembly ----
++
++def _att_rows_for(db, start, end, contractor_id=None):
++    """Attendance rows resolved to names, within [start,end], optionally one
++    contractor. Returns list of {site, contractor, contractor_id, worker_type,
++    headcount, ot_text, amount, regular, ot}."""
++    smap = {s.id: (f"{s.job_id} · {s.name}" if s.job_id else s.name) for s in db.query(ProjSite).all()}
++    cmap = {c.id: c.name for c in db.query(ProjContractor).all()}
++    tmap = {t.id: t.name for t in db.query(ProjWorkerType).all()}
++    q = (db.query(ProjSiteAttendance)
++         .filter(ProjSiteAttendance.att_date >= start, ProjSiteAttendance.att_date <= end))
++    if contractor_id:
++        q = q.filter(ProjSiteAttendance.contractor_id == contractor_id)
++    out = []
++    for a in q.order_by(ProjSiteAttendance.att_date, ProjSiteAttendance.site_id).all():
++        ot_text = f"{a.ot_people}×{_fmt_hours(a.ot_hours)}h" if a.ot else ""
++        out.append({"site": smap.get(a.site_id, "—"), "contractor": cmap.get(a.contractor_id, "—"),
++                    "contractor_id": a.contractor_id, "worker_type": tmap.get(a.worker_type_id, "—"),
++                    "headcount": a.headcount, "ot_text": ot_text,
++                    "amount": a.regular_amount + a.ot_amount,
++                    "regular": a.regular_amount, "ot": a.ot_amount})
++    return out
++
++
++def _fmt_hours(h):
++    h = h or 0
++    return str(int(h)) if h == int(h) else str(h)
++
++
++def _work_rows_for(db, start, end, contractor_id=None):
++    smap = {s.id: (f"{s.job_id} · {s.name}" if s.job_id else s.name) for s in db.query(ProjSite).all()}
++    cmap = {c.id: c.name for c in db.query(ProjContractor).all()}
++    tmap = {t.id: t.name for t in db.query(ProjWorkerType).all()}
++    emap = {e.id: e.name for e in db.query(ProjEquipment).all()}
++    pmap = {p.id: p.mark for p in db.query(ProjPartMark).all()}
++    q = (db.query(ProjWorkProgress)
++         .filter(ProjWorkProgress.log_date >= start, ProjWorkProgress.log_date <= end))
++    if contractor_id:
++        q = q.filter(ProjWorkProgress.contractor_id == contractor_id)
++    out = []
++    for w in q.order_by(ProjWorkProgress.log_date, ProjWorkProgress.seq).all():
++        workers = ", ".join(f"{tmap.get(int(k), '?')} {v}" for k, v in (w.workers or {}).items())
++        t = (w.start_time or "") + (("-" + w.end_time) if w.end_time else "")
++        out.append({"site": smap.get(w.site_id, "—"), "contractor": cmap.get(w.contractor_id, "—"),
++                    "contractor_id": w.contractor_id, "part_mark": pmap.get(w.part_mark_id, ""),
++                    "nature_of_work": w.nature_of_work or "", "workers": workers,
++                    "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "time": t,
++                    "equipment": ", ".join(emap.get(e, "?") for e in (w.equipment_ids or []))})
++    return out
++
++
++# --------------------------------------------------------------- recipients master
++
++@router.get("/api/recipients")
++def api_recipients(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    _guard(db, user)
++    to, cc = _recipients(db)
++    return {"to_email": to, "cc_emails": cc}
++
++
++@router.post("/api/recipients")
++async def api_recipients_save(request: Request, user: Employee = Depends(get_current_user),
++                              db: Session = Depends(get_db)):
++    _guard(db, user)
++    b = await request.json()
++    to = (b.get("to_email") or "").strip() or DEFAULT_TO
++    cc = b.get("cc_emails")
++    if isinstance(cc, list):
++        cc = ",".join(x.strip() for x in cc if x.strip())
++    else:
++        cc = (cc or "").strip()
++    r = db.query(ProjReportRecipients).filter(ProjReportRecipients.id == 1).first()
++    if not r:
++        r = ProjReportRecipients(id=1)
++        db.add(r)
++    r.to_email, r.cc_emails, r.updated_by = to, cc, user.employee_code
++    db.commit()
++    return {"ok": True}
++
++
++# --------------------------------------------------------------- daily report
++
++@router.post("/api/reports/daily")
++async def api_daily_submit(request: Request, user: Employee = Depends(get_current_user),
++                           db: Session = Depends(get_db)):
++    _guard(db, user)
++    b = await request.json()
++    d = _parse_date(b.get("date"))
++    att = _att_rows_for(db, d, d)
++    work = _work_rows_for(db, d, d)
++    if not (att or work):
++        return {"ok": True, "uploaded": False, "message": "Nothing recorded — nothing to submit."}
++    pay = sum(a["amount"] for a in att)
++    weight = sum((w["weight_kg"] or 0) for w in work)
++    summary = {"pay": pay, "weight": weight, "work_lines": len(work)}
++    try:
++        from ..services.project_pdf import build_daily_pdf
++        pdf = build_daily_pdf(d, att, work, summary)
++        path = f"{DAILY_DIR}/{d.strftime('%Y-%m')}/{d.isoformat()}.pdf"
++        info = _od.upload_to_path(pdf, path, "application/pdf")
++        return {"ok": True, "uploaded": True, "url": (info or {}).get("webUrl"),
++                "message": "Daily report submitted to OneDrive."}
++    except Exception as e:
++        log.error("[project-ops] daily submit failed: %s", e, exc_info=True)
++        return {"ok": True, "uploaded": False, "message": f"OneDrive upload failed: {e}"}
++
++
++# --------------------------------------------------------------- weekly report
++
++def _weekly_by_contractor(db, start, end):
++    """Group the week's data per contractor. Returns list of
++    {contractor_id, name, att_rows, work_rows, totals}."""
++    cmap = {c.id: c.name for c in db.query(ProjContractor).all()}
++    att = _att_rows_for(db, start, end)
++    work = _work_rows_for(db, start, end)
++    ids = {a["contractor_id"] for a in att} | {w["contractor_id"] for w in work}
++    out = []
++    for cid in sorted(i for i in ids if i is not None):
++        crows = [a for a in att if a["contractor_id"] == cid]
++        wrows = [w for w in work if w["contractor_id"] == cid]
++        reg = sum(a["regular"] for a in crows)
++        ot = sum(a["ot"] for a in crows)
++        out.append({"contractor_id": cid, "name": cmap.get(cid, "—"),
++                    "att_rows": crows, "work_rows": wrows,
++                    "totals": {"regular": reg, "ot": ot, "grand": reg + ot}})
++    return out
++
++
++@router.get("/api/reports/weekly")
++def api_weekly_preview(end: str | None = None,
++                       user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    """Per-contractor totals for a week. `end` = the Friday; defaults to the last
++    completed week's Friday."""
++    _guard(db, user)
++    if end:
++        start, endd = _week_from_end(end)
++    else:
++        start, endd = _week_window()
++    groups = _weekly_by_contractor(db, start, endd)
++    return {"start": start.isoformat(), "end": endd.isoformat(),
++            "label": _week_label(start, endd),
++            "default_end": _week_window()[1].isoformat(),
++            "contractors": [{"contractor_id": g["contractor_id"], "name": g["name"],
++                             "regular": g["totals"]["regular"], "ot": g["totals"]["ot"],
++                             "grand": g["totals"]["grand"],
++                             "work_lines": len(g["work_rows"])} for g in groups],
++            "grand_total": sum(g["totals"]["grand"] for g in groups),
++            "has_data": bool(groups)}
++
++
++@router.post("/api/reports/weekly/submit")
++async def api_weekly_submit(request: Request, user: Employee = Depends(get_current_user),
++                            db: Session = Depends(get_db)):
++    """Build one PDF per contractor and upload each to its contractor folder."""
++    _guard(db, user)
++    b = await request.json()
++    if b.get("end"):
++        start, end = _week_from_end(b["end"])
++    else:
++        start, end = _week_window()
++    groups = _weekly_by_contractor(db, start, end)
++    if not groups:
++        return {"ok": True, "uploaded": 0, "message": "Nothing recorded for this week."}
++    label = _week_label(start, end)
++    from ..services.project_pdf import build_weekly_contractor_pdf
++    done, errors = 0, []
++    for g in groups:
++        try:
++            pdf = build_weekly_contractor_pdf(g["name"], label, g["att_rows"],
++                                              g["work_rows"], g["totals"])
++            path = f"{WEEKLY_DIR}/{_safe(g['name'])}/{label}.pdf"
++            _od.upload_to_path(pdf, path, "application/pdf")
++            done += 1
++        except Exception as e:
++            log.error("[project-ops] weekly submit failed for %s: %s", g["name"], e, exc_info=True)
++            errors.append(g["name"])
++    msg = f"Uploaded {done} contractor report(s) to OneDrive."
++    if errors:
++        msg += " Failed: " + ", ".join(errors)
++    return {"ok": True, "uploaded": done, "errors": errors, "message": msg}
++
++
++@router.post("/api/reports/weekly/send-hr")
++async def api_weekly_send_hr(request: Request, user: Employee = Depends(get_current_user),
++                             db: Session = Depends(get_db)):
++    """One email to accounts (+CC) with every contractor's weekly PDF attached."""
++    _guard(db, user)
++    b = await request.json()
++    if b.get("end"):
++        start, end = _week_from_end(b["end"])
++    else:
++        start, end = _week_window()
++    groups = _weekly_by_contractor(db, start, end)
++    if not groups:
++        return {"ok": True, "sent": False, "message": "Nothing recorded for this week."}
++    label = _week_label(start, end)
++    from ..services.project_pdf import build_weekly_contractor_pdf
++    attachments = []
++    for g in groups:
++        try:
++            pdf = build_weekly_contractor_pdf(g["name"], label, g["att_rows"],
++                                              g["work_rows"], g["totals"])
++            attachments.append((f"{_safe(g['name'])} — {label}.pdf", pdf, "application/pdf"))
++        except Exception as e:
++            log.error("[project-ops] weekly PDF build failed for %s: %s", g["name"], e, exc_info=True)
++    if not attachments:
++        return {"ok": False, "sent": False, "message": "Could not build any reports."}
++    to, cc = _recipients(db)
++    grand = sum(g["totals"]["grand"] for g in groups)
++    subject = f"[Metfraa] Project Weekly Report — {label}"
++    lines = "".join(
++        f"<tr><td style='padding:3px 16px 3px 0'>{g['name']}</td>"
++        f"<td style='text-align:right;font-weight:600'>INR {g['totals']['grand']:,.0f}</td></tr>"
++        for g in groups)
++    html = f"""<div style="font-family:Arial,sans-serif;color:#0d1421;max-width:600px">
++      <div style="border-top:4px solid #1F7CCB;padding-top:14px">
++        <div style="font-family:monospace;font-size:11px;letter-spacing:.15em;color:#6b7689;text-transform:uppercase">Metfraa · Project Operations</div>
++        <h2 style="margin:6px 0 0;font-size:20px">Weekly Contractor Reports — {label}</h2>
++      </div>
++      <p style="font-size:14px;line-height:1.6">Weekly contractor reports are attached (one PDF per contractor).</p>
++      <table style="font-size:13px;border-collapse:collapse;margin:14px 0">{lines}
++        <tr><td style="padding:6px 16px 3px 0;border-top:1px solid #d6dde6">Grand total</td>
++            <td style="text-align:right;font-weight:700;font-size:15px;border-top:1px solid #d6dde6;padding-top:6px">INR {grand:,.0f}</td></tr>
++      </table>
++      <p style="font-size:11px;color:#6b7689;font-family:monospace;letter-spacing:.05em;border-top:1px dashed #d6dde6;padding-top:12px">METFRAA · PROJECT OPERATIONS · AUTOMATED MESSAGE</p>
++    </div>"""
++    try:
++        from ..services.email_service import send_email_async
++        ok = await send_email_async(to, subject, html, cc=cc, attachments=attachments)
++        if not ok:
++            return {"ok": True, "sent": False, "message": "Send failed — check SMTP config."}
++        return {"ok": True, "sent": True,
++                "message": f"Sent {len(attachments)} report(s) to {to}."}
++    except Exception as e:
++        log.error("[project-ops] weekly HR mail failed: %s", e, exc_info=True)
++        return {"ok": True, "sent": False, "message": f"Send failed: {e}"}
+diff --git a/app/services/project_pdf.py b/app/services/project_pdf.py
+new file mode 100644
+index 0000000..ecff904
+--- /dev/null
++++ b/app/services/project_pdf.py
+@@ -0,0 +1,354 @@
++"""Project Operations report PDFs — daily (all contractors) and per-contractor
++weekly. Branded like the plant/expense reports (same fonts, logos, palette).
++Column widths are set to stay inside the A4 right margin."""
++import io
++import os
++from datetime import date
++
++from reportlab.lib.colors import HexColor
++from reportlab.lib.pagesizes import A4
++from reportlab.lib.utils import ImageReader
++from reportlab.pdfbase import pdfmetrics
++from reportlab.pdfbase.ttfonts import TTFont
++from reportlab.pdfgen import canvas as _canvas
++
++BLUE = "#1F7CCB"; INK = "#0d1421"; MUTED = "#6b7689"; LINE = "#d6dde6"
++SOFT = "#eef2f7"; GREEN = "#059669"; WHITE = "#ffffff"
++W, H = A4
++L = 40
++R = W - 40
++
++_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++_FONT_DIR = os.path.join(_BASE, "assets", "fonts")
++_EA = os.path.join(_BASE, "static", "expense", "assets")
++_FONTS = False
++
++
++def _ensure():
++    global _FONTS
++    if _FONTS:
++        return
++    try:
++        pdfmetrics.registerFont(TTFont("POHelv", os.path.join(_FONT_DIR, "DejaVuSans.ttf")))
++        pdfmetrics.registerFont(TTFont("POHelv-Bold", os.path.join(_FONT_DIR, "DejaVuSans-Bold.ttf")))
++        _FONTS = True
++    except Exception:
++        _FONTS = False
++
++
++def _f(b=False):
++    if _FONTS:
++        return "POHelv-Bold" if b else "POHelv"
++    return "Helvetica-Bold" if b else "Helvetica"
++
++
++def _hx(c):
++    return HexColor(c)
++
++
++def _fmt(n, dec=2):
++    try:
++        v = float(n or 0)
++    except (TypeError, ValueError):
++        v = 0.0
++    return f"{v:,.{dec}f}" if dec else f"{v:,.0f}"
++
++
++def _header(c, subtitle, title, ref):
++    top = 28
++    try:
++        g = ImageReader(os.path.join(_EA, "group-logo.png"))
++        gw, gh = g.getSize(); h = 20
++        c.drawImage(g, L, H - top - h, width=h * gw / gh, height=h, mask="auto")
++    except Exception:
++        pass
++    try:
++        m = ImageReader(os.path.join(_EA, "metfraa-logo.png"))
++        iw, ih = m.getSize(); bw, bh = 100, 24
++        sc = min(bw / iw, bh / ih)
++        c.drawImage(m, R - iw * sc, H - top - ih * sc, width=iw * sc, height=ih * sc, mask="auto")
++    except Exception:
++        pass
++    c.setStrokeColor(_hx(LINE)); c.setLineWidth(.5); c.line(L, H - top - 34, R, H - top - 34)
++    c.setFont(_f(True), 8); c.setFillColor(_hx(MUTED)); c.drawString(L, H - top - 52, subtitle.upper())
++    c.setFont(_f(True), 18); c.setFillColor(_hx(INK)); c.drawString(L, H - top - 74, title)
++    c.setFont(_f(), 9); c.setFillColor(_hx(MUTED)); c.drawString(L, H - top - 90, ref)
++    return H - top - 116
++
++
++def _footer(c, txt, pg):
++    c.setStrokeColor(_hx(LINE)); c.setLineWidth(.5); c.line(L, 34, R, 34)
++    c.setFont(_f(), 8); c.setFillColor(_hx(MUTED))
++    c.drawString(L, 24, txt); c.drawRightString(R, 24, f"Page {pg}")
++
++
++def _section(c, y, t):
++    c.setFont(_f(True), 9); c.setFillColor(_hx(BLUE)); c.drawString(L, y, t.upper())
++    y -= 6; c.setStrokeColor(_hx(LINE)); c.line(L, y, R, y)
++    return y - 16
++
++
++def _thead(c, y, cols):
++    c.setFillColor(_hx(INK)); c.rect(L, y - 4, R - L, 20, fill=1, stroke=0)
++    c.setFont(_f(True), 8); c.setFillColor(_hx(WHITE))
++    for t, dx in cols:
++        c.drawString(L + 8 + dx, y + 3, t.upper())
++    return y - 4
++
++
++def _clip(c, s, font, size, width):
++    s = "" if s is None else str(s)
++    if pdfmetrics.stringWidth(s, font, size) <= width:
++        return s
++    while s and pdfmetrics.stringWidth(s + "…", font, size) > width:
++        s = s[:-1]
++    return s + "…"
++
++
++def _att_table(c, y, foot, rows, page_lbl, title):
++    """Attendance table (site, contractor, type, head, OT, amount). rows are
++    dicts: {site, contractor, worker_type, headcount, ot_text, amount}."""
++    cols = [("Site / Job", 0), ("Contractor", 120), ("Worker type", 235),
++            ("Head", 320), ("OT", 360), ("Amount", 440)]
++    y = _thead(c, y, cols)
++    c.setFont(_f(), 9)
++    total = 0.0
++    for i, r in enumerate(rows):
++        rh = 18
++        if y - rh < 60:
++            _footer(c, foot, page_lbl); c.showPage()
++            y = _header(c, "Metfraa / Project Operations", title, foot.split("· ")[-1])
++            y = _thead(c, y, cols)
++        if i % 2 == 0:
++            c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
++        c.setFillColor(_hx(INK)); c.setFont(_f(), 9)
++        c.drawString(L + 8, y - 13, _clip(c, r["site"], _f(), 9, 108))
++        c.drawString(L + 128, y - 13, _clip(c, r["contractor"], _f(), 9, 103))
++        c.drawString(L + 243, y - 13, _clip(c, r["worker_type"], _f(), 9, 78))
++        c.drawString(L + 328, y - 13, str(r["headcount"]))
++        c.drawString(L + 368, y - 13, r.get("ot_text", "") or "—")
++        c.drawString(L + 448, y - 13, "₹" + _fmt(r["amount"], 0))
++        total += r["amount"]
++        y -= rh
++    return y, total
++
++
++def _work_table(c, y, foot, rows, page_lbl, title):
++    cols = [("Site", 0), ("Part", 60), ("Nature", 110), ("Workers", 230),
++            ("Qty", 320), ("Wt(Kg)", 360), ("Time", 420), ("Equipment", 470)]
++    y = _thead(c, y, cols)
++    c.setFont(_f(), 8)
++    for i, r in enumerate(rows):
++        rh = 18
++        if y - rh < 60:
++            _footer(c, foot, page_lbl); c.showPage()
++            y = _header(c, "Metfraa / Project Operations", title, foot.split("· ")[-1])
++            y = _thead(c, y, cols)
++        if i % 2 == 0:
++            c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
++        c.setFillColor(_hx(INK)); c.setFont(_f(), 8)
++        c.drawString(L + 6, y - 13, _clip(c, r["site"], _f(), 8, 48))
++        c.drawString(L + 66, y - 13, _clip(c, r.get("part_mark", ""), _f(), 8, 42))
++        c.drawString(L + 116, y - 13, _clip(c, r.get("nature_of_work", ""), _f(), 8, 112))
++        c.drawString(L + 236, y - 13, _clip(c, r.get("workers", ""), _f(), 8, 82))
++        c.drawString(L + 326, y - 13, "" if r.get("qty_nos") is None else _fmt(r["qty_nos"]))
++        c.drawString(L + 366, y - 13, "" if r.get("weight_kg") is None else _fmt(r["weight_kg"]))
++        c.drawString(L + 426, y - 13, _clip(c, r.get("time", ""), _f(), 8, 44))
++        c.drawString(L + 476, y - 13, _clip(c, r.get("equipment", ""), _f(), 8, R - L - 476 - 6))
++        y -= rh
++    return y
++
++
++
++
++def _grid_table(c, y, foot, title_for_cont, cols, rows, min_y=70):
++    """Fully-bordered table. cols = [(header, width, align)] where align in
++    {'l','r','c'}. rows = list of lists of cell strings (already formatted).
++    Column x positions are derived from widths; the table spans L..R by scaling
++    the last column if needed. Returns the y below the table."""
++    total_w = sum(w for _, w, _ in cols)
++    avail = R - L
++    scale = avail / total_w if total_w else 1
++    xs = []
++    x = L
++    for _, w, _a in cols:
++        xs.append(x); x += w * scale
++    right = x
++    rh = 20
++
++    def header():
++        c.setFillColor(_hx(INK)); c.rect(L, y0 - rh, right - L, rh, fill=1, stroke=0)
++        c.setFont(_f(True), 8); c.setFillColor(_hx(WHITE))
++        for (h, w, a), xx in zip(cols, xs):
++            cw = w * scale
++            if a == "r":
++                c.drawRightString(xx + cw - 6, y0 - 14, h.upper())
++            elif a == "c":
++                c.drawCentredString(xx + cw / 2, y0 - 14, h.upper())
++            else:
++                c.drawString(xx + 6, y0 - 14, h.upper())
++
++    y0 = y
++    header()
++    yy = y0 - rh
++    c.setFont(_f(), 8.5)
++    for i, row in enumerate(rows):
++        if yy - rh < min_y:
++            # column borders for the drawn block, then new page
++            _grid_borders(c, L, y0, right, yy, xs, rh)
++            _footer(c, foot, "·"); c.showPage()
++            y0 = _header(c, "Metfraa / Project Operations", title_for_cont, foot.split("· ")[-1])
++            header(); yy = y0 - rh; c.setFont(_f(), 8.5)
++        if i % 2 == 1:
++            c.setFillColor(_hx(SOFT)); c.rect(L, yy - rh, right - L, rh, fill=1, stroke=0)
++        c.setFillColor(_hx(INK))
++        for (h, w, a), xx, val in zip(cols, xs, row):
++            cw = w * scale
++            txt = _clip(c, str(val), _f(), 8.5, cw - 10)
++            if a == "r":
++                c.drawRightString(xx + cw - 6, yy - 14, txt)
++            elif a == "c":
++                c.drawCentredString(xx + cw / 2, yy - 14, txt)
++            else:
++                c.drawString(xx + 6, yy - 14, txt)
++        yy -= rh
++    _grid_borders(c, L, y0, right, yy, xs, rh)
++    return yy
++
++
++def _grid_borders(c, x0, y_top, x_right, y_bot, xs, rh):
++    """Draw the outer box + vertical column separators + horizontal row lines."""
++    c.setStrokeColor(_hx(LINE)); c.setLineWidth(.5)
++    # outer box
++    c.rect(x0, y_bot, x_right - x0, y_top - y_bot, fill=0, stroke=1)
++    # header separator
++    c.line(x0, y_top - rh, x_right, y_top - rh)
++    # vertical separators
++    for xx in xs[1:]:
++        c.line(xx, y_bot, xx, y_top)
++    # horizontal row lines
++    yy = y_top - rh
++    while yy - rh >= y_bot - 0.5:
++        yy -= rh
++        c.line(x0, yy, x_right, yy)
++
++# ---------------------------------------------------------------------------
++#  DAILY (all contractors)
++# ---------------------------------------------------------------------------
++
++def build_daily_pdf(d: date, att_rows, work_rows, summary) -> bytes:
++    _ensure()
++    buf = io.BytesIO()
++    c = _canvas.Canvas(buf, pagesize=A4)
++    ref = "Date · " + d.strftime("%d %b %Y")
++    foot = "Metfraa · Project Operations · Daily Report · " + d.strftime("%d %b %Y")
++
++    y = _header(c, "Metfraa / Project Operations", "Daily Site Report", ref)
++
++    def chip(x, label, val, col):
++        c.setFillColor(_hx(SOFT)); c.roundRect(x, y - 38, 160, 34, 3, fill=1, stroke=0)
++        c.setFont(_f(True), 7); c.setFillColor(_hx(MUTED)); c.drawString(x + 10, y - 16, label.upper())
++        c.setFont(_f(True), 15); c.setFillColor(_hx(col)); c.drawString(x + 10, y - 33, str(val))
++    chip(L, "Labour pay", "₹ " + _fmt(summary.get("pay", 0), 0), BLUE)
++    chip(L + 168, "Weight", _fmt(summary.get("weight", 0), 0) + " Kg", INK)
++    chip(L + 336, "Work lines", summary.get("work_lines", 0), GREEN)
++    y -= 64
++
++    y = _section(c, y, "Site Attendance")
++    y, total = _att_table(c, y, foot, att_rows, "1", "Daily Site Report")
++    y -= 6
++    c.setFillColor(_hx(BLUE)); c.rect(L, y - 24, R - L, 26, fill=1, stroke=0)
++    c.setFont(_f(True), 9); c.setFillColor(_hx(WHITE))
++    c.drawString(L + 12, y - 16, "DAY LABOUR TOTAL")
++    c.drawRightString(R - 12, y - 16, "₹ " + _fmt(total, 0))
++    _footer(c, foot, "1")
++    c.showPage()
++
++    y = _header(c, "Metfraa / Project Operations", "Daily Work Progress", ref)
++    y = _section(c, y, "Work Lines")
++    if work_rows:
++        y = _work_table(c, y, foot, work_rows, "2", "Daily Work Progress")
++    else:
++        c.setFillColor(_hx(MUTED)); c.setFont(_f(), 9); c.drawString(L + 8, y - 13, "No work lines.")
++    _footer(c, foot, "2")
++    c.showPage()
++    c.save()
++    return buf.getvalue()
++
++
++# ---------------------------------------------------------------------------
++#  WEEKLY (one contractor)
++# ---------------------------------------------------------------------------
++
++def build_weekly_contractor_pdf(contractor_name, week_label, att_rows, work_rows,
++                                totals) -> bytes:
++    """One contractor's week. PAGE 1 = attendance & payments (bordered table +
++    totals). PAGE 2 = work log (bordered table). att_rows/work_rows are already
++    filtered to this contractor."""
++    _ensure()
++    buf = io.BytesIO()
++    c = _canvas.Canvas(buf, pagesize=A4)
++    ref = "Week · " + week_label
++    foot = "Metfraa · Project Operations · Weekly Report · " + week_label
++    title = "Weekly Contractor Report"
++
++    # ---------- PAGE 1: attendance & payments ----------
++    y = _header(c, "Metfraa / Project Operations · " + contractor_name, title, ref)
++
++    def chip(x, label, val, col):
++        c.setFillColor(_hx(SOFT)); c.roundRect(x, y - 38, 160, 34, 3, fill=1, stroke=0)
++        c.setFont(_f(True), 7); c.setFillColor(_hx(MUTED)); c.drawString(x + 10, y - 16, label.upper())
++        c.setFont(_f(True), 15); c.setFillColor(_hx(col)); c.drawString(x + 10, y - 33, str(val))
++    chip(L, "Regular", "\u20b9 " + _fmt(totals.get("regular", 0), 0), INK)
++    chip(L + 168, "OT", "\u20b9 " + _fmt(totals.get("ot", 0), 0), MUTED)
++    chip(L + 336, "Total payable", "\u20b9 " + _fmt(totals.get("grand", 0), 0), BLUE)
++    y -= 64
++
++    y = _section(c, y, "Attendance & payments")
++    cols = [("Site / Job", 150, "l"), ("Worker type", 110, "l"), ("Head", 45, "c"),
++            ("OT", 70, "c"), ("Regular \u20b9", 80, "r"), ("OT \u20b9", 70, "r"),
++            ("Amount \u20b9", 85, "r")]
++    rows = [[r["site"], r["worker_type"], r["headcount"], r.get("ot_text", "") or "\u2014",
++             _fmt(r.get("regular", 0), 0), _fmt(r.get("ot", 0), 0), _fmt(r["amount"], 0)]
++            for r in att_rows]
++    if rows:
++        y = _grid_table(c, y, foot, title, cols, rows)
++    else:
++        c.setFillColor(_hx(MUTED)); c.setFont(_f(), 9); c.drawString(L + 8, y - 13, "No attendance this week."); y -= 18
++    y -= 10
++    c.setFillColor(_hx(BLUE)); c.rect(L, y - 32, R - L, 36, fill=1, stroke=0)
++    c.setFont(_f(True), 9); c.setFillColor(_hx(WHITE))
++    c.drawString(L + 12, y - 13, contractor_name.upper() + " \u2014 TOTAL PAYABLE")
++    c.setFont(_f(True), 8)
++    c.drawString(L + 12, y - 25, "Regular \u20b9" + _fmt(totals.get("regular", 0), 0)
++                 + " \u00b7 OT \u20b9" + _fmt(totals.get("ot", 0), 0))
++    c.setFont(_f(True), 18); c.drawRightString(R - 12, y - 20, "\u20b9 " + _fmt(totals.get("grand", 0), 0))
++    _footer(c, foot, "1 of 2")
++    c.showPage()
++
++    # ---------- PAGE 2: work log ----------
++    y = _header(c, "Metfraa / Project Operations · " + contractor_name, title + " \u2014 Work Log", ref)
++    y = _section(c, y, "Work progress")
++    wcols = [("Site", 62, "l"), ("Part", 48, "l"), ("Nature of work", 120, "l"),
++             ("Workers", 92, "l"), ("Qty", 38, "r"), ("Wt (Kg)", 62, "r"),
++             ("Time", 78, "l"), ("Equipment", 120, "l")]
++    wrows = [[w["site"], w.get("part_mark", "") or "\u2014", w.get("nature_of_work", ""),
++              w.get("workers", ""), "" if w.get("qty_nos") is None else _fmt(w["qty_nos"]),
++              "" if w.get("weight_kg") is None else _fmt(w["weight_kg"]),
++              w.get("time", ""), w.get("equipment", "")]
++             for w in work_rows]
++    if wrows:
++        y = _grid_table(c, y, foot, title + " \u2014 Work Log", wcols, wrows)
++        # weight total
++        tw = sum((w.get("weight_kg") or 0) for w in work_rows)
++        y -= 10
++        c.setFillColor(_hx(BLUE)); c.rect(L, y - 24, R - L, 26, fill=1, stroke=0)
++        c.setFont(_f(True), 9); c.setFillColor(_hx(WHITE))
++        c.drawString(L + 12, y - 16, "TOTAL WEIGHT")
++        c.drawRightString(R - 12, y - 16, _fmt(tw) + " Kg")
++    else:
++        c.setFillColor(_hx(MUTED)); c.setFont(_f(), 9); c.drawString(L + 8, y - 13, "No work lines this week.")
++    _footer(c, foot, "2 of 2")
++    c.showPage()
++    c.save()
++    return buf.getvalue()
+diff --git a/app/templates/project_ops.html b/app/templates/project_ops.html
+index 68318b6..f11a540 100644
+--- a/app/templates/project_ops.html
++++ b/app/templates/project_ops.html
+@@ -314,6 +314,78 @@
+     </div>
+   </div>
+ 
++  <!-- ============ REPORTS ============ -->
++  <div x-show="tab === 'reports'">
++    <!-- daily -->
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
++      <div class="flex items-center gap-3 flex-wrap">
++        <div class="lbl">Daily report</div>
++        <input type="date" x-model="rDay" class="rounded-lg border-metfraa-gray-300 text-sm">
++        <button @click="submitDaily()" :disabled="rDaily"
++          class="ml-auto px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
++          <span x-text="rDaily ? 'Submitting…' : 'Save & Submit daily to OneDrive'"></span>
++        </button>
++      </div>
++      <p class="text-xs text-metfraa-gray-500 mt-2">All-contractor daily PDF → Project Operations / Attendance and Work / DAILY REPORT.</p>
++    </div>
++
++    <!-- weekly -->
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
++      <div class="flex items-center gap-3 flex-wrap">
++        <div class="lbl">Weekly (Sat–Fri)</div>
++        <span class="text-sm font-semibold text-metfraa-ink" x-text="wk ? wk.label : ''"></span>
++        <select x-model="rWeekEnd" @change="loadWeekly()" class="rounded-lg border-metfraa-gray-300 text-sm">
++          <option value="">Last completed week</option>
++          <template x-for="opt in weekOptions" :key="opt.end"><option :value="opt.end" x-text="opt.label"></option></template>
++        </select>
++        <div class="ml-auto flex gap-2">
++          <button @click="submitWeekly()" :disabled="rWkSub || !wk || !wk.has_data"
++            class="px-5 py-2.5 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold disabled:opacity-50">
++            <span x-text="rWkSub ? 'Generating…' : 'Generate & Submit (per contractor)'"></span>
++          </button>
++          <button @click="sendWeeklyHR()" :disabled="rWkSend || !wk || !wk.has_data"
++            class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
++            <span x-text="rWkSend ? 'Sending…' : 'Send to HR'"></span>
++          </button>
++        </div>
++      </div>
++      <template x-if="wk && !wk.has_data">
++        <div class="bg-amber-50 ring-1 ring-amber-200 rounded-lg p-4 text-sm text-amber-800 mt-3">Nothing recorded for this week.</div>
++      </template>
++      <div x-show="wk && wk.has_data" class="mt-4 overflow-x-auto">
++        <table class="w-full text-sm"><thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++          <th class="py-2">Contractor</th><th class="py-2 text-right">Regular</th><th class="py-2 text-right">OT</th>
++          <th class="py-2 text-right">Total</th><th class="py-2 text-center">Work lines</th></tr></thead>
++          <tbody class="divide-y divide-metfraa-gray-100">
++            <template x-for="c in (wk?wk.contractors:[])" :key="c.contractor_id">
++              <tr><td class="py-2 font-semibold" x-text="c.name"></td>
++                <td class="py-2 text-right mono" x-text="c.regular.toLocaleString('en-IN')"></td>
++                <td class="py-2 text-right mono" x-text="c.ot.toLocaleString('en-IN')"></td>
++                <td class="py-2 text-right mono font-semibold text-metfraa-blue" x-text="'₹'+c.grand.toLocaleString('en-IN')"></td>
++                <td class="py-2 text-center" x-text="c.work_lines"></td></tr>
++            </template>
++          </tbody>
++          <tfoot><tr class="border-t-2 border-metfraa-gray-200"><td class="py-2 font-bold">Grand total</td>
++            <td colspan="2"></td><td class="py-2 text-right font-bold text-metfraa-blue" x-text="wk?'₹'+wk.grand_total.toLocaleString('en-IN'):''"></td><td></td></tr></tfoot>
++        </table>
++      </div>
++      <p class="text-xs text-metfraa-gray-500 mt-2">One PDF per contractor → WEEKLY REPORT / &lt;Contractor&gt; / &lt;week&gt;.pdf. Send to HR emails one message with all attached.</p>
++    </div>
++
++    <!-- recipients master -->
++    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++      <div class="lbl mb-3">HR email recipients</div>
++      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
++        <div><label class="lbl block mb-1">To</label>
++          <input x-model="recTo" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++        <div><label class="lbl block mb-1">CC (comma-separated)</label>
++          <input x-model="recCc" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
++      </div>
++      <button @click="saveRecipients()" class="mt-3 px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Save recipients</button>
++      <span x-show="recSaved" class="text-xs text-green-700 ml-2">saved</span>
++    </div>
++  </div>
++
+   <!-- ============ MASTER ============ -->
+   <div x-show="tab === 'master'">
+     <div class="flex gap-1 mb-5 border-b border-metfraa-gray-100 flex-wrap">
+@@ -567,10 +639,13 @@ function projOps() {
+     dash: null, poPayChart: null, poWtChart: null,
+     brStart: new Date(Date.now()-13*864e5).toISOString().slice(0,10), brEnd: new Date().toISOString().slice(0,10),
+     rangeDays: [], brDay: null,
++    rDay: new Date().toISOString().slice(0,10), rDaily: false,
++    rWeekEnd: '', wk: null, rWkSub: false, rWkSend: false, weekOptions: [],
++    recTo: '', recCc: '', recSaved: false,
+     showInactive: { sites: false },
+     drawer: null, drawerTitle: '', form: {},
+ 
+-    tabs: [{ id: 'attendance', label: 'Site Attendance' }, { id: 'work', label: 'Work Progress' }, { id: 'dashboard', label: 'Dashboard' }, { id: 'browse', label: 'Browse' }, { id: 'master', label: 'Master' }],
++    tabs: [{ id: 'attendance', label: 'Site Attendance' }, { id: 'work', label: 'Work Progress' }, { id: 'dashboard', label: 'Dashboard' }, { id: 'browse', label: 'Browse' }, { id: 'reports', label: 'Reports' }, { id: 'master', label: 'Master' }],
+     day: new Date().toISOString().slice(0,10),
+ 
+     init() { this.loadAtt(); },
+@@ -580,6 +655,7 @@ function projOps() {
+       if (this.tab === 'work') this.loadWork();
+       if (this.tab === 'dashboard') this.loadDash();
+       if (this.tab === 'browse') this.loadRange();
++      if (this.tab === 'reports') { this.loadWeekly(); this.loadRecipients(); this.buildWeekOptions(); }
+     },
+     onMasterTab() {
+       if (this.masterTab === 'sites') this.loadSites();
+@@ -694,6 +770,57 @@ function projOps() {
+     fmtDate(iso) { return new Date(iso+'T00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); },
+     async loadRange() { const d = await this._get(`/project-ops/api/browse/range?start=${this.brStart}&end=${this.brEnd}`); if (d) this.rangeDays = d.days; },
+     async openDay(date) { const d = await this._get('/project-ops/api/browse/day?date='+date); if (d) { this.brDay = d; window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); } },
++    buildWeekOptions() {
++      // last 8 completed Sat-Fri weeks (end = Friday)
++      const opts = []; const today = new Date();
++      // find last Friday
++      let end = new Date(today); const dow = end.getDay(); // Sun=0..Sat=6, Fri=5
++      let back = (dow - 5 + 7) % 7; if (dow === 5) back = 7; if (back === 0) back = 7;
++      end.setDate(end.getDate() - back);
++      for (let i=0;i<8;i++) {
++        const e = new Date(end); e.setDate(e.getDate()-7*i);
++        const s = new Date(e); s.setDate(s.getDate()-6);
++        const fmt = dt => dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
++        opts.push({ end: e.toISOString().slice(0,10), label: fmt(s)+'–'+fmt(e)+' '+e.getFullYear() });
++      }
++      this.weekOptions = opts;
++    },
++    async loadWeekly() {
++      const q = this.rWeekEnd ? ('?end=' + this.rWeekEnd) : '';
++      const d = await this._get('/project-ops/api/reports/weekly' + q);
++      if (d) this.wk = d;
++    },
++    async submitDaily() {
++      this.rDaily = true;
++      try {
++        const r = await fetch('/project-ops/api/reports/daily', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:this.rDay})});
++        const d = await r.json(); alert(d.message || 'Done');
++      } finally { this.rDaily = false; }
++    },
++    async submitWeekly() {
++      if (!confirm('Generate & upload per-contractor reports for ' + (this.wk?this.wk.label:'') + '?')) return;
++      this.rWkSub = true;
++      try {
++        const r = await fetch('/project-ops/api/reports/weekly/submit', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({end:this.rWeekEnd})});
++        const d = await r.json(); alert(d.message || 'Done');
++      } finally { this.rWkSub = false; }
++    },
++    async sendWeeklyHR() {
++      if (!confirm('Email all contractor reports for ' + (this.wk?this.wk.label:'') + ' to HR?')) return;
++      this.rWkSend = true;
++      try {
++        const r = await fetch('/project-ops/api/reports/weekly/send-hr', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({end:this.rWeekEnd})});
++        const d = await r.json(); alert(d.message || 'Done');
++      } finally { this.rWkSend = false; }
++    },
++    async loadRecipients() {
++      const d = await this._get('/project-ops/api/recipients');
++      if (d) { this.recTo = d.to_email; this.recCc = (d.cc_emails||[]).join(', '); }
++    },
++    async saveRecipients() {
++      const r = await fetch('/project-ops/api/recipients', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email:this.recTo, cc_emails:this.recCc})});
++      if (r.ok) { this.recSaved = true; setTimeout(()=>this.recSaved=false,2000); } else alert('Failed');
++    },
+     async _get(path) { const r = await fetch(path); return r.ok ? r.json() : null; },
+     async loadSites() {
+       const d = await this._get('/project-ops/api/sites?include_inactive=' + (this.showInactive.sites ? 1 : 0));

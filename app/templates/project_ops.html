@@ -314,6 +314,78 @@
     </div>
   </div>
 
+  <!-- ============ REPORTS ============ -->
+  <div x-show="tab === 'reports'">
+    <!-- daily -->
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="lbl">Daily report</div>
+        <input type="date" x-model="rDay" class="rounded-lg border-metfraa-gray-300 text-sm">
+        <button @click="submitDaily()" :disabled="rDaily"
+          class="ml-auto px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
+          <span x-text="rDaily ? 'Submitting…' : 'Save & Submit daily to OneDrive'"></span>
+        </button>
+      </div>
+      <p class="text-xs text-metfraa-gray-500 mt-2">All-contractor daily PDF → Project Operations / Attendance and Work / DAILY REPORT.</p>
+    </div>
+
+    <!-- weekly -->
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="lbl">Weekly (Sat–Fri)</div>
+        <span class="text-sm font-semibold text-metfraa-ink" x-text="wk ? wk.label : ''"></span>
+        <select x-model="rWeekEnd" @change="loadWeekly()" class="rounded-lg border-metfraa-gray-300 text-sm">
+          <option value="">Last completed week</option>
+          <template x-for="opt in weekOptions" :key="opt.end"><option :value="opt.end" x-text="opt.label"></option></template>
+        </select>
+        <div class="ml-auto flex gap-2">
+          <button @click="submitWeekly()" :disabled="rWkSub || !wk || !wk.has_data"
+            class="px-5 py-2.5 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold disabled:opacity-50">
+            <span x-text="rWkSub ? 'Generating…' : 'Generate & Submit (per contractor)'"></span>
+          </button>
+          <button @click="sendWeeklyHR()" :disabled="rWkSend || !wk || !wk.has_data"
+            class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
+            <span x-text="rWkSend ? 'Sending…' : 'Send to HR'"></span>
+          </button>
+        </div>
+      </div>
+      <template x-if="wk && !wk.has_data">
+        <div class="bg-amber-50 ring-1 ring-amber-200 rounded-lg p-4 text-sm text-amber-800 mt-3">Nothing recorded for this week.</div>
+      </template>
+      <div x-show="wk && wk.has_data" class="mt-4 overflow-x-auto">
+        <table class="w-full text-sm"><thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+          <th class="py-2">Contractor</th><th class="py-2 text-right">Regular</th><th class="py-2 text-right">OT</th>
+          <th class="py-2 text-right">Total</th><th class="py-2 text-center">Work lines</th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="c in (wk?wk.contractors:[])" :key="c.contractor_id">
+              <tr><td class="py-2 font-semibold" x-text="c.name"></td>
+                <td class="py-2 text-right mono" x-text="c.regular.toLocaleString('en-IN')"></td>
+                <td class="py-2 text-right mono" x-text="c.ot.toLocaleString('en-IN')"></td>
+                <td class="py-2 text-right mono font-semibold text-metfraa-blue" x-text="'₹'+c.grand.toLocaleString('en-IN')"></td>
+                <td class="py-2 text-center" x-text="c.work_lines"></td></tr>
+            </template>
+          </tbody>
+          <tfoot><tr class="border-t-2 border-metfraa-gray-200"><td class="py-2 font-bold">Grand total</td>
+            <td colspan="2"></td><td class="py-2 text-right font-bold text-metfraa-blue" x-text="wk?'₹'+wk.grand_total.toLocaleString('en-IN'):''"></td><td></td></tr></tfoot>
+        </table>
+      </div>
+      <p class="text-xs text-metfraa-gray-500 mt-2">One PDF per contractor → WEEKLY REPORT / &lt;Contractor&gt; / &lt;week&gt;.pdf. Send to HR emails one message with all attached.</p>
+    </div>
+
+    <!-- recipients master -->
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="lbl mb-3">HR email recipients</div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="lbl block mb-1">To</label>
+          <input x-model="recTo" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+        <div><label class="lbl block mb-1">CC (comma-separated)</label>
+          <input x-model="recCc" class="w-full rounded-lg border-metfraa-gray-300 text-sm"></div>
+      </div>
+      <button @click="saveRecipients()" class="mt-3 px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">Save recipients</button>
+      <span x-show="recSaved" class="text-xs text-green-700 ml-2">saved</span>
+    </div>
+  </div>
+
   <!-- ============ MASTER ============ -->
   <div x-show="tab === 'master'">
     <div class="flex gap-1 mb-5 border-b border-metfraa-gray-100 flex-wrap">
@@ -567,10 +639,13 @@ function projOps() {
     dash: null, poPayChart: null, poWtChart: null,
     brStart: new Date(Date.now()-13*864e5).toISOString().slice(0,10), brEnd: new Date().toISOString().slice(0,10),
     rangeDays: [], brDay: null,
+    rDay: new Date().toISOString().slice(0,10), rDaily: false,
+    rWeekEnd: '', wk: null, rWkSub: false, rWkSend: false, weekOptions: [],
+    recTo: '', recCc: '', recSaved: false,
     showInactive: { sites: false },
     drawer: null, drawerTitle: '', form: {},
 
-    tabs: [{ id: 'attendance', label: 'Site Attendance' }, { id: 'work', label: 'Work Progress' }, { id: 'dashboard', label: 'Dashboard' }, { id: 'browse', label: 'Browse' }, { id: 'master', label: 'Master' }],
+    tabs: [{ id: 'attendance', label: 'Site Attendance' }, { id: 'work', label: 'Work Progress' }, { id: 'dashboard', label: 'Dashboard' }, { id: 'browse', label: 'Browse' }, { id: 'reports', label: 'Reports' }, { id: 'master', label: 'Master' }],
     day: new Date().toISOString().slice(0,10),
 
     init() { this.loadAtt(); },
@@ -580,6 +655,7 @@ function projOps() {
       if (this.tab === 'work') this.loadWork();
       if (this.tab === 'dashboard') this.loadDash();
       if (this.tab === 'browse') this.loadRange();
+      if (this.tab === 'reports') { this.loadWeekly(); this.loadRecipients(); this.buildWeekOptions(); }
     },
     onMasterTab() {
       if (this.masterTab === 'sites') this.loadSites();
@@ -694,6 +770,57 @@ function projOps() {
     fmtDate(iso) { return new Date(iso+'T00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); },
     async loadRange() { const d = await this._get(`/project-ops/api/browse/range?start=${this.brStart}&end=${this.brEnd}`); if (d) this.rangeDays = d.days; },
     async openDay(date) { const d = await this._get('/project-ops/api/browse/day?date='+date); if (d) { this.brDay = d; window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); } },
+    buildWeekOptions() {
+      // last 8 completed Sat-Fri weeks (end = Friday)
+      const opts = []; const today = new Date();
+      // find last Friday
+      let end = new Date(today); const dow = end.getDay(); // Sun=0..Sat=6, Fri=5
+      let back = (dow - 5 + 7) % 7; if (dow === 5) back = 7; if (back === 0) back = 7;
+      end.setDate(end.getDate() - back);
+      for (let i=0;i<8;i++) {
+        const e = new Date(end); e.setDate(e.getDate()-7*i);
+        const s = new Date(e); s.setDate(s.getDate()-6);
+        const fmt = dt => dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+        opts.push({ end: e.toISOString().slice(0,10), label: fmt(s)+'–'+fmt(e)+' '+e.getFullYear() });
+      }
+      this.weekOptions = opts;
+    },
+    async loadWeekly() {
+      const q = this.rWeekEnd ? ('?end=' + this.rWeekEnd) : '';
+      const d = await this._get('/project-ops/api/reports/weekly' + q);
+      if (d) this.wk = d;
+    },
+    async submitDaily() {
+      this.rDaily = true;
+      try {
+        const r = await fetch('/project-ops/api/reports/daily', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:this.rDay})});
+        const d = await r.json(); alert(d.message || 'Done');
+      } finally { this.rDaily = false; }
+    },
+    async submitWeekly() {
+      if (!confirm('Generate & upload per-contractor reports for ' + (this.wk?this.wk.label:'') + '?')) return;
+      this.rWkSub = true;
+      try {
+        const r = await fetch('/project-ops/api/reports/weekly/submit', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({end:this.rWeekEnd})});
+        const d = await r.json(); alert(d.message || 'Done');
+      } finally { this.rWkSub = false; }
+    },
+    async sendWeeklyHR() {
+      if (!confirm('Email all contractor reports for ' + (this.wk?this.wk.label:'') + ' to HR?')) return;
+      this.rWkSend = true;
+      try {
+        const r = await fetch('/project-ops/api/reports/weekly/send-hr', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({end:this.rWeekEnd})});
+        const d = await r.json(); alert(d.message || 'Done');
+      } finally { this.rWkSend = false; }
+    },
+    async loadRecipients() {
+      const d = await this._get('/project-ops/api/recipients');
+      if (d) { this.recTo = d.to_email; this.recCc = (d.cc_emails||[]).join(', '); }
+    },
+    async saveRecipients() {
+      const r = await fetch('/project-ops/api/recipients', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_email:this.recTo, cc_emails:this.recCc})});
+      if (r.ok) { this.recSaved = true; setTimeout(()=>this.recSaved=false,2000); } else alert('Failed');
+    },
     async _get(path) { const r = await fetch(path); return r.ok ? r.json() : null; },
     async loadSites() {
       const d = await this._get('/project-ops/api/sites?include_inactive=' + (this.showInactive.sites ? 1 : 0));
