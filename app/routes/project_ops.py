@@ -23,8 +23,10 @@ from sqlalchemy.orm import Session
 from ..access import get_access
 from ..database import get_db
 from ..deps import get_current_user
+from datetime import date, datetime
+
 from ..models import (Employee, ProjContractor, ProjContractorRate, ProjEquipment,
-                      ProjPartMark, ProjSite, ProjWorkerType)
+                      ProjPartMark, ProjSite, ProjSiteAttendance, ProjWorkerType)
 
 router = APIRouter(prefix="/project-ops", tags=["project-ops"])
 log = logging.getLogger("project_ops")
@@ -43,6 +45,27 @@ def _num(v, default=None):
         return float(v)
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid number")
+
+
+
+
+def _parse_date(sv):
+    if not sv:
+        return datetime.utcnow().date()
+    try:
+        return datetime.strptime(sv[:10], "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date (YYYY-MM-DD)")
+
+
+def _resolved_rates(db, contractor_id):
+    """{worker_type_id: effective hourly rate} for a contractor — override if
+    present, else the worker type's default."""
+    defaults = {t.id: t.rate_per_hour for t in db.query(ProjWorkerType).all()}
+    ov = {r.worker_type_id: r.rate_per_hour
+          for r in db.query(ProjContractorRate)
+          .filter(ProjContractorRate.contractor_id == contractor_id).all()}
+    return {tid: ov.get(tid, defaults.get(tid, 0)) for tid in defaults}
 
 
 # ------------------------------------------------------------------ page
@@ -388,3 +411,106 @@ def api_equipment_delete(eid: int, user: Employee = Depends(get_current_user),
     db.delete(e)
     db.commit()
     return {"ok": True, "deleted": True}
+
+
+# --------------------------------------------------------------- site attendance
+
+@router.get("/api/attendance")
+def api_attendance_day(date: str | None = None,
+                       user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Everything the attendance screen needs for one day: the active sites,
+    contractors (each with standard_hours + resolved per-type rates), the active
+    worker types, and any saved rows for the day grouped by (site, contractor)."""
+    _guard(db, user)
+    d = _parse_date(date)
+
+    sites = [{"id": s.id, "job_id": s.job_id or "", "name": s.name}
+             for s in db.query(ProjSite).filter(ProjSite.active == True)  # noqa: E712
+             .order_by(ProjSite.id).all()]
+    types = [{"id": t.id, "name": t.name, "rate_per_hour": t.rate_per_hour}
+             for t in db.query(ProjWorkerType).filter(ProjWorkerType.active == True)  # noqa: E712
+             .order_by(ProjWorkerType.id).all()]
+    contractors = []
+    for c in (db.query(ProjContractor).filter(ProjContractor.active == True)  # noqa: E712
+              .order_by(ProjContractor.id).all()):
+        contractors.append({"id": c.id, "name": c.name,
+                            "standard_hours": c.standard_hours,
+                            "rates": _resolved_rates(db, c.id)})
+
+    saved = (db.query(ProjSiteAttendance)
+             .filter(ProjSiteAttendance.att_date == d)
+             .order_by(ProjSiteAttendance.site_id, ProjSiteAttendance.contractor_id).all())
+    # group saved rows into {(site,contractor): {type_id: {...}}}
+    groups = {}
+    for a in saved:
+        key = f"{a.site_id}:{a.contractor_id}"
+        g = groups.setdefault(key, {"site_id": a.site_id, "contractor_id": a.contractor_id,
+                                    "types": {}})
+        g["types"][a.worker_type_id] = {"headcount": a.headcount, "ot": bool(a.ot),
+                                        "ot_people": a.ot_people, "ot_hours": a.ot_hours}
+    return {"date": d.isoformat(), "sites": sites, "contractors": contractors,
+            "worker_types": types, "rows": list(groups.values()),
+            "saved": bool(saved)}
+
+
+@router.post("/api/attendance")
+async def api_attendance_save(request: Request, user: Employee = Depends(get_current_user),
+                              db: Session = Depends(get_db)):
+    """Full-replace the day. Body:
+       { date, rows: [{ site_id, contractor_id,
+                        types: [{worker_type_id, headcount, ot, ot_people, ot_hours}] }] }
+       Regular = headcount x standard_hours x rate; OT = ot_people x ot_hours x rate."""
+    _guard(db, user)
+    b = await request.json()
+    d = _parse_date(b.get("date"))
+    now = datetime.utcnow()
+
+    valid_sites = {r[0] for r in db.query(ProjSite.id).all()}
+    valid_contr = {c.id: c for c in db.query(ProjContractor).all()}
+    valid_types = {r[0] for r in db.query(ProjWorkerType.id).all()}
+
+    def _int(v):
+        try:
+            return max(0, int(v))
+        except (TypeError, ValueError):
+            return 0
+
+    def _hrs(v):
+        try:
+            h = float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+        return round(h * 2) / 2 if h > 0 else 0.0
+
+    # replace the whole day
+    db.query(ProjSiteAttendance).filter(ProjSiteAttendance.att_date == d).delete()
+
+    for row in (b.get("rows") or []):
+        sid = row.get("site_id")
+        cid = row.get("contractor_id")
+        if sid not in valid_sites or cid not in valid_contr:
+            continue
+        c = valid_contr[cid]
+        sh = c.standard_hours or 8
+        rates = _resolved_rates(db, cid)
+        for tr in (row.get("types") or []):
+            wt = tr.get("worker_type_id")
+            if wt not in valid_types:
+                continue
+            hc = _int(tr.get("headcount"))
+            ot = bool(tr.get("ot"))
+            otp = _int(tr.get("ot_people")) if ot else 0
+            oth = _hrs(tr.get("ot_hours")) if ot else 0.0
+            rate = rates.get(wt, 0)
+            reg = round(hc * sh * rate, 2)
+            ota = round(otp * oth * rate, 2)
+            # skip wholly-empty type cells
+            if not (hc or otp or oth):
+                continue
+            db.add(ProjSiteAttendance(
+                att_date=d, site_id=sid, contractor_id=cid, worker_type_id=wt,
+                headcount=hc, ot=ot, ot_people=otp, ot_hours=oth, rate_used=rate,
+                regular_amount=reg, ot_amount=ota, marked_by=user.employee_code,
+                updated_at=now))
+    db.commit()
+    return {"ok": True, "date": d.isoformat()}

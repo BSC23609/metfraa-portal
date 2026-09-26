@@ -22,6 +22,77 @@
     </template>
   </div>
 
+  <!-- ============ SITE ATTENDANCE ============ -->
+  <div x-show="tab === 'attendance'">
+    <div class="flex items-center justify-between flex-wrap gap-3 mb-5">
+      <div class="flex items-center gap-3">
+        <label class="lbl">Date</label>
+        <input type="date" x-model="day" @change="loadAtt()" class="rounded-lg border-metfraa-gray-300 text-sm">
+        <span x-show="attSaved" class="text-xs text-green-700">saved earlier · editable</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="text-sm">Day total: <span class="font-bold text-metfraa-blue" x-text="'₹ ' + dayTotal().toLocaleString('en-IN',{maximumFractionDigits:2})"></span></div>
+        <button @click="saveAtt()" :disabled="attSaving"
+          class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
+          <span x-text="attSaving ? 'Saving…' : 'Save attendance'"></span>
+        </button>
+      </div>
+    </div>
+
+    <template x-if="!aTypes.length || !aContractors.length || !aSites.length">
+      <div class="bg-amber-50 ring-1 ring-amber-200 rounded-lg p-4 text-sm text-amber-800">
+        Add at least one Site, Contractor and Worker Type in the Master tab first.
+      </div>
+    </template>
+
+    <div class="space-y-4">
+      <template x-for="(row, ri) in attRows" :key="ri">
+        <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+          <div class="flex items-center gap-3 flex-wrap mb-3">
+            <select x-model.number="row.site_id" class="rounded-lg border-metfraa-gray-300 text-sm">
+              <option :value="null">— site —</option>
+              <template x-for="s in aSites" :key="s.id"><option :value="s.id" x-text="(s.job_id?s.job_id+' · ':'')+s.name"></option></template>
+            </select>
+            <select x-model.number="row.contractor_id" class="rounded-lg border-metfraa-gray-300 text-sm">
+              <option :value="null">— contractor —</option>
+              <template x-for="c in aContractors" :key="c.id"><option :value="c.id" x-text="c.name"></option></template>
+            </select>
+            <span class="text-xs text-metfraa-gray-500" x-show="row.contractor_id" x-text="'std ' + (contractorById(row.contractor_id)?.standard_hours || 8) + ' hrs/day'"></span>
+            <span class="ml-auto text-sm font-semibold text-metfraa-blue" x-text="'₹ ' + rowTotal(row).toLocaleString('en-IN',{maximumFractionDigits:2})"></span>
+            <button @click="attRows.splice(ri,1)" class="text-red-500 text-lg leading-none">&times;</button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+                <th class="py-1 min-w-[120px]">Worker type</th><th class="py-1 text-right">Rate/hr</th>
+                <th class="py-1 text-center w-32">Headcount</th><th class="py-1 text-center w-16">OT</th>
+                <th class="py-1 text-center w-24">OT people</th><th class="py-1 text-center w-24">OT hours</th>
+                <th class="py-1 text-right">Amount</th></tr></thead>
+              <tbody class="divide-y divide-metfraa-gray-100">
+                <template x-for="t in aTypes" :key="t.id">
+                  <tr>
+                    <td class="py-1.5 font-semibold" x-text="t.name"></td>
+                    <td class="py-1.5 text-right text-metfraa-gray-500 mono" x-text="'₹'+rate(row,t.id)"></td>
+                    <td class="py-1.5"><div class="flex items-center justify-center gap-1">
+                      <button @click="cell(row,t.id).headcount = Math.max(0,(+cell(row,t.id).headcount||0)-1)" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300">−</button>
+                      <span class="w-6 text-center font-semibold" x-text="+cell(row,t.id).headcount||0"></span>
+                      <button @click="cell(row,t.id).headcount = (+cell(row,t.id).headcount||0)+1" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300">+</button>
+                    </div></td>
+                    <td class="py-1.5 text-center"><input type="checkbox" x-model="cell(row,t.id).ot" class="rounded border-metfraa-gray-300"></td>
+                    <td class="py-1.5"><input x-show="cell(row,t.id).ot" type="number" min="0" x-model.number="cell(row,t.id).ot_people" class="w-16 rounded border-metfraa-gray-300 text-sm text-center"></td>
+                    <td class="py-1.5"><input x-show="cell(row,t.id).ot" type="number" min="0" step="0.5" x-model.number="cell(row,t.id).ot_hours" class="w-16 rounded border-metfraa-gray-300 text-sm text-center"></td>
+                    <td class="py-1.5 text-right font-semibold" x-text="'₹'+cellAmt(row,t.id).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+    </div>
+    <button @click="addAttRow()" class="mt-4 px-4 py-2 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold">+ Add site / contractor</button>
+  </div>
+
   <!-- ============ MASTER ============ -->
   <div x-show="tab === 'master'">
     <div class="flex gap-1 mb-5 border-b border-metfraa-gray-100 flex-wrap">
@@ -264,16 +335,21 @@
 <script>
 function projOps() {
   return {
-    tab: 'master', masterTab: 'sites',
+    tab: 'attendance', masterTab: 'sites',
     sites: [], types: [], contractors: [], parts: [], equipment: [],
     partFilterSite: null, rateRows: [],
+    aSites: [], aContractors: [], aTypes: [], attRows: [], attSaved: false, attSaving: false,
     showInactive: { sites: false },
     drawer: null, drawerTitle: '', form: {},
 
-    tabs: [{ id: 'master', label: 'Master' }],
+    tabs: [{ id: 'attendance', label: 'Site Attendance' }, { id: 'master', label: 'Master' }],
+    day: new Date().toISOString().slice(0,10),
 
-    init() { this.loadSites(); this.loadSitesForDropdowns(); },
-    onTab() { if (this.tab === 'master') this.onMasterTab(); },
+    init() { this.loadAtt(); },
+    onTab() {
+      if (this.tab === 'master') this.onMasterTab();
+      if (this.tab === 'attendance') this.loadAtt();
+    },
     onMasterTab() {
       if (this.masterTab === 'sites') this.loadSites();
       if (this.masterTab === 'types') this.loadTypes();
@@ -282,6 +358,53 @@ function projOps() {
       if (this.masterTab === 'equipment') this.loadEquipment();
     },
 
+    async loadAtt() {
+      const d = await this._get('/project-ops/api/attendance?date=' + this.day);
+      if (!d) return;
+      this.aSites = d.sites; this.aContractors = d.contractors; this.aTypes = d.worker_types;
+      this.attSaved = d.saved;
+      this.attRows = (d.rows || []).map(r => ({
+        site_id: r.site_id, contractor_id: r.contractor_id,
+        cells: r.types,   // {type_id: {headcount, ot, ot_people, ot_hours}}
+      }));
+      if (!this.attRows.length) this.addAttRow();
+    },
+    addAttRow() { this.attRows.push({ site_id: null, contractor_id: null, cells: {} }); },
+    contractorById(id) { return this.aContractors.find(c => c.id === id); },
+    cell(row, tid) {
+      if (!row.cells[tid]) row.cells[tid] = { headcount: 0, ot: false, ot_people: 0, ot_hours: 0 };
+      return row.cells[tid];
+    },
+    rate(row, tid) {
+      const c = this.contractorById(row.contractor_id);
+      return c && c.rates ? (c.rates[tid] || 0) : 0;
+    },
+    cellAmt(row, tid) {
+      const c = this.contractorById(row.contractor_id); if (!c) return 0;
+      const sh = +c.standard_hours || 8, r = this.rate(row, tid), cl = this.cell(row, tid);
+      const reg = (+cl.headcount || 0) * sh * r;
+      const ot = cl.ot ? (+cl.ot_people || 0) * (+cl.ot_hours || 0) * r : 0;
+      return reg + ot;
+    },
+    rowTotal(row) { return this.aTypes.reduce((s, t) => s + this.cellAmt(row, t.id), 0); },
+    dayTotal() { return this.attRows.reduce((s, r) => s + this.rowTotal(r), 0); },
+    async saveAtt() {
+      this.attSaving = true;
+      try {
+        const rows = this.attRows
+          .filter(r => r.site_id && r.contractor_id)
+          .map(r => ({ site_id: r.site_id, contractor_id: r.contractor_id,
+            types: Object.entries(r.cells).map(([tid, v]) => ({
+              worker_type_id: +tid, headcount: +v.headcount || 0, ot: !!v.ot,
+              ot_people: +v.ot_people || 0, ot_hours: +v.ot_hours || 0 })) }));
+        const res = await fetch('/project-ops/api/attendance', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ date: this.day, rows }),
+        });
+        if (!res.ok) { const e = await res.json().catch(()=>({})); alert(e.detail || 'Save failed'); return; }
+        this.attSaved = true;
+      } finally { this.attSaving = false; }
+    },
     async _get(path) { const r = await fetch(path); return r.ok ? r.json() : null; },
     async loadSites() {
       const d = await this._get('/project-ops/api/sites?include_inactive=' + (this.showInactive.sites ? 1 : 0));

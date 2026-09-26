@@ -1,0 +1,350 @@
+diff --git a/app/models.py b/app/models.py
+index 972273c..16cb346 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -1035,3 +1035,32 @@ class ProjEquipment(Base):
+     name = Column(String(255), nullable=False)
+     active = Column(Boolean, default=True, nullable=False)
+     created_at = Column(DateTime, default=datetime.utcnow)
++
++
++class ProjSiteAttendance(Base):
++    """Site attendance — one row per (date, site, contractor, worker_type).
++    headcount drives regular pay = headcount x contractor.standard_hours x rate.
++    OT is per type: ot_people x ot_hours x rate. Amounts are computed and stored
++    at save time (rates resolved then), like the plant module."""
++    __tablename__ = "proj_site_attendance"
++
++    id = Column(Integer, primary_key=True)
++    att_date = Column(Date, nullable=False, index=True)
++    site_id = Column(Integer, ForeignKey("proj_sites.id", ondelete="CASCADE"),
++                     nullable=False, index=True)
++    contractor_id = Column(Integer, ForeignKey("proj_contractors.id", ondelete="CASCADE"),
++                           nullable=False, index=True)
++    worker_type_id = Column(Integer, ForeignKey("proj_worker_types.id", ondelete="CASCADE"),
++                            nullable=False, index=True)
++    headcount = Column(Integer, nullable=False, default=0)
++    ot = Column(Boolean, nullable=False, default=False)
++    ot_people = Column(Integer, nullable=False, default=0)
++    ot_hours = Column(Float, nullable=False, default=0)
++    rate_used = Column(Float, nullable=False, default=0)     # resolved rate at save
++    regular_amount = Column(Float, nullable=False, default=0)
++    ot_amount = Column(Float, nullable=False, default=0)
++    marked_by = Column(String(255), nullable=True)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    __table_args__ = (UniqueConstraint("att_date", "site_id", "contractor_id",
++                                       "worker_type_id", name="uq_proj_site_att"),)
+diff --git a/app/routes/project_ops.py b/app/routes/project_ops.py
+index 70e758c..c76ea46 100644
+--- a/app/routes/project_ops.py
++++ b/app/routes/project_ops.py
+@@ -23,8 +23,10 @@ from sqlalchemy.orm import Session
+ from ..access import get_access
+ from ..database import get_db
+ from ..deps import get_current_user
++from datetime import date, datetime
++
+ from ..models import (Employee, ProjContractor, ProjContractorRate, ProjEquipment,
+-                      ProjPartMark, ProjSite, ProjWorkerType)
++                      ProjPartMark, ProjSite, ProjSiteAttendance, ProjWorkerType)
+ 
+ router = APIRouter(prefix="/project-ops", tags=["project-ops"])
+ log = logging.getLogger("project_ops")
+@@ -45,6 +47,27 @@ def _num(v, default=None):
+         raise HTTPException(status_code=400, detail="Invalid number")
+ 
+ 
++
++
++def _parse_date(sv):
++    if not sv:
++        return datetime.utcnow().date()
++    try:
++        return datetime.strptime(sv[:10], "%Y-%m-%d").date()
++    except ValueError:
++        raise HTTPException(status_code=400, detail="Invalid date (YYYY-MM-DD)")
++
++
++def _resolved_rates(db, contractor_id):
++    """{worker_type_id: effective hourly rate} for a contractor — override if
++    present, else the worker type's default."""
++    defaults = {t.id: t.rate_per_hour for t in db.query(ProjWorkerType).all()}
++    ov = {r.worker_type_id: r.rate_per_hour
++          for r in db.query(ProjContractorRate)
++          .filter(ProjContractorRate.contractor_id == contractor_id).all()}
++    return {tid: ov.get(tid, defaults.get(tid, 0)) for tid in defaults}
++
++
+ # ------------------------------------------------------------------ page
+ 
+ @router.get("/", response_class=HTMLResponse)
+@@ -388,3 +411,106 @@ def api_equipment_delete(eid: int, user: Employee = Depends(get_current_user),
+     db.delete(e)
+     db.commit()
+     return {"ok": True, "deleted": True}
++
++
++# --------------------------------------------------------------- site attendance
++
++@router.get("/api/attendance")
++def api_attendance_day(date: str | None = None,
++                       user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
++    """Everything the attendance screen needs for one day: the active sites,
++    contractors (each with standard_hours + resolved per-type rates), the active
++    worker types, and any saved rows for the day grouped by (site, contractor)."""
++    _guard(db, user)
++    d = _parse_date(date)
++
++    sites = [{"id": s.id, "job_id": s.job_id or "", "name": s.name}
++             for s in db.query(ProjSite).filter(ProjSite.active == True)  # noqa: E712
++             .order_by(ProjSite.id).all()]
++    types = [{"id": t.id, "name": t.name, "rate_per_hour": t.rate_per_hour}
++             for t in db.query(ProjWorkerType).filter(ProjWorkerType.active == True)  # noqa: E712
++             .order_by(ProjWorkerType.id).all()]
++    contractors = []
++    for c in (db.query(ProjContractor).filter(ProjContractor.active == True)  # noqa: E712
++              .order_by(ProjContractor.id).all()):
++        contractors.append({"id": c.id, "name": c.name,
++                            "standard_hours": c.standard_hours,
++                            "rates": _resolved_rates(db, c.id)})
++
++    saved = (db.query(ProjSiteAttendance)
++             .filter(ProjSiteAttendance.att_date == d)
++             .order_by(ProjSiteAttendance.site_id, ProjSiteAttendance.contractor_id).all())
++    # group saved rows into {(site,contractor): {type_id: {...}}}
++    groups = {}
++    for a in saved:
++        key = f"{a.site_id}:{a.contractor_id}"
++        g = groups.setdefault(key, {"site_id": a.site_id, "contractor_id": a.contractor_id,
++                                    "types": {}})
++        g["types"][a.worker_type_id] = {"headcount": a.headcount, "ot": bool(a.ot),
++                                        "ot_people": a.ot_people, "ot_hours": a.ot_hours}
++    return {"date": d.isoformat(), "sites": sites, "contractors": contractors,
++            "worker_types": types, "rows": list(groups.values()),
++            "saved": bool(saved)}
++
++
++@router.post("/api/attendance")
++async def api_attendance_save(request: Request, user: Employee = Depends(get_current_user),
++                              db: Session = Depends(get_db)):
++    """Full-replace the day. Body:
++       { date, rows: [{ site_id, contractor_id,
++                        types: [{worker_type_id, headcount, ot, ot_people, ot_hours}] }] }
++       Regular = headcount x standard_hours x rate; OT = ot_people x ot_hours x rate."""
++    _guard(db, user)
++    b = await request.json()
++    d = _parse_date(b.get("date"))
++    now = datetime.utcnow()
++
++    valid_sites = {r[0] for r in db.query(ProjSite.id).all()}
++    valid_contr = {c.id: c for c in db.query(ProjContractor).all()}
++    valid_types = {r[0] for r in db.query(ProjWorkerType.id).all()}
++
++    def _int(v):
++        try:
++            return max(0, int(v))
++        except (TypeError, ValueError):
++            return 0
++
++    def _hrs(v):
++        try:
++            h = float(v or 0)
++        except (TypeError, ValueError):
++            return 0.0
++        return round(h * 2) / 2 if h > 0 else 0.0
++
++    # replace the whole day
++    db.query(ProjSiteAttendance).filter(ProjSiteAttendance.att_date == d).delete()
++
++    for row in (b.get("rows") or []):
++        sid = row.get("site_id")
++        cid = row.get("contractor_id")
++        if sid not in valid_sites or cid not in valid_contr:
++            continue
++        c = valid_contr[cid]
++        sh = c.standard_hours or 8
++        rates = _resolved_rates(db, cid)
++        for tr in (row.get("types") or []):
++            wt = tr.get("worker_type_id")
++            if wt not in valid_types:
++                continue
++            hc = _int(tr.get("headcount"))
++            ot = bool(tr.get("ot"))
++            otp = _int(tr.get("ot_people")) if ot else 0
++            oth = _hrs(tr.get("ot_hours")) if ot else 0.0
++            rate = rates.get(wt, 0)
++            reg = round(hc * sh * rate, 2)
++            ota = round(otp * oth * rate, 2)
++            # skip wholly-empty type cells
++            if not (hc or otp or oth):
++                continue
++            db.add(ProjSiteAttendance(
++                att_date=d, site_id=sid, contractor_id=cid, worker_type_id=wt,
++                headcount=hc, ot=ot, ot_people=otp, ot_hours=oth, rate_used=rate,
++                regular_amount=reg, ot_amount=ota, marked_by=user.employee_code,
++                updated_at=now))
++    db.commit()
++    return {"ok": True, "date": d.isoformat()}
+diff --git a/app/templates/project_ops.html b/app/templates/project_ops.html
+index 2b7aaab..045f5fd 100644
+--- a/app/templates/project_ops.html
++++ b/app/templates/project_ops.html
+@@ -22,6 +22,77 @@
+     </template>
+   </div>
+ 
++  <!-- ============ SITE ATTENDANCE ============ -->
++  <div x-show="tab === 'attendance'">
++    <div class="flex items-center justify-between flex-wrap gap-3 mb-5">
++      <div class="flex items-center gap-3">
++        <label class="lbl">Date</label>
++        <input type="date" x-model="day" @change="loadAtt()" class="rounded-lg border-metfraa-gray-300 text-sm">
++        <span x-show="attSaved" class="text-xs text-green-700">saved earlier · editable</span>
++      </div>
++      <div class="flex items-center gap-3">
++        <div class="text-sm">Day total: <span class="font-bold text-metfraa-blue" x-text="'₹ ' + dayTotal().toLocaleString('en-IN',{maximumFractionDigits:2})"></span></div>
++        <button @click="saveAtt()" :disabled="attSaving"
++          class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
++          <span x-text="attSaving ? 'Saving…' : 'Save attendance'"></span>
++        </button>
++      </div>
++    </div>
++
++    <template x-if="!aTypes.length || !aContractors.length || !aSites.length">
++      <div class="bg-amber-50 ring-1 ring-amber-200 rounded-lg p-4 text-sm text-amber-800">
++        Add at least one Site, Contractor and Worker Type in the Master tab first.
++      </div>
++    </template>
++
++    <div class="space-y-4">
++      <template x-for="(row, ri) in attRows" :key="ri">
++        <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
++          <div class="flex items-center gap-3 flex-wrap mb-3">
++            <select x-model.number="row.site_id" class="rounded-lg border-metfraa-gray-300 text-sm">
++              <option :value="null">— site —</option>
++              <template x-for="s in aSites" :key="s.id"><option :value="s.id" x-text="(s.job_id?s.job_id+' · ':'')+s.name"></option></template>
++            </select>
++            <select x-model.number="row.contractor_id" class="rounded-lg border-metfraa-gray-300 text-sm">
++              <option :value="null">— contractor —</option>
++              <template x-for="c in aContractors" :key="c.id"><option :value="c.id" x-text="c.name"></option></template>
++            </select>
++            <span class="text-xs text-metfraa-gray-500" x-show="row.contractor_id" x-text="'std ' + (contractorById(row.contractor_id)?.standard_hours || 8) + ' hrs/day'"></span>
++            <span class="ml-auto text-sm font-semibold text-metfraa-blue" x-text="'₹ ' + rowTotal(row).toLocaleString('en-IN',{maximumFractionDigits:2})"></span>
++            <button @click="attRows.splice(ri,1)" class="text-red-500 text-lg leading-none">&times;</button>
++          </div>
++          <div class="overflow-x-auto">
++            <table class="w-full text-sm">
++              <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
++                <th class="py-1 min-w-[120px]">Worker type</th><th class="py-1 text-right">Rate/hr</th>
++                <th class="py-1 text-center w-32">Headcount</th><th class="py-1 text-center w-16">OT</th>
++                <th class="py-1 text-center w-24">OT people</th><th class="py-1 text-center w-24">OT hours</th>
++                <th class="py-1 text-right">Amount</th></tr></thead>
++              <tbody class="divide-y divide-metfraa-gray-100">
++                <template x-for="t in aTypes" :key="t.id">
++                  <tr>
++                    <td class="py-1.5 font-semibold" x-text="t.name"></td>
++                    <td class="py-1.5 text-right text-metfraa-gray-500 mono" x-text="'₹'+rate(row,t.id)"></td>
++                    <td class="py-1.5"><div class="flex items-center justify-center gap-1">
++                      <button @click="cell(row,t.id).headcount = Math.max(0,(+cell(row,t.id).headcount||0)-1)" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300">−</button>
++                      <span class="w-6 text-center font-semibold" x-text="+cell(row,t.id).headcount||0"></span>
++                      <button @click="cell(row,t.id).headcount = (+cell(row,t.id).headcount||0)+1" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300">+</button>
++                    </div></td>
++                    <td class="py-1.5 text-center"><input type="checkbox" x-model="cell(row,t.id).ot" class="rounded border-metfraa-gray-300"></td>
++                    <td class="py-1.5"><input x-show="cell(row,t.id).ot" type="number" min="0" x-model.number="cell(row,t.id).ot_people" class="w-16 rounded border-metfraa-gray-300 text-sm text-center"></td>
++                    <td class="py-1.5"><input x-show="cell(row,t.id).ot" type="number" min="0" step="0.5" x-model.number="cell(row,t.id).ot_hours" class="w-16 rounded border-metfraa-gray-300 text-sm text-center"></td>
++                    <td class="py-1.5 text-right font-semibold" x-text="'₹'+cellAmt(row,t.id).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
++                  </tr>
++                </template>
++              </tbody>
++            </table>
++          </div>
++        </div>
++      </template>
++    </div>
++    <button @click="addAttRow()" class="mt-4 px-4 py-2 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold">+ Add site / contractor</button>
++  </div>
++
+   <!-- ============ MASTER ============ -->
+   <div x-show="tab === 'master'">
+     <div class="flex gap-1 mb-5 border-b border-metfraa-gray-100 flex-wrap">
+@@ -264,16 +335,21 @@
+ <script>
+ function projOps() {
+   return {
+-    tab: 'master', masterTab: 'sites',
++    tab: 'attendance', masterTab: 'sites',
+     sites: [], types: [], contractors: [], parts: [], equipment: [],
+     partFilterSite: null, rateRows: [],
++    aSites: [], aContractors: [], aTypes: [], attRows: [], attSaved: false, attSaving: false,
+     showInactive: { sites: false },
+     drawer: null, drawerTitle: '', form: {},
+ 
+-    tabs: [{ id: 'master', label: 'Master' }],
++    tabs: [{ id: 'attendance', label: 'Site Attendance' }, { id: 'master', label: 'Master' }],
++    day: new Date().toISOString().slice(0,10),
+ 
+-    init() { this.loadSites(); this.loadSitesForDropdowns(); },
+-    onTab() { if (this.tab === 'master') this.onMasterTab(); },
++    init() { this.loadAtt(); },
++    onTab() {
++      if (this.tab === 'master') this.onMasterTab();
++      if (this.tab === 'attendance') this.loadAtt();
++    },
+     onMasterTab() {
+       if (this.masterTab === 'sites') this.loadSites();
+       if (this.masterTab === 'types') this.loadTypes();
+@@ -282,6 +358,53 @@ function projOps() {
+       if (this.masterTab === 'equipment') this.loadEquipment();
+     },
+ 
++    async loadAtt() {
++      const d = await this._get('/project-ops/api/attendance?date=' + this.day);
++      if (!d) return;
++      this.aSites = d.sites; this.aContractors = d.contractors; this.aTypes = d.worker_types;
++      this.attSaved = d.saved;
++      this.attRows = (d.rows || []).map(r => ({
++        site_id: r.site_id, contractor_id: r.contractor_id,
++        cells: r.types,   // {type_id: {headcount, ot, ot_people, ot_hours}}
++      }));
++      if (!this.attRows.length) this.addAttRow();
++    },
++    addAttRow() { this.attRows.push({ site_id: null, contractor_id: null, cells: {} }); },
++    contractorById(id) { return this.aContractors.find(c => c.id === id); },
++    cell(row, tid) {
++      if (!row.cells[tid]) row.cells[tid] = { headcount: 0, ot: false, ot_people: 0, ot_hours: 0 };
++      return row.cells[tid];
++    },
++    rate(row, tid) {
++      const c = this.contractorById(row.contractor_id);
++      return c && c.rates ? (c.rates[tid] || 0) : 0;
++    },
++    cellAmt(row, tid) {
++      const c = this.contractorById(row.contractor_id); if (!c) return 0;
++      const sh = +c.standard_hours || 8, r = this.rate(row, tid), cl = this.cell(row, tid);
++      const reg = (+cl.headcount || 0) * sh * r;
++      const ot = cl.ot ? (+cl.ot_people || 0) * (+cl.ot_hours || 0) * r : 0;
++      return reg + ot;
++    },
++    rowTotal(row) { return this.aTypes.reduce((s, t) => s + this.cellAmt(row, t.id), 0); },
++    dayTotal() { return this.attRows.reduce((s, r) => s + this.rowTotal(r), 0); },
++    async saveAtt() {
++      this.attSaving = true;
++      try {
++        const rows = this.attRows
++          .filter(r => r.site_id && r.contractor_id)
++          .map(r => ({ site_id: r.site_id, contractor_id: r.contractor_id,
++            types: Object.entries(r.cells).map(([tid, v]) => ({
++              worker_type_id: +tid, headcount: +v.headcount || 0, ot: !!v.ot,
++              ot_people: +v.ot_people || 0, ot_hours: +v.ot_hours || 0 })) }));
++        const res = await fetch('/project-ops/api/attendance', {
++          method: 'POST', headers: {'Content-Type':'application/json'},
++          body: JSON.stringify({ date: this.day, rows }),
++        });
++        if (!res.ok) { const e = await res.json().catch(()=>({})); alert(e.detail || 'Save failed'); return; }
++        this.attSaved = true;
++      } finally { this.attSaving = false; }
++    },
+     async _get(path) { const r = await fetch(path); return r.ok ? r.json() : null; },
+     async loadSites() {
+       const d = await this._get('/project-ops/api/sites?include_inactive=' + (this.showInactive.sites ? 1 : 0));

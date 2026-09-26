@@ -1035,3 +1035,32 @@ class ProjEquipment(Base):
     name = Column(String(255), nullable=False)
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ProjSiteAttendance(Base):
+    """Site attendance — one row per (date, site, contractor, worker_type).
+    headcount drives regular pay = headcount x contractor.standard_hours x rate.
+    OT is per type: ot_people x ot_hours x rate. Amounts are computed and stored
+    at save time (rates resolved then), like the plant module."""
+    __tablename__ = "proj_site_attendance"
+
+    id = Column(Integer, primary_key=True)
+    att_date = Column(Date, nullable=False, index=True)
+    site_id = Column(Integer, ForeignKey("proj_sites.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    contractor_id = Column(Integer, ForeignKey("proj_contractors.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    worker_type_id = Column(Integer, ForeignKey("proj_worker_types.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    headcount = Column(Integer, nullable=False, default=0)
+    ot = Column(Boolean, nullable=False, default=False)
+    ot_people = Column(Integer, nullable=False, default=0)
+    ot_hours = Column(Float, nullable=False, default=0)
+    rate_used = Column(Float, nullable=False, default=0)     # resolved rate at save
+    regular_amount = Column(Float, nullable=False, default=0)
+    ot_amount = Column(Float, nullable=False, default=0)
+    marked_by = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("att_date", "site_id", "contractor_id",
+                                       "worker_type_id", name="uq_proj_site_att"),)
