@@ -281,10 +281,21 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
     _ensure()
     buf = io.BytesIO()
     c = _canvas.Canvas(buf, pagesize=A4)
-    ndays = _cal.monthrange(year, month)[1]
-    days = list(range(1, ndays + 1))
-    period = f"{year:04d}-{month:02d}"
-    mlabel = _month_disp(period)
+    from datetime import date as _date, timedelta as _td
+    # Cycle: 26th of prev month .. 25th of (year, month).
+    c_end = _date(year, month, 25)
+    _py, _pm = (year - 1, 12) if month == 1 else (year, month - 1)
+    c_start = _date(_py, _pm, 26)
+    cycle_days = []
+    _cur = c_start
+    while _cur <= c_end:
+        cycle_days.append(_cur)
+        _cur += _td(days=1)
+    ndays = len(cycle_days)
+    if c_start.year == c_end.year:
+        mlabel = f"{c_start.strftime('%d %b')} – {c_end.strftime('%d %b %Y')}"
+    else:
+        mlabel = f"{c_start.strftime('%d %b %Y')} – {c_end.strftime('%d %b %Y')}"
     foot = "Metfraa · Plant Operations · Monthly Report · " + mlabel
     pg = [0]
 
@@ -307,8 +318,8 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
     def grid_header():
         c.setFont(_f(True), 6); c.setFillColor(_hx(INK))
         c.drawString(L, y, "NAME")
-        for i, d in enumerate(days):
-            c.drawCentredString(x0 + i * cw + cw / 2, y, str(d))
+        for i, dt in enumerate(cycle_days):
+            c.drawCentredString(x0 + i * cw + cw / 2, y, str(dt.day))
         c.setFont(_f(True), 6.5)
         c.drawString(c_days, y, "Days"); c.drawString(c_amt, y, "Salary")
         c.drawString(c_oth, y, "OT hr"); c.drawString(c_ota, y, "OT ₹")
@@ -322,10 +333,10 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
             y -= 8; grid_header(); y -= 16
         c.setFont(_f(), 7.5); c.setFillColor(_hx(INK))
         c.drawString(L, y, _clip(c, r["name"], _f(), 7.5, nameW - 4))
-        for i, d in enumerate(days):
-            wd = date(year, month, d).weekday()
+        for i, dt in enumerate(cycle_days):
+            wd = dt.weekday()
             cx = x0 + i * cw
-            st = r["grid"].get(d) or r["grid"].get(str(d))
+            st = r["grid"].get(dt.isoformat())
             if wd == 6:
                 c.setFillColor(_hx("#eef2f7")); c.rect(cx, y - 3, cw, 11, fill=1, stroke=0)
             mark = st if st else "—"

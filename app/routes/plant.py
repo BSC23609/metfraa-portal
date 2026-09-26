@@ -790,14 +790,45 @@ def _prev_month(today=None):
     return y, m
 
 
+def _cycle_window(year: int, month: int):
+    """The pay cycle identified by (year, month) runs 26th of the PREVIOUS
+    month to 25th of (year, month). So (2026, 10) -> 26 Sep 2026 .. 25 Oct 2026."""
+    from datetime import date as _d
+    end = _d(year, month, 25)
+    py, pm = (year - 1, 12) if month == 1 else (year, month - 1)
+    start = _d(py, pm, 26)
+    return start, end
+
+
+def _current_cycle(today=None):
+    """Most recently COMPLETED cycle, by end month (year, month). Cycles end on
+    the 25th. On/after the 26th the cycle ending the 25th of THIS month just
+    closed -> (this year, this month). Before the 26th it is still open, so the
+    last completed one ended the 25th of LAST month."""
+    from datetime import date as _d
+    t = today or _d.today()
+    if t.day >= 26:
+        return t.year, t.month
+    return (t.year - 1, 12) if t.month == 1 else (t.year, t.month - 1)
+
+
+def _cycle_label(year: int, month: int) -> str:
+    start, end = _cycle_window(year, month)
+    if start.year == end.year:
+        return f"{start.strftime('%d %b')} – {end.strftime('%d %b %Y')}"
+    return f"{start.strftime('%d %b %Y')} – {end.strftime('%d %b %Y')}"
+
+
+def _cycle_filename(year: int, month: int) -> str:
+    start, end = _cycle_window(year, month)
+    return f"{start.strftime('%d %b')}-{end.strftime('%d %b %Y')}.pdf"
+
+
 def _build_monthly(db: Session, year: int, month: int):
     """Compute the monthly payroll + work figures from stored data.
     Money: labour amount = present-day-equivalent (H=0.5) * per_day_salary + OT;
     contractor total = man-days * per_day_rate + OT."""
-    import calendar
-    from datetime import date as _d
-    ndays = calendar.monthrange(year, month)[1]
-    start, end = _d(year, month, 1), _d(year, month, ndays)
+    start, end = _cycle_window(year, month)
 
     # --- company (own labour) ---
     lmap = {l.id: l for l in db.query(PlantLabour).all()}
@@ -808,7 +839,7 @@ def _build_monthly(db: Session, year: int, month: int):
     for a in la:
         rec = per.setdefault(a.labour_id, {"grid": {}, "present_equiv": 0.0,
                                            "ot_hours": 0, "ot_amount": 0.0})
-        rec["grid"][a.att_date.day] = a.status
+        rec["grid"][a.att_date.isoformat()] = a.status
         if a.status == "P":
             rec["present_equiv"] += 1
         elif a.status == "H":
@@ -901,11 +932,12 @@ def api_monthly_preview(period: str | None = None,
         except ValueError:
             raise HTTPException(status_code=400, detail="period must be YYYY-MM")
     else:
-        year, month = _prev_month()
+        year, month = _current_cycle()
     company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
     return {
         "period": f"{year:04d}-{month:02d}",
-        "default_period": f"{_prev_month()[0]:04d}-{_prev_month()[1]:02d}",
+        "default_period": f"{_current_cycle()[0]:04d}-{_current_cycle()[1]:02d}",
+        "cycle_label": _cycle_label(year, month),
         "has_data": has_data,
         "company_total": company["totals"]["grand"],
         "company_workers": company["totals"]["workers"],
@@ -929,15 +961,15 @@ async def api_monthly_submit(request: Request,
         except ValueError:
             raise HTTPException(status_code=400, detail="period must be YYYY-MM")
     else:
-        year, month = _prev_month()
+        year, month = _current_cycle()
     company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
     if not has_data:
         return {"ok": True, "uploaded": False,
-                "message": "Nothing recorded for this month — nothing to submit."}
+                "message": "Nothing recorded for this cycle — nothing to submit."}
     try:
         from ..services.plant_pdf import build_monthly_pdf
         pdf = build_monthly_pdf(year, month, company, contractors, work_summary, total_weight)
-        path = f"{MONTHLY_DIR}/{year:04d}-{month:02d} Plant Report.pdf"
+        path = f"{MONTHLY_DIR}/{_cycle_filename(year, month)}"
         info = _od.upload_to_path(pdf, path, "application/pdf")
         return {"ok": True, "uploaded": True, "url": (info or {}).get("webUrl"),
                 "message": "Monthly report submitted to OneDrive."}
@@ -967,11 +999,11 @@ async def api_monthly_send_hr(request: Request,
         except ValueError:
             raise HTTPException(status_code=400, detail="period must be YYYY-MM")
     else:
-        year, month = _prev_month()
+        year, month = _current_cycle()
     company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
     if not has_data:
         return {"ok": True, "sent": False,
-                "message": "Nothing recorded for this month — nothing to send."}
+                "message": "Nothing recorded for this cycle — nothing to send."}
     try:
         from ..services.plant_pdf import build_monthly_pdf
         pdf = build_monthly_pdf(year, month, company, contractors, work_summary, total_weight)
@@ -979,8 +1011,7 @@ async def api_monthly_send_hr(request: Request,
         log.error("[plant] monthly PDF build failed for HR mail: %s", e, exc_info=True)
         return {"ok": False, "sent": False, "message": f"Could not build the report: {e}"}
 
-    from datetime import datetime as _dt
-    mlabel = _dt(year, month, 1).strftime("%B %Y")
+    mlabel = _cycle_label(year, month)
     grand = company["totals"]["grand"] + sum(c["totals"]["grand"] for c in contractors)
     subject = f"[Metfraa] Plant Attendance & Work Report — {mlabel}"
     html = f"""<div style="font-family:Arial,sans-serif;color:#0d1421;max-width:600px">
@@ -999,7 +1030,7 @@ async def api_monthly_send_hr(request: Request,
       <p style="font-size:11px;color:#6b7689;font-family:monospace;letter-spacing:.05em;border-top:1px dashed #d6dde6;padding-top:12px">
         METFRAA · PLANT OPERATIONS · AUTOMATED MESSAGE</p>
     </div>"""
-    fname = f"{year:04d}-{month:02d} Plant Report.pdf"
+    fname = _cycle_filename(year, month)
     try:
         from ..services.email_service import send_email_async
         ok = await send_email_async(

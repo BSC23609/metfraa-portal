@@ -604,8 +604,9 @@
   <div x-show="tab === 'monthly'">
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
       <div class="flex items-center gap-3 flex-wrap">
-        <div class="lbl">Month</div>
+        <div class="lbl">Cycle (month ending 25th)</div>
         <input type="month" x-model="mPeriod" @change="loadMonthly()" class="rounded-lg border-metfraa-gray-300 text-sm">
+        <span x-show="m && m.cycle_label" class="text-sm font-semibold text-metfraa-ink" x-text="m ? m.cycle_label : ''"></span>
         <div class="ml-auto flex gap-2">
           <button @click="submitMonthly()" :disabled="mSubmitting || mSending || !m || !m.has_data"
             class="px-5 py-2.5 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold disabled:opacity-50">
@@ -618,8 +619,10 @@
         </div>
       </div>
       <p class="text-xs text-metfraa-gray-500 mt-2">
-        Opens on last month by default. The report has a Company attendance sheet,
-        one sheet per contractor, and a team-wise work summary — uploaded to
+        Pay cycle runs 26th to 25th. Pick the month whose 25th ends the cycle
+        (e.g. October → 26 Sep–25 Oct). Opens on the most recently completed
+        cycle. The report has a Company attendance sheet, one sheet per
+        contractor, and a team-wise work summary — uploaded to
         Plant Operation / Attendance and Work Log / MONTHLY REPORT.
       </p>
     </div>
@@ -967,7 +970,7 @@ function plantApp() {
       if (!this.mPeriod) this.mPeriod = this.m.default_period;  // default to last month
     },
     async sendMonthlyHR() {
-      if (!confirm('Email the ' + this.mPeriod + ' report to HR (admin@metfraa.com) and CC management?')) return;
+      if (!confirm('Email the ' + (this.m ? this.m.cycle_label : this.mPeriod) + ' report to HR (admin@metfraa.com) and CC management?')) return;
       this.mSending = true;
       try {
         const r = await fetch('/plant/api/monthly/send-hr', {
