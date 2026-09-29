@@ -886,8 +886,15 @@ class PlantContractorAttendance(Base):
     contractor_id = Column(Integer, ForeignKey("plant_contractors.id", ondelete="CASCADE"),
                            nullable=False, index=True)
     att_date = Column(Date, nullable=False, index=True)
-    skilled = Column(Integer, nullable=False, default=0)
-    helper = Column(Integer, nullable=False, default=0)
+    skilled = Column(Integer, nullable=False, default=0)   # present
+    helper = Column(Integer, nullable=False, default=0)    # present
+    # Absent (informational — pays 0) and half-day counts, split skilled/helper.
+    absent_skilled = Column(Integer, nullable=False, default=0)
+    absent_helper = Column(Integer, nullable=False, default=0)
+    half1_skilled = Column(Integer, nullable=False, default=0)   # 1st half
+    half1_helper = Column(Integer, nullable=False, default=0)
+    half2_skilled = Column(Integer, nullable=False, default=0)   # 2nd half
+    half2_helper = Column(Integer, nullable=False, default=0)
     # OT: how many of the team worked past 7pm, and till when.
     ot = Column(Boolean, default=False, nullable=False)
     ot_persons = Column(Integer, nullable=False, default=0)

@@ -183,23 +183,25 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
     y -= 18
 
     y = _section(c, y, "Contractor attendance")
-    y = _thead(c, y, [("Team", 0), ("Skilled", 210), ("Helper", 280),
-                      ("OT persons", 350), ("OT amt", 455)])
+    y = _thead(c, y, [("Team", 0), ("Sk", 170), ("Hp", 205), ("Absent", 240),
+                      ("Half", 290), ("OT", 335), ("OT amt", 455)])
     c.setFont(_f(), 9)
     for i, ct in enumerate(contractors):
         rh = 18
         if i % 2 == 0:
             c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
         c.setFillColor(_hx(INK)); c.setFont(_f(True), 9)
-        c.drawString(L + 8, y - 13, _clip(c, ct["name"], _f(True), 9, 195))
+        c.drawString(L + 8, y - 13, _clip(c, ct["name"], _f(True), 9, 155))
         c.setFont(_f(), 9)
-        c.drawString(L + 218, y - 13, str(ct.get("skilled", 0)))
-        c.drawString(L + 288, y - 13, str(ct.get("helper", 0)))
+        c.drawString(L + 178, y - 13, str(ct.get("skilled", 0)))
+        c.drawString(L + 213, y - 13, str(ct.get("helper", 0)))
+        c.drawString(L + 248, y - 13, str(ct.get("absent", 0)) if ct.get("absent") else "—")
+        c.drawString(L + 298, y - 13, str(ct.get("half", 0)) if ct.get("half") else "—")
         if ct.get("ot"):
-            c.drawString(L + 358, y - 13, f"{ct.get('ot_persons', 0)} × {_fmt(ct.get('ot_hours', 0), 1).rstrip('0').rstrip('.')}h")
+            c.drawString(L + 343, y - 13, f"{ct.get('ot_persons', 0)}×{_fmt(ct.get('ot_hours', 0), 1).rstrip('0').rstrip('.')}h")
             c.drawString(L + 463, y - 13, "₹" + _fmt(ct.get("ot_amount", 0), 0))
         else:
-            c.setFillColor(_hx(MUTED)); c.drawString(L + 358, y - 13, "—")
+            c.setFillColor(_hx(MUTED)); c.drawString(L + 343, y - 13, "—")
             c.drawString(L + 463, y - 13, "—")
         y -= rh
     _footer(c, foot, "1")
@@ -369,8 +371,8 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
     for ct in contractors:
         y = _header(c, "Metfraa / Plant Operations", "Monthly — " + ct["name"], mlabel)
         y = _section(c, y, "Daily headcount")
-        hdr = [("Date", 0), ("Skilled", 120), ("Helper", 200), ("Total", 280),
-               ("OT persons", 360), ("OT amt", 470)]
+        hdr = [("Date", 0), ("Present", 95), ("Absent", 155), ("Half", 210),
+               ("Man-days", 265), ("OT persons", 360), ("OT amt", 470)]
         y = _thead(c, y, hdr)
         c.setFont(_f(), 9)
         for i, row in enumerate(ct["rows"]):
@@ -383,9 +385,11 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
                 c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
             c.setFillColor(_hx(INK))
             c.drawString(L + 8, y - 12, row["date"])
-            c.drawString(L + 128, y - 12, str(row["skilled"]))
-            c.drawString(L + 208, y - 12, str(row["helper"]))
-            c.drawString(L + 288, y - 12, str(row["total"]))
+            c.drawString(L + 103, y - 12, str(row["total"]))
+            c.drawString(L + 163, y - 12, str(row.get("absent", 0)) if row.get("absent") else "—")
+            c.drawString(L + 218, y - 12, str(row.get("half", 0)) if row.get("half") else "—")
+            md = row.get("mandays", row["total"])
+            c.drawString(L + 273, y - 12, _fmt(md, 1).rstrip("0").rstrip("."))
             if row["ot_persons"]:
                 c.drawString(L + 368, y - 12, str(row["ot_persons"]))
                 c.drawString(L + 478, y - 12, "₹" + _fmt(row["ot_amount"], 0))

@@ -105,35 +105,45 @@
       <template x-if="!contractors.length">
         <div class="text-sm text-metfraa-gray-400 py-4">No contractors. Add them under Contractor Master.</div>
       </template>
-      <table x-show="contractors.length" class="w-full text-sm">
-        <thead>
-          <tr class="text-left lbl border-b border-metfraa-gray-100">
-            <th class="py-2">Team</th><th class="py-2 w-24">Skilled</th>
-            <th class="py-2 w-24">Helper</th><th class="py-2 w-16 text-right">Total</th>
-            <th class="py-2 w-16 text-center">OT</th><th class="py-2 w-24">OT persons</th>
-            <th class="py-2 w-24">OT hours</th><th class="py-2 w-28 text-right">OT amount</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-metfraa-gray-100">
-          <template x-for="c in contractors" :key="c.id">
-            <tr>
-              <td class="py-2 font-semibold" x-text="c.name"></td>
-              <td class="py-2"><input type="number" min="0" x-model.number="c.skilled"
-                    class="w-16 rounded border-metfraa-gray-300 text-sm"></td>
-              <td class="py-2"><input type="number" min="0" x-model.number="c.helper"
-                    class="w-16 rounded border-metfraa-gray-300 text-sm"></td>
-              <td class="py-2 text-right font-semibold" x-text="(+c.skilled||0)+(+c.helper||0)"></td>
-              <td class="py-2 text-center"><input type="checkbox" x-model="c.ot" class="rounded border-metfraa-gray-300"></td>
-              <td class="py-2"><input x-show="c.ot" type="number" min="0" x-model.number="c.ot_persons"
-                    class="w-16 rounded border-metfraa-gray-300 text-sm"></td>
-              <td class="py-2"><input x-show="c.ot" type="number" min="0" step="0.5" x-model.number="c.ot_hours"
-                    class="w-20 rounded border-metfraa-gray-300 text-sm"></td>
-              <td class="py-2 text-right font-semibold text-metfraa-blue"
-                  x-text="c.ot ? '₹ ' + conOtAmt(c).toLocaleString('en-IN') : ''"></td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
+      <div x-show="contractors.length" class="space-y-2">
+        <div class="grid grid-cols-12 gap-2 lbl border-b border-metfraa-gray-100 pb-2">
+          <div class="col-span-3">Team</div>
+          <div class="col-span-2 text-center">Present Sk</div>
+          <div class="col-span-2 text-center">Present Hp</div>
+          <div class="col-span-1 text-center">OT</div>
+          <div class="col-span-2 text-center">OT persons</div>
+          <div class="col-span-2 text-right">OT amount</div>
+        </div>
+        <template x-for="c in contractors" :key="c.id">
+          <div class="border-b border-metfraa-gray-50 pb-2">
+            <div class="grid grid-cols-12 gap-2 items-center">
+              <div class="col-span-3 font-semibold" x-text="c.name"></div>
+              <div class="col-span-2 flex justify-center"><input type="number" min="0" x-model.number="c.skilled" class="w-16 rounded border-metfraa-gray-300 text-sm text-center"></div>
+              <div class="col-span-2 flex justify-center"><input type="number" min="0" x-model.number="c.helper" class="w-16 rounded border-metfraa-gray-300 text-sm text-center"></div>
+              <div class="col-span-1 text-center"><input type="checkbox" x-model="c.ot" class="rounded border-metfraa-gray-300"></div>
+              <div class="col-span-2 flex justify-center gap-1">
+                <input x-show="c.ot" type="number" min="0" x-model.number="c.ot_persons" placeholder="ppl" class="w-14 rounded border-metfraa-gray-300 text-sm text-center">
+                <input x-show="c.ot" type="number" min="0" step="0.5" x-model.number="c.ot_hours" placeholder="hrs" class="w-14 rounded border-metfraa-gray-300 text-sm text-center">
+              </div>
+              <div class="col-span-2 text-right font-semibold text-metfraa-blue" x-text="c.ot ? '₹ ' + conOtAmt(c).toLocaleString('en-IN') : ''"></div>
+            </div>
+            <div class="mt-1">
+              <button @click="c._exp = !c._exp" class="text-xs font-semibold text-metfraa-gray-500 hover:text-metfraa-blue"
+                      x-text="(conExtra(c) ? '● ' : '') + (c._exp ? '− Hide' : '+ Absent & half-day')"></button>
+              <div x-show="c._exp" class="mt-2 pl-2 grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs bg-metfraa-gray-50 rounded p-3">
+                <div><div class="lbl mb-1">Absent — Skilled</div><input type="number" min="0" x-model.number="c.absent_skilled" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+                <div><div class="lbl mb-1">Absent — Helper</div><input type="number" min="0" x-model.number="c.absent_helper" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+                <div></div>
+                <div><div class="lbl mb-1">1st half — Skilled</div><input type="number" min="0" x-model.number="c.half1_skilled" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+                <div><div class="lbl mb-1">1st half — Helper</div><input type="number" min="0" x-model.number="c.half1_helper" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+                <div></div>
+                <div><div class="lbl mb-1">2nd half — Skilled</div><input type="number" min="0" x-model.number="c.half2_skilled" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+                <div><div class="lbl mb-1">2nd half — Helper</div><input type="number" min="0" x-model.number="c.half2_helper" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
     </div>
 
     <!-- Labour work log -->
@@ -541,12 +551,15 @@
           <table class="w-full text-sm">
             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
               <th class="py-1">Team</th><th class="py-1 text-center">Skilled</th>
-              <th class="py-1 text-center">Helper</th><th class="py-1">OT</th></tr></thead>
+              <th class="py-1 text-center">Helper</th><th class="py-1 text-center">Absent</th>
+              <th class="py-1 text-center">Half</th><th class="py-1">OT</th></tr></thead>
             <tbody class="divide-y divide-metfraa-gray-100">
               <template x-for="c in brDay.contractors" :key="c.name">
                 <tr><td class="py-1.5 font-semibold" x-text="c.name"></td>
                   <td class="py-1.5 text-center" x-text="c.skilled"></td>
                   <td class="py-1.5 text-center" x-text="c.helper"></td>
+                  <td class="py-1.5 text-center" x-text="c.absent||'—'"></td>
+                  <td class="py-1.5 text-center" x-text="c.half||'—'"></td>
                   <td class="py-1.5 text-xs text-metfraa-gray-500"
                       x-text="c.ot ? (c.ot_persons+' × '+c.ot_hours+'h · ₹'+c.ot_amount) : '—'"></td></tr>
               </template>
@@ -751,6 +764,7 @@ function plantApp() {
     labOtAmt(l) { return l.ot ? this.labRate(l) * (+l.ot_hours || 0) : 0; },
     conRate(c) { const wh = +c.working_hours || 8; return (+c.per_day_rate || 0) / wh; },
     conOtAmt(c) { return c.ot ? (+c.ot_persons || 0) * this.conRate(c) * (+c.ot_hours || 0) : 0; },
+    conExtra(c) { return (+c.absent_skilled||0)+(+c.absent_helper||0)+(+c.half1_skilled||0)+(+c.half1_helper||0)+(+c.half2_skilled||0)+(+c.half2_helper||0) > 0; },
 
     statusClass(o) {
       return { P: 'bg-green-600 text-white', H: 'bg-amber-500 text-white',
@@ -787,6 +801,9 @@ function plantApp() {
           ot: !!l.ot, ot_hours: +l.ot_hours || 0 })),
         contractors: this.contractors.map(c => ({ id: c.id,
           skilled: +c.skilled || 0, helper: +c.helper || 0,
+          absent_skilled: +c.absent_skilled || 0, absent_helper: +c.absent_helper || 0,
+          half1_skilled: +c.half1_skilled || 0, half1_helper: +c.half1_helper || 0,
+          half2_skilled: +c.half2_skilled || 0, half2_helper: +c.half2_helper || 0,
           ot: !!c.ot, ot_persons: +c.ot_persons || 0, ot_hours: +c.ot_hours || 0 })),
         labour_worklog: this.labourWork,
         contractor_worklog: this.contractorWork };
@@ -817,6 +834,9 @@ function plantApp() {
             contractor_worklog: this.contractorWork,
             contractors: this.contractors.map(c => ({ id: c.id,
               skilled: +c.skilled || 0, helper: +c.helper || 0,
+              absent_skilled: +c.absent_skilled || 0, absent_helper: +c.absent_helper || 0,
+              half1_skilled: +c.half1_skilled || 0, half1_helper: +c.half1_helper || 0,
+              half2_skilled: +c.half2_skilled || 0, half2_helper: +c.half2_helper || 0,
               ot: !!c.ot, ot_persons: +c.ot_persons || 0, ot_hours: +c.ot_hours || 0 })) }),
         });
         if (!r.ok) { alert('Save failed'); return; }

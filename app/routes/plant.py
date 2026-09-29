@@ -106,6 +106,12 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
                          "per_day_rate": c.per_day_rate, "working_hours": c.working_hours,
                          "skilled": cmarks[c.id].skilled if c.id in cmarks else 0,
                          "helper": cmarks[c.id].helper if c.id in cmarks else 0,
+                         "absent_skilled": cmarks[c.id].absent_skilled if c.id in cmarks else 0,
+                         "absent_helper": cmarks[c.id].absent_helper if c.id in cmarks else 0,
+                         "half1_skilled": cmarks[c.id].half1_skilled if c.id in cmarks else 0,
+                         "half1_helper": cmarks[c.id].half1_helper if c.id in cmarks else 0,
+                         "half2_skilled": cmarks[c.id].half2_skilled if c.id in cmarks else 0,
+                         "half2_helper": cmarks[c.id].half2_helper if c.id in cmarks else 0,
                          "ot": bool(cmarks[c.id].ot) if c.id in cmarks else False,
                          "ot_persons": cmarks[c.id].ot_persons if c.id in cmarks else 0,
                          "ot_hours": (cmarks[c.id].ot_hours if c.id in cmarks else 0)}
@@ -196,6 +202,9 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
         if cid not in valid_contr:
             continue
         sk, hp = _int(row.get("skilled")), _int(row.get("helper"))
+        ab_sk, ab_hp = _int(row.get("absent_skilled")), _int(row.get("absent_helper"))
+        h1_sk, h1_hp = _int(row.get("half1_skilled")), _int(row.get("half1_helper"))
+        h2_sk, h2_hp = _int(row.get("half2_skilled")), _int(row.get("half2_helper"))
         ot = bool(row.get("ot"))
         ot_persons = _int(row.get("ot_persons")) if ot else 0
         oth = _ot_hours(row.get("ot_hours")) if ot else 0.0
@@ -203,18 +212,25 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
         wh = (c_.working_hours or 8) if c_ else 8
         rate = (c_.per_day_rate or 0) / wh if (c_ and wh) else 0
         camt = round(ot_persons * rate * oth, 2)
+        any_count = (sk or hp or ab_sk or ab_hp or h1_sk or h1_hp or h2_sk or h2_hp or ot)
         rec = (db.query(PlantContractorAttendance)
                .filter(PlantContractorAttendance.contractor_id == cid,
                        PlantContractorAttendance.att_date == d).first())
         if rec:
             rec.skilled, rec.helper = sk, hp
+            rec.absent_skilled, rec.absent_helper = ab_sk, ab_hp
+            rec.half1_skilled, rec.half1_helper = h1_sk, h1_hp
+            rec.half2_skilled, rec.half2_helper = h2_sk, h2_hp
             rec.ot, rec.ot_persons, rec.ot_hours, rec.ot_amount = ot, ot_persons, oth, camt
             rec.marked_by = user.employee_code
             rec.updated_at = now
-        elif sk or hp or ot:
+        elif any_count:
             db.add(PlantContractorAttendance(contractor_id=cid, att_date=d,
-                                             skilled=sk, helper=hp, ot=ot,
-                                             ot_persons=ot_persons, ot_hours=oth,
+                                             skilled=sk, helper=hp,
+                                             absent_skilled=ab_sk, absent_helper=ab_hp,
+                                             half1_skilled=h1_sk, half1_helper=h1_hp,
+                                             half2_skilled=h2_sk, half2_helper=h2_hp,
+                                             ot=ot, ot_persons=ot_persons, ot_hours=oth,
                                              ot_amount=camt, marked_by=user.employee_code))
 
     # Work logs: full-replace for the day (the screen edits the whole day).
@@ -276,8 +292,10 @@ def _gather_day(db: Session, d):
           .filter(PlantContractorAttendance.att_date == d)
           .order_by(PlantContractorAttendance.contractor_id).all())
     contractors = [{"name": cmap[a.contractor_id].name if a.contractor_id in cmap else "—",
-                    "skilled": a.skilled, "helper": a.helper, "ot": bool(a.ot),
-                    "ot_persons": a.ot_persons, "ot_hours": a.ot_hours,
+                    "skilled": a.skilled, "helper": a.helper,
+                    "absent": a.absent_skilled + a.absent_helper,
+                    "half": a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper,
+                    "ot": bool(a.ot), "ot_persons": a.ot_persons, "ot_hours": a.ot_hours,
                     "ot_amount": a.ot_amount} for a in ca]
     jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
             for j in db.query(PlantJob).all()}
@@ -584,6 +602,8 @@ def api_browse_day(date: str | None = None,
           .order_by(PlantContractorAttendance.contractor_id).all())
     contractors = [{"name": cmap[a.contractor_id].name if a.contractor_id in cmap else "—",
                     "skilled": a.skilled, "helper": a.helper,
+                    "absent": a.absent_skilled + a.absent_helper,
+                    "half": a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper,
                     "ot": bool(a.ot), "ot_persons": a.ot_persons,
                     "ot_hours": a.ot_hours, "ot_amount": a.ot_amount}
                    for a in ca]
@@ -880,16 +900,21 @@ def _build_monthly(db: Session, year: int, month: int):
         c = cmap.get(cid)
         if not c:
             continue
-        crows, mandays, ot_amt = [], 0, 0.0
+        crows, mandays, ot_amt = [], 0.0, 0.0
         for a in sorted(recs, key=lambda r: r.att_date):
-            total = a.skilled + a.helper
-            mandays += total
+            present = a.skilled + a.helper
+            half = (a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper)
+            absent = a.absent_skilled + a.absent_helper
+            # payable man-days: present count as 1, half-day as 0.5, absent as 0
+            day_md = present + 0.5 * half
+            mandays += day_md
             ot_amt += a.ot_amount
             crows.append({"date": a.att_date.strftime("%d %b %Y"),
-                          "skilled": a.skilled, "helper": a.helper, "total": total,
+                          "skilled": a.skilled, "helper": a.helper, "total": present,
+                          "half": half, "absent": absent, "mandays": day_md,
                           "ot_persons": a.ot_persons if a.ot else 0,
                           "ot_amount": a.ot_amount})
-        base = mandays * (c.per_day_rate or 0)
+        base = round(mandays * (c.per_day_rate or 0), 2)
         contractors.append({"name": c.name, "rows": crows,
                             "totals": {"mandays": mandays, "base": base,
                                        "ot_amount": ot_amt, "grand": base + ot_amt}})
