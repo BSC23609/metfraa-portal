@@ -1,0 +1,43 @@
+diff --git a/app/templates/plant.html b/app/templates/plant.html
+index f65604e..264f492 100644
+--- a/app/templates/plant.html
++++ b/app/templates/plant.html
+@@ -202,10 +202,10 @@
+             <template x-for="(w, i) in labourWork" :key="i">
+               <tr>
+                 <td class="py-2 pr-2">
+-                  <select x-model.number="w.job_id" class="w-full rounded border-metfraa-gray-300 text-sm">
+-                    <option :value="null">— none —</option>
++                  <select @change="w.job_id = $event.target.value ? +$event.target.value : null" class="w-full rounded border-metfraa-gray-300 text-sm">
++                    <option value="">— none —</option>
+                     <template x-for="j in jobs" :key="j.id">
+-                      <option :value="j.id" x-text="(j.code ? j.code+' · ' : '')+j.name"></option>
++                      <option :value="j.id" :selected="w.job_id === j.id" x-text="(j.code ? j.code+' · ' : '')+j.name"></option>
+                     </template>
+                   </select>
+                 </td>
+@@ -259,18 +259,18 @@
+             <template x-for="(w, i) in contractorWork" :key="i">
+               <tr>
+                 <td class="py-2 pr-2">
+-                  <select x-model.number="w.contractor_id" class="w-full rounded border-metfraa-gray-300 text-sm">
+-                    <option :value="null">— select —</option>
++                  <select @change="w.contractor_id = $event.target.value ? +$event.target.value : null" class="w-full rounded border-metfraa-gray-300 text-sm">
++                    <option value="">— select —</option>
+                     <template x-for="c in contractors" :key="c.id">
+-                      <option :value="c.id" x-text="c.name"></option>
++                      <option :value="c.id" :selected="w.contractor_id === c.id" x-text="c.name"></option>
+                     </template>
+                   </select>
+                 </td>
+                 <td class="py-2 pr-2">
+-                  <select x-model.number="w.job_id" class="w-full rounded border-metfraa-gray-300 text-sm">
+-                    <option :value="null">— none —</option>
++                  <select @change="w.job_id = $event.target.value ? +$event.target.value : null" class="w-full rounded border-metfraa-gray-300 text-sm">
++                    <option value="">— none —</option>
+                     <template x-for="j in jobs" :key="j.id">
+-                      <option :value="j.id" x-text="(j.code ? j.code+' · ' : '')+j.name"></option>
++                      <option :value="j.id" :selected="w.job_id === j.id" x-text="(j.code ? j.code+' · ' : '')+j.name"></option>
+                     </template>
+                   </select>
+                 </td>
