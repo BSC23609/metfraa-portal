@@ -600,23 +600,37 @@ def api_browse_day(date: str | None = None,
     la = (db.query(PlantLabourAttendance)
           .filter(PlantLabourAttendance.att_date == d)
           .order_by(PlantLabourAttendance.labour_id).all())
+    def _lab_regular(a):
+        sal = (lmap[a.labour_id].per_day_salary or 0) if a.labour_id in lmap else 0
+        if a.status == "P":
+            return sal
+        if a.status == "H":
+            return round(sal * 0.5, 2)
+        return 0.0
     labour = [{"name": lmap[a.labour_id].name if a.labour_id in lmap else "—",
                "designation": (lmap[a.labour_id].designation or "") if a.labour_id in lmap else "",
                "status": a.status, "half_part": a.half_part,
-               "ot": bool(a.ot), "ot_hours": a.ot_hours, "ot_amount": a.ot_amount}
+               "ot": bool(a.ot), "ot_hours": a.ot_hours, "ot_amount": a.ot_amount,
+               "regular": _lab_regular(a), "total": round(_lab_regular(a) + a.ot_amount, 2)}
               for a in la]
 
     cmap = {c.id: c for c in db.query(PlantContractor).all()}
     ca = (db.query(PlantContractorAttendance)
           .filter(PlantContractorAttendance.att_date == d)
           .order_by(PlantContractorAttendance.contractor_id).all())
+    def _con_regular(a):
+        rate = (cmap[a.contractor_id].per_day_rate or 0) if a.contractor_id in cmap else 0
+        present = a.skilled + a.helper
+        half = a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper
+        return round((present + 0.5 * half) * rate, 2)
     contractors = [{"name": cmap[a.contractor_id].name if a.contractor_id in cmap else "—",
                     "skilled": a.skilled, "helper": a.helper,
                     "absent": a.absent_skilled + a.absent_helper,
                     "half": a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper,
                     "absent_remarks": " · ".join(x for x in [a.absent_remarks, a.half1_remarks, a.half2_remarks] if x),
                     "ot": bool(a.ot), "ot_persons": a.ot_persons,
-                    "ot_hours": a.ot_hours, "ot_amount": a.ot_amount}
+                    "ot_hours": a.ot_hours, "ot_amount": a.ot_amount,
+                    "regular": _con_regular(a), "total": round(_con_regular(a) + a.ot_amount, 2)}
                    for a in ca]
 
     jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
@@ -635,18 +649,39 @@ def api_browse_day(date: str | None = None,
            .filter(PlantContractorWorkLog.log_date == d)
            .order_by(PlantContractorWorkLog.seq, PlantContractorWorkLog.id).all()]
 
+    from collections import defaultdict as _dd
+    jobwork = _dd(lambda: {"qty": 0.0, "weight": 0.0, "lines": 0})
+    for w in (db.query(PlantLabourWorkLog).filter(PlantLabourWorkLog.log_date == d).all()):
+        k = jmap.get(w.job_id, "No job")
+        jobwork[k]["qty"] += w.qty_nos or 0
+        jobwork[k]["weight"] += w.weight_kg or 0
+        jobwork[k]["lines"] += 1
+    for w in (db.query(PlantContractorWorkLog).filter(PlantContractorWorkLog.log_date == d).all()):
+        k = jmap.get(w.job_id, "No job")
+        jobwork[k]["qty"] += w.qty_nos or 0
+        jobwork[k]["weight"] += w.weight_kg or 0
+        jobwork[k]["lines"] += 1
+    job_breakdown = sorted(({"job": k, "qty": round(v["qty"], 2),
+                             "weight": round(v["weight"], 2), "lines": v["lines"]}
+                            for k, v in jobwork.items()),
+                           key=lambda r: r["weight"], reverse=True)
+
     present = sum(1 for a in la if a.status == "P")
     half = sum(1 for a in la if a.status == "H")
     absent = sum(1 for a in la if a.status == "A")
     ot_total = sum(a.ot_amount for a in la) + sum(a.ot_amount for a in ca)
+    reg_total = sum(x["regular"] for x in labour) + sum(x["regular"] for x in contractors)
+    pay_total = round(reg_total + ot_total, 2)
     contr_head = sum(a.skilled + a.helper for a in ca)
 
     return {
         "date": d.isoformat(),
         "summary": {"present": present, "half": half, "absent": absent,
                     "contractor_headcount": contr_head, "ot_amount": ot_total,
+                    "regular_amount": round(reg_total, 2), "pay_amount": pay_total,
                     "has_data": bool(la or ca or lwl or cwl)},
         "labour": labour, "contractors": contractors,
+        "job_breakdown": job_breakdown,
         "labour_worklog": lwl, "contractor_worklog": cwl,
     }
 

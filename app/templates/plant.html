@@ -64,6 +64,8 @@
               <div>
                 <div class="font-semibold text-metfraa-ink" x-text="l.name"></div>
                 <div class="text-xs text-metfraa-gray-500" x-text="l.designation"></div>
+                <div class="text-xs font-semibold text-metfraa-blue mt-0.5"
+                     x-text="'Day ₹' + labRegular(l).toLocaleString('en-IN') + (labOtAmt(l) ? (' + OT ₹' + labOtAmt(l).toLocaleString('en-IN')) : '') + ' = ₹' + labTotal(l).toLocaleString('en-IN',{maximumFractionDigits:2})"></div>
               </div>
               <div class="flex items-center gap-3">
                 <label class="flex items-center gap-1.5 text-xs text-metfraa-gray-500">
@@ -91,8 +93,7 @@
               <span class="lbl">OT hours</span>
               <input type="number" min="0" step="0.5" x-model.number="l.ot_hours"
                      class="w-24 rounded border-metfraa-gray-300 text-sm">
-              <span class="ml-auto text-sm font-semibold text-metfraa-blue"
-                    x-text="labOtAmt(l) ? ('OT ₹ ' + labOtAmt(l).toLocaleString('en-IN') + '  ·  ₹' + labRate(l).toFixed(2) + '/hr') : ''"></span>
+              <span class="ml-auto text-xs text-metfraa-gray-500" x-text="'@ ₹' + labRate(l).toFixed(2) + '/hr'"></span>
             </div>
           </div>
         </template>
@@ -139,7 +140,10 @@
                 <span class="lbl md:hidden mb-1">OT hours</span>
                 <input x-show="c.ot" type="number" min="0" step="0.5" x-model.number="c.ot_hours" class="w-20 rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
               </div>
-              <div class="col-span-24 md:col-span-4 md:text-right font-semibold text-metfraa-blue" x-text="c.ot ? 'OT ₹ ' + conOtAmt(c).toLocaleString('en-IN') : ''"></div>
+              <div class="col-span-24 md:col-span-4 md:text-right">
+                <div class="font-semibold text-metfraa-blue" x-text="'₹ ' + conTotal(c).toLocaleString('en-IN',{maximumFractionDigits:0})"></div>
+                <div class="text-xs text-metfraa-gray-500" x-text="'Reg ₹' + conRegular(c).toLocaleString('en-IN',{maximumFractionDigits:0}) + (conOtAmt(c) ? (' + OT ₹' + conOtAmt(c).toLocaleString('en-IN',{maximumFractionDigits:0})) : '')"></div>
+              </div>
             </div>
             <div class="mt-2">
               <button @click="c._exp = !c._exp" class="text-xs font-semibold text-metfraa-gray-500 hover:text-metfraa-blue"
@@ -554,6 +558,9 @@
           <span class="text-amber-600 font-semibold" x-text="brDay.summary.half"></span> half ·
           <span class="text-red-600 font-semibold" x-text="brDay.summary.absent"></span> absent ·
           OT ₹ <span class="font-semibold" x-text="(brDay.summary.ot_amount||0).toLocaleString('en-IN')"></span>
+          <span class="mx-1">·</span>
+          Day pay ₹ <span class="font-bold text-metfraa-blue" x-text="(brDay.summary.pay_amount||0).toLocaleString('en-IN')"></span>
+          <span class="text-metfraa-gray-400" x-text="'(reg ₹'+(brDay.summary.regular_amount||0).toLocaleString('en-IN')+')'"></span>
         </div>
       </div>
       <template x-if="brDay && !brDay.summary.has_data">
@@ -570,6 +577,7 @@
                 <span x-text="l.name"></span>
                 <span x-show="l.status==='H'" x-text="' ('+(l.half_part===1?'1st':'2nd')+')'"></span>
                 <span x-show="l.ot" class="opacity-70" x-text="' · OT '+l.ot_hours+'h ₹'+l.ot_amount"></span>
+                <span class="opacity-70" x-text="' · ₹'+(l.total||0).toLocaleString('en-IN')"></span>
               </span>
             </template>
           </div>
@@ -581,9 +589,10 @@
           <div class="lbl mb-2">Contractor attendance</div>
           <table class="w-full text-sm">
             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
-              <th class="py-1">Team</th><th class="py-1 text-center">Skilled</th>
-              <th class="py-1 text-center">Helper</th><th class="py-1 text-center">Absent</th>
-              <th class="py-1 text-center">Half</th><th class="py-1">OT</th></tr></thead>
+              <th class="py-1">Team</th><th class="py-1 text-center">Sk</th>
+              <th class="py-1 text-center">Hp</th><th class="py-1 text-center">Absent</th>
+              <th class="py-1 text-center">Half</th><th class="py-1">OT</th>
+              <th class="py-1 text-right">Regular</th><th class="py-1 text-right">OT ₹</th><th class="py-1 text-right">Total</th></tr></thead>
             <tbody class="divide-y divide-metfraa-gray-100">
               <template x-for="c in brDay.contractors" :key="c.name">
                 <tr><td class="py-1.5 font-semibold" x-text="c.name"></td>
@@ -592,7 +601,29 @@
                   <td class="py-1.5 text-center" x-text="c.absent||'—'"></td>
                   <td class="py-1.5 text-center" x-text="c.half||'—'"></td>
                   <td class="py-1.5 text-xs text-metfraa-gray-500"
-                      x-text="c.ot ? (c.ot_persons+' × '+c.ot_hours+'h · ₹'+c.ot_amount) : '—'"></td></tr>
+                      x-text="c.ot ? (c.ot_persons+' × '+c.ot_hours+'h') : '—'"></td>
+                  <td class="py-1.5 text-right mono" x-text="'₹'+(c.regular||0).toLocaleString('en-IN')"></td>
+                  <td class="py-1.5 text-right mono" x-text="'₹'+(c.ot_amount||0).toLocaleString('en-IN')"></td>
+                  <td class="py-1.5 text-right mono font-semibold text-metfraa-blue" x-text="'₹'+(c.total||0).toLocaleString('en-IN')"></td></tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <template x-if="brDay && brDay.job_breakdown && brDay.job_breakdown.length">
+        <div class="mb-5">
+          <div class="lbl mb-2">Job-wise work output</div>
+          <table class="w-full text-sm">
+            <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+              <th class="py-1">Job</th><th class="py-1 text-center">Work lines</th>
+              <th class="py-1 text-right">Qty (Nos)</th><th class="py-1 text-right">Weight (Kg)</th></tr></thead>
+            <tbody class="divide-y divide-metfraa-gray-100">
+              <template x-for="j in brDay.job_breakdown" :key="j.job">
+                <tr><td class="py-1.5 font-semibold" x-text="j.job"></td>
+                  <td class="py-1.5 text-center" x-text="j.lines"></td>
+                  <td class="py-1.5 text-right mono" x-text="j.qty.toLocaleString('en-IN')"></td>
+                  <td class="py-1.5 text-right mono" x-text="j.weight.toLocaleString('en-IN',{maximumFractionDigits:2})"></td></tr>
               </template>
             </tbody>
           </table>
@@ -788,6 +819,14 @@ function plantApp() {
     addLabourWork() { this.labourWork.push({ job_id:null, nature_of_work:'', skilled:0, helper:0, qty_nos:'', weight_kg:'', remarks:'' }); },
     addContractorWork() { this.contractorWork.push({ contractor_id:null, job_id:null, nature_of_work:'', workers:0, qty_nos:'', weight_kg:'', remarks:'' }); },
 
+    labRegular(l) {
+      // full day = full salary; half = 0.5; absent = 0
+      const sal = +l.per_day_salary || 0;
+      if (l.status === 'P') return sal;
+      if (l.status === 'H') return sal * 0.5;
+      return 0;
+    },
+    labTotal(l) { return this.labRegular(l) + this.labOtAmt(l); },
     labRate(l) {
       if (l.ot_category === 'flat') return (+l.ot_flat_rate || 100);
       const wh = +l.working_hours || 8; return (+l.per_day_salary || 0) / wh;
@@ -795,6 +834,14 @@ function plantApp() {
     labOtAmt(l) { return l.ot ? this.labRate(l) * (+l.ot_hours || 0) : 0; },
     conRate(c) { const wh = +c.working_hours || 8; return (+c.per_day_rate || 0) / wh; },
     conOtAmt(c) { return c.ot ? (+c.ot_persons || 0) * this.conRate(c) * (+c.ot_hours || 0) : 0; },
+    conRegular(c) {
+      // man-days = full-day present + 0.5*(half-day counts); absent excluded
+      const present = (+c.skilled||0)+(+c.helper||0);
+      const half = (+c.half1_skilled||0)+(+c.half1_helper||0)+(+c.half2_skilled||0)+(+c.half2_helper||0);
+      const md = present + 0.5*half;
+      return md * (+c.per_day_rate || 0);
+    },
+    conTotal(c) { return this.conRegular(c) + this.conOtAmt(c); },
     conExtra(c) { return (+c.absent_skilled||0)+(+c.absent_helper||0)+(+c.half1_skilled||0)+(+c.half1_helper||0)+(+c.half2_skilled||0)+(+c.half2_helper||0) > 0; },
 
     statusClass(o) {
