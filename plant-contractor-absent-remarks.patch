@@ -1,0 +1,235 @@
+diff --git a/app/models.py b/app/models.py
+index 57723dd..539f6cc 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -889,12 +889,17 @@ class PlantContractorAttendance(Base):
+     skilled = Column(Integer, nullable=False, default=0)   # present
+     helper = Column(Integer, nullable=False, default=0)    # present
+     # Absent (informational — pays 0) and half-day counts, split skilled/helper.
++    # Full-day absent (informational, pays 0) and half-day absent (pays 0.5 —
++    # the person worked the other half). half1/half2 = 1st/2nd half absent.
+     absent_skilled = Column(Integer, nullable=False, default=0)
+     absent_helper = Column(Integer, nullable=False, default=0)
+-    half1_skilled = Column(Integer, nullable=False, default=0)   # 1st half
++    absent_remarks = Column(Text, nullable=True)
++    half1_skilled = Column(Integer, nullable=False, default=0)   # 1st half absent
+     half1_helper = Column(Integer, nullable=False, default=0)
+-    half2_skilled = Column(Integer, nullable=False, default=0)   # 2nd half
++    half1_remarks = Column(Text, nullable=True)
++    half2_skilled = Column(Integer, nullable=False, default=0)   # 2nd half absent
+     half2_helper = Column(Integer, nullable=False, default=0)
++    half2_remarks = Column(Text, nullable=True)
+     # OT: how many of the team worked past 7pm, and till when.
+     ot = Column(Boolean, default=False, nullable=False)
+     ot_persons = Column(Integer, nullable=False, default=0)
+diff --git a/app/routes/plant.py b/app/routes/plant.py
+index 5ef9cf9..3f36164 100644
+--- a/app/routes/plant.py
++++ b/app/routes/plant.py
+@@ -112,6 +112,9 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
+                          "half1_helper": cmarks[c.id].half1_helper if c.id in cmarks else 0,
+                          "half2_skilled": cmarks[c.id].half2_skilled if c.id in cmarks else 0,
+                          "half2_helper": cmarks[c.id].half2_helper if c.id in cmarks else 0,
++                         "absent_remarks": (cmarks[c.id].absent_remarks if c.id in cmarks else "") or "",
++                         "half1_remarks": (cmarks[c.id].half1_remarks if c.id in cmarks else "") or "",
++                         "half2_remarks": (cmarks[c.id].half2_remarks if c.id in cmarks else "") or "",
+                          "ot": bool(cmarks[c.id].ot) if c.id in cmarks else False,
+                          "ot_persons": cmarks[c.id].ot_persons if c.id in cmarks else 0,
+                          "ot_hours": (cmarks[c.id].ot_hours if c.id in cmarks else 0)}
+@@ -205,6 +208,9 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
+         ab_sk, ab_hp = _int(row.get("absent_skilled")), _int(row.get("absent_helper"))
+         h1_sk, h1_hp = _int(row.get("half1_skilled")), _int(row.get("half1_helper"))
+         h2_sk, h2_hp = _int(row.get("half2_skilled")), _int(row.get("half2_helper"))
++        ab_rem = (row.get("absent_remarks") or "").strip() or None
++        h1_rem = (row.get("half1_remarks") or "").strip() or None
++        h2_rem = (row.get("half2_remarks") or "").strip() or None
+         ot = bool(row.get("ot"))
+         ot_persons = _int(row.get("ot_persons")) if ot else 0
+         oth = _ot_hours(row.get("ot_hours")) if ot else 0.0
+@@ -212,15 +218,15 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
+         wh = (c_.working_hours or 8) if c_ else 8
+         rate = (c_.per_day_rate or 0) / wh if (c_ and wh) else 0
+         camt = round(ot_persons * rate * oth, 2)
+-        any_count = (sk or hp or ab_sk or ab_hp or h1_sk or h1_hp or h2_sk or h2_hp or ot)
++        any_count = (sk or hp or ab_sk or ab_hp or h1_sk or h1_hp or h2_sk or h2_hp or ot or ab_rem or h1_rem or h2_rem)
+         rec = (db.query(PlantContractorAttendance)
+                .filter(PlantContractorAttendance.contractor_id == cid,
+                        PlantContractorAttendance.att_date == d).first())
+         if rec:
+             rec.skilled, rec.helper = sk, hp
+-            rec.absent_skilled, rec.absent_helper = ab_sk, ab_hp
+-            rec.half1_skilled, rec.half1_helper = h1_sk, h1_hp
+-            rec.half2_skilled, rec.half2_helper = h2_sk, h2_hp
++            rec.absent_skilled, rec.absent_helper, rec.absent_remarks = ab_sk, ab_hp, ab_rem
++            rec.half1_skilled, rec.half1_helper, rec.half1_remarks = h1_sk, h1_hp, h1_rem
++            rec.half2_skilled, rec.half2_helper, rec.half2_remarks = h2_sk, h2_hp, h2_rem
+             rec.ot, rec.ot_persons, rec.ot_hours, rec.ot_amount = ot, ot_persons, oth, camt
+             rec.marked_by = user.employee_code
+             rec.updated_at = now
+@@ -228,8 +234,11 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
+             db.add(PlantContractorAttendance(contractor_id=cid, att_date=d,
+                                              skilled=sk, helper=hp,
+                                              absent_skilled=ab_sk, absent_helper=ab_hp,
++                                             absent_remarks=ab_rem,
+                                              half1_skilled=h1_sk, half1_helper=h1_hp,
++                                             half1_remarks=h1_rem,
+                                              half2_skilled=h2_sk, half2_helper=h2_hp,
++                                             half2_remarks=h2_rem,
+                                              ot=ot, ot_persons=ot_persons, ot_hours=oth,
+                                              ot_amount=camt, marked_by=user.employee_code))
+ 
+@@ -295,6 +304,7 @@ def _gather_day(db: Session, d):
+                     "skilled": a.skilled, "helper": a.helper,
+                     "absent": a.absent_skilled + a.absent_helper,
+                     "half": a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper,
++                    "absent_remarks": " · ".join(x for x in [a.absent_remarks, a.half1_remarks, a.half2_remarks] if x),
+                     "ot": bool(a.ot), "ot_persons": a.ot_persons, "ot_hours": a.ot_hours,
+                     "ot_amount": a.ot_amount} for a in ca]
+     jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
+@@ -604,6 +614,7 @@ def api_browse_day(date: str | None = None,
+                     "skilled": a.skilled, "helper": a.helper,
+                     "absent": a.absent_skilled + a.absent_helper,
+                     "half": a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper,
++                    "absent_remarks": " · ".join(x for x in [a.absent_remarks, a.half1_remarks, a.half2_remarks] if x),
+                     "ot": bool(a.ot), "ot_persons": a.ot_persons,
+                     "ot_hours": a.ot_hours, "ot_amount": a.ot_amount}
+                    for a in ca]
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index df302c1..802c3f1 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -94,6 +94,9 @@ MISC_MIGRATIONS = [
+     "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS half1_helper INTEGER NOT NULL DEFAULT 0",
+     "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS half2_skilled INTEGER NOT NULL DEFAULT 0",
+     "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS half2_helper INTEGER NOT NULL DEFAULT 0",
++    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS absent_remarks TEXT",
++    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS half1_remarks TEXT",
++    "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS half2_remarks TEXT",
+     "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS half_part INTEGER",
+     "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot BOOLEAN NOT NULL DEFAULT FALSE",
+     "ALTER TABLE plant_labour_attendance ADD COLUMN IF NOT EXISTS ot_till VARCHAR(5)",
+diff --git a/app/templates/plant.html b/app/templates/plant.html
+index abc714b..f65604e 100644
+--- a/app/templates/plant.html
++++ b/app/templates/plant.html
+@@ -101,44 +101,75 @@
+ 
+     <!-- Contractors -->
+     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+-      <div class="lbl mb-3">Contractor teams — headcount</div>
++      <div class="lbl mb-3">Contractor teams — attendance</div>
+       <template x-if="!contractors.length">
+         <div class="text-sm text-metfraa-gray-400 py-4">No contractors. Add them under Contractor Master.</div>
+       </template>
+       <div x-show="contractors.length" class="space-y-2">
+-        <div class="grid grid-cols-12 gap-2 lbl border-b border-metfraa-gray-100 pb-2">
+-          <div class="col-span-3">Team</div>
+-          <div class="col-span-2 text-center">Present Sk</div>
+-          <div class="col-span-2 text-center">Present Hp</div>
+-          <div class="col-span-1 text-center">OT</div>
+-          <div class="col-span-2 text-center">OT persons</div>
+-          <div class="col-span-2 text-right">OT amount</div>
++        <div class="hidden md:grid grid-cols-24 gap-2 lbl border-b border-metfraa-gray-100 pb-2" style="grid-template-columns:repeat(24,minmax(0,1fr))">
++          <div class="col-span-6">Team</div>
++          <div class="col-span-3 text-center">Full day present · Sk</div>
++          <div class="col-span-3 text-center">Full day present · Hp</div>
++          <div class="col-span-2 text-center">OT</div>
++          <div class="col-span-3 text-center">OT persons</div>
++          <div class="col-span-3 text-center">OT hours</div>
++          <div class="col-span-4 text-right">OT amount</div>
+         </div>
+         <template x-for="c in contractors" :key="c.id">
+-          <div class="border-b border-metfraa-gray-50 pb-2">
+-            <div class="grid grid-cols-12 gap-2 items-center">
+-              <div class="col-span-3 font-semibold" x-text="c.name"></div>
+-              <div class="col-span-2 flex justify-center"><input type="number" min="0" x-model.number="c.skilled" class="w-16 rounded border-metfraa-gray-300 text-sm text-center"></div>
+-              <div class="col-span-2 flex justify-center"><input type="number" min="0" x-model.number="c.helper" class="w-16 rounded border-metfraa-gray-300 text-sm text-center"></div>
+-              <div class="col-span-1 text-center"><input type="checkbox" x-model="c.ot" class="rounded border-metfraa-gray-300"></div>
+-              <div class="col-span-2 flex justify-center gap-1">
+-                <input x-show="c.ot" type="number" min="0" x-model.number="c.ot_persons" placeholder="ppl" class="w-14 rounded border-metfraa-gray-300 text-sm text-center">
+-                <input x-show="c.ot" type="number" min="0" step="0.5" x-model.number="c.ot_hours" placeholder="hrs" class="w-14 rounded border-metfraa-gray-300 text-sm text-center">
++          <div class="border-b border-metfraa-gray-50 pb-3">
++            <div class="grid gap-2 items-center" style="grid-template-columns:repeat(24,minmax(0,1fr))">
++              <div class="col-span-24 md:col-span-6 font-semibold" x-text="c.name"></div>
++              <div class="col-span-8 md:col-span-3 flex flex-col items-center">
++                <span class="lbl md:hidden mb-1">Full day present · Sk</span>
++                <input type="number" min="0" x-model.number="c.skilled" class="w-20 rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
+               </div>
+-              <div class="col-span-2 text-right font-semibold text-metfraa-blue" x-text="c.ot ? '₹ ' + conOtAmt(c).toLocaleString('en-IN') : ''"></div>
++              <div class="col-span-8 md:col-span-3 flex flex-col items-center">
++                <span class="lbl md:hidden mb-1">Full day present · Hp</span>
++                <input type="number" min="0" x-model.number="c.helper" class="w-20 rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
++              </div>
++              <div class="col-span-8 md:col-span-2 flex flex-col items-center">
++                <span class="lbl md:hidden mb-1">OT</span>
++                <input type="checkbox" x-model="c.ot" class="rounded border-metfraa-gray-300 mt-1">
++              </div>
++              <div class="col-span-8 md:col-span-3 flex flex-col items-center">
++                <span class="lbl md:hidden mb-1">OT persons</span>
++                <input x-show="c.ot" type="number" min="0" x-model.number="c.ot_persons" class="w-20 rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
++              </div>
++              <div class="col-span-8 md:col-span-3 flex flex-col items-center">
++                <span class="lbl md:hidden mb-1">OT hours</span>
++                <input x-show="c.ot" type="number" min="0" step="0.5" x-model.number="c.ot_hours" class="w-20 rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
++              </div>
++              <div class="col-span-24 md:col-span-4 md:text-right font-semibold text-metfraa-blue" x-text="c.ot ? 'OT ₹ ' + conOtAmt(c).toLocaleString('en-IN') : ''"></div>
+             </div>
+-            <div class="mt-1">
++            <div class="mt-2">
+               <button @click="c._exp = !c._exp" class="text-xs font-semibold text-metfraa-gray-500 hover:text-metfraa-blue"
+-                      x-text="(conExtra(c) ? '● ' : '') + (c._exp ? '− Hide' : '+ Absent & half-day')"></button>
+-              <div x-show="c._exp" class="mt-2 pl-2 grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs bg-metfraa-gray-50 rounded p-3">
+-                <div><div class="lbl mb-1">Absent — Skilled</div><input type="number" min="0" x-model.number="c.absent_skilled" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+-                <div><div class="lbl mb-1">Absent — Helper</div><input type="number" min="0" x-model.number="c.absent_helper" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+-                <div></div>
+-                <div><div class="lbl mb-1">1st half — Skilled</div><input type="number" min="0" x-model.number="c.half1_skilled" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+-                <div><div class="lbl mb-1">1st half — Helper</div><input type="number" min="0" x-model.number="c.half1_helper" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+-                <div></div>
+-                <div><div class="lbl mb-1">2nd half — Skilled</div><input type="number" min="0" x-model.number="c.half2_skilled" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
+-                <div><div class="lbl mb-1">2nd half — Helper</div><input type="number" min="0" x-model.number="c.half2_helper" class="w-full rounded border-metfraa-gray-300 text-sm"></div>
++                      x-text="(conExtra(c) ? '● ' : '') + (c._exp ? '− Hide absences' : '+ Absences (full / 1st half / 2nd half)')"></button>
++              <div x-show="c._exp" class="mt-2 space-y-3 bg-metfraa-gray-50 rounded p-3 text-xs">
++                <div>
++                  <div class="lbl mb-1.5 text-metfraa-ink">Full day absent</div>
++                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
++                    <div><span class="lbl block mb-1">Skilled</span><input type="number" min="0" x-model.number="c.absent_skilled" class="w-full rounded border-metfraa-gray-300 text-sm px-2 py-1.5"></div>
++                    <div><span class="lbl block mb-1">Helper</span><input type="number" min="0" x-model.number="c.absent_helper" class="w-full rounded border-metfraa-gray-300 text-sm px-2 py-1.5"></div>
++                    <div><span class="lbl block mb-1">Remarks</span><input x-model="c.absent_remarks" class="w-full rounded border-metfraa-gray-300 text-sm px-2 py-1.5"></div>
++                  </div>
++                </div>
++                <div>
++                  <div class="lbl mb-1.5 text-metfraa-ink">1st half absent</div>
++                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
++                    <div><span class="lbl block mb-1">Skilled</span><input type="number" min="0" x-model.number="c.half1_skilled" class="w-full rounded border-metfraa-gray-300 text-sm px-2 py-1.5"></div>
++                    <div><span class="lbl block mb-1">Helper</span><input type="number" min="0" x-model.number="c.half1_helper" class="w-full rounded border-metfraa-gray-300 text-sm px-2 py-1.5"></div>
++                    <div><span class="lbl block mb-1">Remarks</span><input x-model="c.half1_remarks" class="w-full rounded border-metfraa-gray-300 text-sm px-2 py-1.5"></div>
++                  </div>
++                </div>
++                <div>
++                  <div class="lbl mb-1.5 text-metfraa-ink">2nd half absent</div>
++                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
++                    <div><span class="lbl block mb-1">Skilled</span><input type="number" min="0" x-model.number="c.half2_skilled" class="w-full rounded border-metfraa-gray-300 text-sm px-2 py-1.5"></div>
++                    <div><span class="lbl block mb-1">Helper</span><input type="number" min="0" x-model.number="c.half2_helper" class="w-full rounded border-metfraa-gray-300 text-sm px-2 py-1.5"></div>
++                    <div><span class="lbl block mb-1">Remarks</span><input x-model="c.half2_remarks" class="w-full rounded border-metfraa-gray-300 text-sm px-2 py-1.5"></div>
++                  </div>
++                </div>
++                <p class="text-metfraa-gray-500">Half-day absent pays 0.5 man-day (worked the other half). Full-day absent pays nothing — recorded for the record.</p>
+               </div>
+             </div>
+           </div>
+@@ -804,6 +835,7 @@ function plantApp() {
+           absent_skilled: +c.absent_skilled || 0, absent_helper: +c.absent_helper || 0,
+           half1_skilled: +c.half1_skilled || 0, half1_helper: +c.half1_helper || 0,
+           half2_skilled: +c.half2_skilled || 0, half2_helper: +c.half2_helper || 0,
++          absent_remarks: c.absent_remarks || '', half1_remarks: c.half1_remarks || '', half2_remarks: c.half2_remarks || '',
+           ot: !!c.ot, ot_persons: +c.ot_persons || 0, ot_hours: +c.ot_hours || 0 })),
+         labour_worklog: this.labourWork,
+         contractor_worklog: this.contractorWork };
+@@ -837,6 +869,7 @@ function plantApp() {
+               absent_skilled: +c.absent_skilled || 0, absent_helper: +c.absent_helper || 0,
+               half1_skilled: +c.half1_skilled || 0, half1_helper: +c.half1_helper || 0,
+               half2_skilled: +c.half2_skilled || 0, half2_helper: +c.half2_helper || 0,
++              absent_remarks: c.absent_remarks || '', half1_remarks: c.half1_remarks || '', half2_remarks: c.half2_remarks || '',
+               ot: !!c.ot, ot_persons: +c.ot_persons || 0, ot_hours: +c.ot_hours || 0 })) }),
+         });
+         if (!r.ok) { alert('Save failed'); return; }

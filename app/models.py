@@ -889,12 +889,17 @@ class PlantContractorAttendance(Base):
     skilled = Column(Integer, nullable=False, default=0)   # present
     helper = Column(Integer, nullable=False, default=0)    # present
     # Absent (informational — pays 0) and half-day counts, split skilled/helper.
+    # Full-day absent (informational, pays 0) and half-day absent (pays 0.5 —
+    # the person worked the other half). half1/half2 = 1st/2nd half absent.
     absent_skilled = Column(Integer, nullable=False, default=0)
     absent_helper = Column(Integer, nullable=False, default=0)
-    half1_skilled = Column(Integer, nullable=False, default=0)   # 1st half
+    absent_remarks = Column(Text, nullable=True)
+    half1_skilled = Column(Integer, nullable=False, default=0)   # 1st half absent
     half1_helper = Column(Integer, nullable=False, default=0)
-    half2_skilled = Column(Integer, nullable=False, default=0)   # 2nd half
+    half1_remarks = Column(Text, nullable=True)
+    half2_skilled = Column(Integer, nullable=False, default=0)   # 2nd half absent
     half2_helper = Column(Integer, nullable=False, default=0)
+    half2_remarks = Column(Text, nullable=True)
     # OT: how many of the team worked past 7pm, and till when.
     ot = Column(Boolean, default=False, nullable=False)
     ot_persons = Column(Integer, nullable=False, default=0)
