@@ -990,6 +990,103 @@ def _build_monthly(db: Session, year: int, month: int):
     return company, contractors, work_summary, total_weight, has_data
 
 
+def _monthly_screen_breakdown(db: Session, year: int, month: int):
+    """Day-wise spend + team x project weight for the on-SCREEN monthly tab
+    only. Does NOT feed the PDF (the report is unchanged). Figures reconcile to
+    the summary cards: sum of labour day-totals == company grand; sum of the
+    contractor column totals == contractor grand. Column totals are the plain
+    sum of the rounded daily cells, so every table visibly adds up."""
+    from collections import defaultdict
+    start, end = _cycle_window(year, month)
+
+    # ---- own labour: spend per day (whole pool) ----
+    lmap = {l.id: l for l in db.query(PlantLabour).all()}
+    la = (db.query(PlantLabourAttendance)
+          .filter(PlantLabourAttendance.att_date >= start,
+                  PlantLabourAttendance.att_date <= end).all())
+    lday = defaultdict(lambda: {"regular": 0.0, "ot": 0.0})
+    for a in la:
+        l = lmap.get(a.labour_id)
+        if not l:
+            continue
+        sal = l.per_day_salary or 0
+        reg = sal if a.status == "P" else (0.5 * sal if a.status == "H" else 0.0)
+        lday[a.att_date]["regular"] += reg
+        lday[a.att_date]["ot"] += a.ot_amount
+    labour_daily = [{"date": d.strftime("%d %b"),
+                     "regular": round(v["regular"], 2),
+                     "ot": round(v["ot"], 2),
+                     "total": round(v["regular"] + v["ot"], 2)}
+                    for d, v in sorted(lday.items())]
+    labour_totals = {
+        "regular": round(sum(x["regular"] for x in labour_daily), 2),
+        "ot": round(sum(x["ot"] for x in labour_daily), 2),
+        "total": round(sum(x["total"] for x in labour_daily), 2),
+    }
+
+    # ---- contractors: spend per day, one column per contractor ----
+    cmap = {c.id: c for c in db.query(PlantContractor).all()}
+    ca = (db.query(PlantContractorAttendance)
+          .filter(PlantContractorAttendance.att_date >= start,
+                  PlantContractorAttendance.att_date <= end).all())
+    cids = sorted({a.contractor_id for a in ca if a.contractor_id in cmap},
+                  key=lambda i: cmap[i].name)
+    cday = defaultdict(lambda: defaultdict(float))   # date -> cid -> amount
+    for a in ca:
+        c = cmap.get(a.contractor_id)
+        if not c:
+            continue
+        present = a.skilled + a.helper
+        half = (a.half1_skilled + a.half1_helper
+                + a.half2_skilled + a.half2_helper)
+        md = present + 0.5 * half
+        cday[a.att_date][a.contractor_id] += round(md * (c.per_day_rate or 0), 2) + a.ot_amount
+    contractor_names = [cmap[i].name for i in cids]
+    contractor_daily = []
+    for d in sorted(cday.keys()):
+        amts = [round(cday[d].get(i, 0.0), 2) for i in cids]
+        contractor_daily.append({"date": d.strftime("%d %b"), "amounts": amts,
+                                 "total": round(sum(amts), 2)})
+    contractor_col_totals = [round(sum(r["amounts"][k] for r in contractor_daily), 2)
+                             for k in range(len(cids))]
+    contractor_grand = round(sum(contractor_col_totals), 2)
+
+    # ---- weight done: team (rows) x project/job (columns), in Kg ----
+    jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
+            for j in db.query(PlantJob).all()}
+    wcell = defaultdict(lambda: defaultdict(float))   # team -> project -> weight
+    projects = set()
+    for w in (db.query(PlantLabourWorkLog)
+              .filter(PlantLabourWorkLog.log_date >= start,
+                      PlantLabourWorkLog.log_date <= end).all()):
+        proj = jmap.get(w.job_id, "No job")
+        wcell["Own team"][proj] += w.weight_kg or 0
+        projects.add(proj)
+    for w in (db.query(PlantContractorWorkLog)
+              .filter(PlantContractorWorkLog.log_date >= start,
+                      PlantContractorWorkLog.log_date <= end).all()):
+        proj = jmap.get(w.job_id, "No job")
+        team = cmap[w.contractor_id].name if w.contractor_id in cmap else "Unassigned"
+        wcell[team][proj] += w.weight_kg or 0
+        projects.add(proj)
+    weight_projects = sorted(projects)
+    weight_rows = []
+    for t in sorted(wcell.keys()):
+        vals = [round(wcell[t].get(p, 0.0), 2) for p in weight_projects]
+        weight_rows.append({"team": t, "weights": vals, "total": round(sum(vals), 2)})
+    weight_col_totals = [round(sum(r["weights"][k] for r in weight_rows), 2)
+                         for k in range(len(weight_projects))]
+    weight_grand = round(sum(weight_col_totals), 2)
+
+    return {
+        "labour_daily": labour_daily, "labour_totals": labour_totals,
+        "contractor_names": contractor_names, "contractor_daily": contractor_daily,
+        "contractor_col_totals": contractor_col_totals, "contractor_grand": contractor_grand,
+        "weight_projects": weight_projects, "weight_rows": weight_rows,
+        "weight_col_totals": weight_col_totals, "weight_grand": weight_grand,
+    }
+
+
 @router.get("/api/monthly")
 def api_monthly_preview(period: str | None = None,
                         user: Employee = Depends(get_current_user),
@@ -1005,6 +1102,7 @@ def api_monthly_preview(period: str | None = None,
     else:
         year, month = _current_cycle()
     company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    brk = _monthly_screen_breakdown(db, year, month)
     return {
         "period": f"{year:04d}-{month:02d}",
         "default_period": f"{_current_cycle()[0]:04d}-{_current_cycle()[1]:02d}",
@@ -1015,6 +1113,7 @@ def api_monthly_preview(period: str | None = None,
         "contractor_count": len(contractors),
         "contractor_total": sum(c["totals"]["grand"] for c in contractors),
         "total_weight": total_weight,
+        **brk,
     }
 
 

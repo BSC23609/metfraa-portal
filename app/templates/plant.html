@@ -570,17 +570,26 @@
       <template x-if="brDay && brDay.labour.length">
         <div class="mb-5">
           <div class="lbl mb-2">Own labour</div>
-          <div class="flex flex-wrap gap-1.5">
-            <template x-for="l in brDay.labour" :key="l.name">
-              <span class="px-2 py-1 rounded text-xs font-semibold"
-                :class="{'bg-green-100 text-green-800': l.status==='P','bg-amber-100 text-amber-800': l.status==='H','bg-red-100 text-red-800': l.status==='A'}">
-                <span x-text="l.name"></span>
-                <span x-show="l.status==='H'" x-text="' ('+(l.half_part===1?'1st':'2nd')+')'"></span>
-                <span x-show="l.ot" class="opacity-70" x-text="' · OT '+l.ot_hours+'h ₹'+l.ot_amount"></span>
-                <span class="opacity-70" x-text="' · ₹'+(l.total||0).toLocaleString('en-IN')"></span>
-              </span>
-            </template>
-          </div>
+          <table class="w-full text-sm">
+            <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+              <th class="py-1">Name</th><th class="py-1 text-center">Status</th>
+              <th class="py-1">OT</th>
+              <th class="py-1 text-right">Regular</th><th class="py-1 text-right">OT ₹</th><th class="py-1 text-right">Total</th></tr></thead>
+            <tbody class="divide-y divide-metfraa-gray-100">
+              <template x-for="l in brDay.labour" :key="l.name">
+                <tr><td class="py-1.5 font-semibold" x-text="l.name"></td>
+                  <td class="py-1.5 text-center">
+                    <span class="px-2 py-0.5 rounded text-xs font-semibold"
+                      :class="{'bg-green-100 text-green-800': l.status==='P','bg-amber-100 text-amber-800': l.status==='H','bg-red-100 text-red-800': l.status==='A'}"
+                      x-text="l.status==='H' ? ('H '+(l.half_part===1?'(1st)':'(2nd)')) : l.status"></span>
+                  </td>
+                  <td class="py-1.5 text-xs text-metfraa-gray-500" x-text="l.ot ? (l.ot_hours+'h') : '—'"></td>
+                  <td class="py-1.5 text-right mono" x-text="'₹'+(l.regular||0).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                  <td class="py-1.5 text-right mono" x-text="'₹'+(l.ot_amount||0).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                  <td class="py-1.5 text-right mono font-semibold text-metfraa-blue" x-text="'₹'+(l.total||0).toLocaleString('en-IN',{maximumFractionDigits:2})"></td></tr>
+              </template>
+            </tbody>
+          </table>
         </div>
       </template>
 
@@ -728,6 +737,91 @@
         <div class="display text-2xl font-bold text-green-700 mt-1" x-text="m ? '₹ '+((m.company_total||0)+(m.contractor_total||0)).toLocaleString('en-IN') : ''"></div>
       </div>
     </div>
+
+    <!-- Own labour — day-wise spend -->
+    <template x-if="m && m.has_data && m.labour_daily && m.labour_daily.length">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
+        <div class="lbl mb-3">Own labour — day-wise spend</div>
+        <div class="overflow-x-auto"><table class="w-full text-sm">
+          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-1">Date</th><th class="py-1 text-right">Regular ₹</th>
+            <th class="py-1 text-right">OT ₹</th><th class="py-1 text-right">Total ₹</th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="d in m.labour_daily" :key="d.date">
+              <tr><td class="py-1.5 font-semibold" x-text="d.date"></td>
+                <td class="py-1.5 text-right mono" x-text="'₹'+d.regular.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                <td class="py-1.5 text-right mono" x-text="'₹'+d.ot.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                <td class="py-1.5 text-right mono font-semibold" x-text="'₹'+d.total.toLocaleString('en-IN',{maximumFractionDigits:2})"></td></tr>
+            </template>
+          </tbody>
+          <tfoot><tr class="border-t-2 border-metfraa-gray-200 font-bold">
+            <td class="py-2">Grand total</td>
+            <td class="py-2 text-right mono" x-text="'₹'+m.labour_totals.regular.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+            <td class="py-2 text-right mono" x-text="'₹'+m.labour_totals.ot.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+            <td class="py-2 text-right mono text-metfraa-blue" x-text="'₹'+m.labour_totals.total.toLocaleString('en-IN',{maximumFractionDigits:2})"></td></tr></tfoot>
+        </table></div>
+      </div>
+    </template>
+
+    <!-- Contractors — day-wise spend (one column per contractor) -->
+    <template x-if="m && m.has_data && m.contractor_daily && m.contractor_daily.length">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
+        <div class="lbl mb-3">Contractors — day-wise spend</div>
+        <div class="overflow-x-auto"><table class="w-full text-sm">
+          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-1">Date</th>
+            <template x-for="(name,ci) in m.contractor_names" :key="ci">
+              <th class="py-1 text-right" x-text="name"></th>
+            </template>
+            <th class="py-1 text-right">Total ₹</th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="d in m.contractor_daily" :key="d.date">
+              <tr><td class="py-1.5 font-semibold" x-text="d.date"></td>
+                <template x-for="(amt,ci) in d.amounts" :key="ci">
+                  <td class="py-1.5 text-right mono" x-text="'₹'+amt.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                </template>
+                <td class="py-1.5 text-right mono font-semibold" x-text="'₹'+d.total.toLocaleString('en-IN',{maximumFractionDigits:2})"></td></tr>
+            </template>
+          </tbody>
+          <tfoot><tr class="border-t-2 border-metfraa-gray-200 font-bold">
+            <td class="py-2">Grand total</td>
+            <template x-for="(ct,ci) in m.contractor_col_totals" :key="ci">
+              <td class="py-2 text-right mono" x-text="'₹'+ct.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+            </template>
+            <td class="py-2 text-right mono text-metfraa-blue" x-text="'₹'+m.contractor_grand.toLocaleString('en-IN',{maximumFractionDigits:2})"></td></tr></tfoot>
+        </table></div>
+      </div>
+    </template>
+
+    <!-- Weight done — team x project -->
+    <template x-if="m && m.has_data && m.weight_rows && m.weight_rows.length">
+      <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
+        <div class="lbl mb-3">Weight done — team × project (Kg)</div>
+        <div class="overflow-x-auto"><table class="w-full text-sm">
+          <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-1">Team</th>
+            <template x-for="(p,pi) in m.weight_projects" :key="pi">
+              <th class="py-1 text-right" x-text="p"></th>
+            </template>
+            <th class="py-1 text-right">Total</th></tr></thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="row in m.weight_rows" :key="row.team">
+              <tr><td class="py-1.5 font-semibold" x-text="row.team"></td>
+                <template x-for="(wt,pi) in row.weights" :key="pi">
+                  <td class="py-1.5 text-right mono" x-text="wt.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                </template>
+                <td class="py-1.5 text-right mono font-semibold" x-text="row.total.toLocaleString('en-IN',{maximumFractionDigits:2})"></td></tr>
+            </template>
+          </tbody>
+          <tfoot><tr class="border-t-2 border-metfraa-gray-200 font-bold">
+            <td class="py-2">Grand total</td>
+            <template x-for="(ct,pi) in m.weight_col_totals" :key="pi">
+              <td class="py-2 text-right mono" x-text="ct.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+            </template>
+            <td class="py-2 text-right mono text-metfraa-blue" x-text="m.weight_grand.toLocaleString('en-IN',{maximumFractionDigits:2})"></td></tr></tfoot>
+        </table></div>
+      </div>
+    </template>
   </div>
 
   <!-- edit drawer -->
