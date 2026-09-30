@@ -1001,8 +1001,10 @@ function plantApp() {
       this.db = await r.json();
       this.$nextTick(() => this.drawCharts());
     },
-    drawJobChart() {
-      if (typeof Chart === 'undefined') { setTimeout(() => this.drawJobChart(), 200); return; }
+    drawJobChart(tries) {
+      tries = tries || 0;
+      if (typeof Chart === 'undefined') { if (tries < 25) setTimeout(() => this.drawJobChart(tries+1), 200); return; }
+      try {
       const jb = this.db && this.db.job_breakdown;
       const el = document.getElementById('jobChart');
       if (this.jobChart) { this.jobChart.destroy(); this.jobChart = null; }
@@ -1022,36 +1024,41 @@ function plantApp() {
                    title:{display:true,text:(this.jobMetric==='weight'?'Weight (Kg)':'Qty (Nos)')+' by job, split by team'}},
           scales:{ x:{stacked:true,beginAtZero:true}, y:{stacked:true} } }
       });
+      } catch(e) { console.warn('job chart skipped:', e); }
     },
-    drawCharts() {
-      if (typeof Chart === 'undefined') { setTimeout(() => this.drawCharts(), 200); return; }
-      const labels = this.db.days.map(d => d.date.slice(5));
-      if (this.attChart) this.attChart.destroy();
-      this.attChart = new Chart(document.getElementById('attChart'), {
-        type: 'line',
-        data: { labels, datasets: [
-          { label: 'Present', data: this.db.days.map(d=>d.present), borderColor:'#059669', backgroundColor:'rgba(5,150,105,.1)', tension:.3, fill:true },
-          { label: 'Half', data: this.db.days.map(d=>d.half), borderColor:'#d97706', tension:.3 },
-          { label: 'Absent', data: this.db.days.map(d=>d.absent), borderColor:'#dc2626', tension:.3 },
-          { label: 'Contractor', data: this.db.days.map(d=>d.contractor), borderColor:'#1F7CCB', borderDash:[4,3], tension:.3 },
-        ]},
-        options: { responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-                   plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
-                   scales:{y:{beginAtZero:true,ticks:{precision:0}}} }
-      });
+    drawCharts(tries) {
+      tries = tries || 0;
+      if (typeof Chart === 'undefined') { if (tries < 25) setTimeout(() => this.drawCharts(tries+1), 200); return; }
+      if (!this.db || !this.db.days) { this.drawJobChart(); return; }
+      try {
+        const labels = this.db.days.map(d => d.date.slice(5));
+        if (this.attChart) this.attChart.destroy();
+        this.attChart = new Chart(document.getElementById('attChart'), {
+          type: 'line',
+          data: { labels, datasets: [
+            { label: 'Present', data: this.db.days.map(d=>d.present), borderColor:'#059669', backgroundColor:'rgba(5,150,105,.1)', tension:.3, fill:true },
+            { label: 'Half', data: this.db.days.map(d=>d.half), borderColor:'#d97706', tension:.3 },
+            { label: 'Absent', data: this.db.days.map(d=>d.absent), borderColor:'#dc2626', tension:.3 },
+            { label: 'Contractor', data: this.db.days.map(d=>d.contractor), borderColor:'#1F7CCB', borderDash:[4,3], tension:.3 },
+          ]},
+          options: { responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+                     plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
+                     scales:{y:{beginAtZero:true,ticks:{precision:0}}} }
+        });
+        if (this.workChart) this.workChart.destroy();
+        this.workChart = new Chart(document.getElementById('workChart'), {
+          type: 'bar',
+          data: { labels, datasets: [
+            { label:'Weight (Kg)', data:this.db.days.map(d=>d.weight), backgroundColor:'#1F7CCB', yAxisID:'y' },
+            { label:'Qty (Nos)', type:'line', data:this.db.days.map(d=>d.qty), borderColor:'#0d1421', tension:.3, yAxisID:'y1' },
+          ]},
+          options: { responsive:true, maintainAspectRatio:false,
+                     plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
+                     scales:{ y:{beginAtZero:true,position:'left',title:{display:true,text:'Kg'}},
+                              y1:{beginAtZero:true,position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'Nos'}} } }
+        });
+      } catch(e) { console.warn('charts skipped:', e); }
       this.drawJobChart();
-      if (this.workChart) this.workChart.destroy();
-      this.workChart = new Chart(document.getElementById('workChart'), {
-        type: 'bar',
-        data: { labels, datasets: [
-          { label:'Weight (Kg)', data:this.db.days.map(d=>d.weight), backgroundColor:'#1F7CCB', yAxisID:'y' },
-          { label:'Qty (Nos)', type:'line', data:this.db.days.map(d=>d.qty), borderColor:'#0d1421', tension:.3, yAxisID:'y1' },
-        ]},
-        options: { responsive:true, maintainAspectRatio:false,
-                   plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}},
-                   scales:{ y:{beginAtZero:true,position:'left',title:{display:true,text:'Kg'}},
-                            y1:{beginAtZero:true,position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'Nos'}} } }
-      });
     },
     fmtDate(iso) { return new Date(iso+'T00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); },
     async loadRange() {
