@@ -386,6 +386,47 @@
     </div>
   </div>
 
+  <!-- ============ JOB MASTER ============ -->
+  <div x-show="masterTab === 'jobs'">
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div class="lbl">Job Master</div>
+        <button @click="editJob(null)"
+          class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add job</button>
+      </div>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left lbl border-b border-metfraa-gray-100">
+            <th class="py-2">Job ID</th><th class="py-2">Name</th><th class="py-2">Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-metfraa-gray-100">
+          <template x-for="j in jobsAll" :key="j.id">
+            <tr :class="!j.active && 'opacity-50'">
+              <td class="py-2 font-semibold mono" x-text="j.job_code || '—'"></td>
+              <td class="py-2" x-text="j.name"></td>
+              <td class="py-2"><span x-text="j.active ? 'Active' : 'Inactive'"
+                    :class="j.active ? 'text-green-700' : 'text-metfraa-gray-400'" class="text-xs font-semibold"></span></td>
+              <td class="py-2 text-right whitespace-nowrap">
+                <button @click="editJob(j)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
+                <button @click="delJob(j)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
+              </td>
+            </tr>
+          </template>
+          <template x-if="!jobsAll.length">
+            <tr><td colspan="4" class="py-4 text-center text-metfraa-gray-400 text-sm">No jobs yet. Click “Add job”.</td></tr>
+          </template>
+        </tbody>
+      </table>
+      <label class="flex items-center gap-2 text-xs text-metfraa-gray-500 mt-3">
+        <input type="checkbox" x-model="showInactiveJobs" @change="loadJobs()" class="rounded border-metfraa-gray-300">
+        Show inactive
+      </label>
+    </div>
+  </div>
+
+  </div><!-- /Master wrapper -->
+
   <!-- ============ DASHBOARD ============ -->
   <div x-show="tab === 'dashboard'">
     <div class="flex items-center gap-3 flex-wrap mb-5">
@@ -465,47 +506,6 @@
       </template>
     </div>
   </div>
-
-  <!-- ============ JOB MASTER ============ -->
-  <div x-show="masterTab === 'jobs'">
-    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
-      <div class="flex items-center justify-between mb-4">
-        <div class="lbl">Job Master</div>
-        <button @click="editJob(null)"
-          class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add job</button>
-      </div>
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="text-left lbl border-b border-metfraa-gray-100">
-            <th class="py-2">Job ID</th><th class="py-2">Name</th><th class="py-2">Status</th><th></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-metfraa-gray-100">
-          <template x-for="j in jobsAll" :key="j.id">
-            <tr :class="!j.active && 'opacity-50'">
-              <td class="py-2 font-semibold mono" x-text="j.job_code || '—'"></td>
-              <td class="py-2" x-text="j.name"></td>
-              <td class="py-2"><span x-text="j.active ? 'Active' : 'Inactive'"
-                    :class="j.active ? 'text-green-700' : 'text-metfraa-gray-400'" class="text-xs font-semibold"></span></td>
-              <td class="py-2 text-right whitespace-nowrap">
-                <button @click="editJob(j)" class="px-2 py-1 text-xs font-bold text-metfraa-blue">Edit</button>
-                <button @click="delJob(j)" class="px-2 py-1 text-xs font-bold text-red-600">Remove</button>
-              </td>
-            </tr>
-          </template>
-          <template x-if="!jobsAll.length">
-            <tr><td colspan="4" class="py-4 text-center text-metfraa-gray-400 text-sm">No jobs yet. Click “Add job”.</td></tr>
-          </template>
-        </tbody>
-      </table>
-      <label class="flex items-center gap-2 text-xs text-metfraa-gray-500 mt-3">
-        <input type="checkbox" x-model="showInactiveJobs" @change="loadJobs()" class="rounded border-metfraa-gray-300">
-        Show inactive
-      </label>
-    </div>
-  </div>
-
-  </div><!-- /Master wrapper -->
 
   <!-- ============ BROWSE ============ -->
   <div x-show="tab === 'browse'">
