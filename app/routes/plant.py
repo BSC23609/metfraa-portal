@@ -12,7 +12,7 @@ import logging
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -365,6 +365,23 @@ async def api_submit_day(request: Request, user: Employee = Depends(get_current_
         log.error("[plant] daily submit failed for %s: %s", d, e, exc_info=True)
         return {"ok": True, "date": d.isoformat(), "uploaded": False,
                 "message": f"Saved, but the OneDrive upload failed: {e}"}
+
+
+@router.get("/api/day/pdf")
+def api_day_pdf(date: str | None = None,
+                user: Employee = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    """Render a day's report fresh and return it inline (for in-app viewing)."""
+    _guard(db, user)
+    d = _parse_date(date)
+    labour, contractors, lwl, cwl, summary, has_data = _gather_day(db, d)
+    if not has_data:
+        raise HTTPException(status_code=404, detail="Nothing recorded on this day.")
+    from ..services.plant_pdf import build_daily_pdf
+    pdf = build_daily_pdf(d, labour, contractors, lwl, cwl, summary)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             f'inline; filename="plant-daily-{d.isoformat()}.pdf"'})
 
 
 # --------------------------------------------------------------- masters
@@ -1160,6 +1177,29 @@ async def api_monthly_submit(request: Request,
         log.error("[plant] monthly submit failed for %s-%s: %s", year, month, e, exc_info=True)
         return {"ok": True, "uploaded": False,
                 "message": f"The OneDrive upload failed: {e}"}
+
+
+@router.get("/api/monthly/pdf")
+def api_monthly_pdf(period: str | None = None,
+                    user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """Render the monthly report fresh and return it inline (for in-app viewing)."""
+    _guard(db, user)
+    if period:
+        try:
+            year, month = (int(x) for x in period.split("-"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="period must be YYYY-MM")
+    else:
+        year, month = _current_cycle()
+    company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    if not has_data:
+        raise HTTPException(status_code=404, detail="Nothing recorded for this cycle.")
+    from ..services.plant_pdf import build_monthly_pdf
+    pdf = build_monthly_pdf(year, month, company, contractors, work_summary, total_weight)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             f'inline; filename="{_cycle_filename(year, month)}"'})
 
 
 PLANT_HR_TO = "admin@metfraa.com"

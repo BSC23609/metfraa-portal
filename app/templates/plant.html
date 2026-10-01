@@ -562,6 +562,9 @@
           Day pay ₹ <span class="font-bold text-metfraa-blue" x-text="(brDay.summary.pay_amount||0).toLocaleString('en-IN')"></span>
           <span class="text-metfraa-gray-400" x-text="'(reg ₹'+(brDay.summary.regular_amount||0).toLocaleString('en-IN')+')'"></span>
         </div>
+        <button x-show="brDay && brDay.summary.has_data"
+          @click="viewPdf('/plant/api/day/pdf?date=' + brDay.date, fmtDate(brDay.date) + ' — daily report')"
+          class="text-xs font-semibold px-3 py-1.5 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue hover:bg-metfraa-blue/5 whitespace-nowrap">View PDF</button>
       </div>
       <template x-if="brDay && !brDay.summary.has_data">
         <div class="text-sm text-metfraa-gray-400 py-4">Nothing recorded on this day.</div>
@@ -692,6 +695,9 @@
         <input type="month" x-model="mPeriod" @change="loadMonthly()" class="rounded-lg border-metfraa-gray-300 text-sm">
         <span x-show="m && m.cycle_label" class="text-sm font-semibold text-metfraa-ink" x-text="m ? m.cycle_label : ''"></span>
         <div class="ml-auto flex gap-2">
+          <button @click="viewPdf('/plant/api/monthly/pdf' + (mPeriod ? ('?period=' + mPeriod) : ''), (m && m.cycle_label ? m.cycle_label : 'Monthly') + ' — report')"
+            :disabled="!m || !m.has_data"
+            class="px-5 py-2.5 rounded-lg ring-1 ring-metfraa-gray-300 text-metfraa-ink text-sm font-bold disabled:opacity-50">View PDF</button>
           <button @click="submitMonthly()" :disabled="mSubmitting || mSending || !m || !m.has_data"
             class="px-5 py-2.5 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold disabled:opacity-50">
             <span x-text="mSubmitting ? 'Generating…' : 'Generate & Submit to OneDrive'"></span>
@@ -883,6 +889,21 @@
       </template>
     </div>
   </div>
+
+  <!-- shared PDF viewer modal -->
+  <div x-show="pdfUrl" x-cloak @click.self="closePdf()" @keydown.escape.window="closePdf()"
+       class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3 sm:p-6">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[88vh] flex flex-col overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-metfraa-gray-200">
+        <div class="font-bold text-metfraa-ink text-sm" x-text="pdfTitle"></div>
+        <div class="flex items-center gap-4">
+          <a :href="pdfUrl" target="_blank" class="text-xs font-semibold text-metfraa-blue hover:underline">Open in new tab ↗</a>
+          <button @click="closePdf()" class="text-metfraa-gray-500 hover:text-metfraa-ink text-2xl leading-none">&times;</button>
+        </div>
+      </div>
+      <iframe :src="pdfUrl" class="flex-1 w-full" title="PDF preview"></iframe>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -899,6 +920,7 @@ function plantApp() {
     rangeDays: [], brDay: null,
     labourAll: [], contractorsAll: [], showInactiveLabour: false, showInactiveContr: false,
     drawer: null, form: {},
+    pdfUrl: '', pdfTitle: '',
 
     tabs: [{ id: 'day', label: 'Attendance' }, { id: 'dashboard', label: 'Dashboard' },
            { id: 'browse', label: 'Browse' }, { id: 'monthly', label: 'Monthly Report' },
@@ -1196,6 +1218,8 @@ function plantApp() {
         alert(d.message || 'Done');
       } finally { this.mSubmitting = false; }
     },
+    viewPdf(url, title) { this.pdfUrl = url; this.pdfTitle = title || 'Report'; },
+    closePdf() { this.pdfUrl = ''; this.pdfTitle = ''; },
     async saveContractor() {
       const r = await fetch('/plant/api/contractors', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
