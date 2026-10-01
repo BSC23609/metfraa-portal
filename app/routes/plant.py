@@ -292,21 +292,31 @@ def _gather_day(db: Session, d):
     la = (db.query(PlantLabourAttendance)
           .filter(PlantLabourAttendance.att_date == d)
           .order_by(PlantLabourAttendance.labour_id).all())
+    def _lreg(a):
+        sal = (lmap[a.labour_id].per_day_salary or 0) if a.labour_id in lmap else 0
+        return sal if a.status == "P" else (round(sal * 0.5, 2) if a.status == "H" else 0.0)
     labour = [{"name": lmap[a.labour_id].name if a.labour_id in lmap else "—",
                "designation": (lmap[a.labour_id].designation or "") if a.labour_id in lmap else "",
                "status": a.status, "half_part": a.half_part, "ot": bool(a.ot),
-               "ot_hours": a.ot_hours, "ot_amount": a.ot_amount} for a in la]
+               "ot_hours": a.ot_hours, "ot_amount": a.ot_amount,
+               "regular": _lreg(a), "total": round(_lreg(a) + a.ot_amount, 2)} for a in la]
     cmap = {c.id: c for c in db.query(PlantContractor).all()}
     ca = (db.query(PlantContractorAttendance)
           .filter(PlantContractorAttendance.att_date == d)
           .order_by(PlantContractorAttendance.contractor_id).all())
+    def _creg(a):
+        rate = (cmap[a.contractor_id].per_day_rate or 0) if a.contractor_id in cmap else 0
+        present = a.skilled + a.helper
+        half = a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper
+        return round((present + 0.5 * half) * rate, 2)
     contractors = [{"name": cmap[a.contractor_id].name if a.contractor_id in cmap else "—",
                     "skilled": a.skilled, "helper": a.helper,
                     "absent": a.absent_skilled + a.absent_helper,
                     "half": a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper,
                     "absent_remarks": " · ".join(x for x in [a.absent_remarks, a.half1_remarks, a.half2_remarks] if x),
                     "ot": bool(a.ot), "ot_persons": a.ot_persons, "ot_hours": a.ot_hours,
-                    "ot_amount": a.ot_amount} for a in ca]
+                    "ot_amount": a.ot_amount,
+                    "regular": _creg(a), "total": round(_creg(a) + a.ot_amount, 2)} for a in ca]
     jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
             for j in db.query(PlantJob).all()}
     lwl = [{"job": jmap.get(w.job_id, ""), "nature_of_work": w.nature_of_work or "",
@@ -746,7 +756,7 @@ def api_dashboard(start: str | None = None, end: str | None = None,
     """Aggregates for the dashboard over a date range:
       * daily attendance trend (present/half/absent + contractor headcount)
       * qty & weight produced per day (own team + contractors combined)
-      * qty & weight totals per contractor team (own team shown as 'Own team')
+      * qty & weight totals per contractor team (own team shown as 'Metfraa Team')
       * headline totals for the range."""
     _guard(db, user)
     e = _parse_date(end)
@@ -783,11 +793,11 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         k = w.log_date.isoformat()
         trend[k]["qty"] += w.qty_nos or 0
         trend[k]["weight"] += w.weight_kg or 0
-        per_team["Own team"]["qty"] += w.qty_nos or 0
-        per_team["Own team"]["weight"] += w.weight_kg or 0
+        per_team["Metfraa Team"]["qty"] += w.qty_nos or 0
+        per_team["Metfraa Team"]["weight"] += w.weight_kg or 0
         jn = jmap.get(w.job_id, "No job")
-        job_team[jn]["Own team"]["qty"] += w.qty_nos or 0
-        job_team[jn]["Own team"]["weight"] += w.weight_kg or 0
+        job_team[jn]["Metfraa Team"]["qty"] += w.qty_nos or 0
+        job_team[jn]["Metfraa Team"]["weight"] += w.weight_kg or 0
     for w in (db.query(PlantContractorWorkLog)
               .filter(PlantContractorWorkLog.log_date >= s_,
                       PlantContractorWorkLog.log_date <= e).all()):
@@ -955,11 +965,14 @@ def _build_monthly(db: Session, year: int, month: int):
             day_md = present + 0.5 * half
             mandays += day_md
             ot_amt += a.ot_amount
+            day_reg = round(day_md * (c.per_day_rate or 0), 2)
             crows.append({"date": a.att_date.strftime("%d %b %Y"),
                           "skilled": a.skilled, "helper": a.helper, "total": present,
                           "half": half, "absent": absent, "mandays": day_md,
                           "ot_persons": a.ot_persons if a.ot else 0,
-                          "ot_amount": a.ot_amount})
+                          "ot_amount": a.ot_amount,
+                          "reg_amount": day_reg,
+                          "day_amount": round(day_reg + a.ot_amount, 2)})
         base = round(mandays * (c.per_day_rate or 0), 2)
         contractors.append({"name": c.name, "rows": crows,
                             "totals": {"mandays": mandays, "base": base,
@@ -972,9 +985,9 @@ def _build_monthly(db: Session, year: int, month: int):
     for w in (db.query(PlantLabourWorkLog)
               .filter(PlantLabourWorkLog.log_date >= start,
                       PlantLabourWorkLog.log_date <= end).all()):
-        ts["Own team"]["work_lines"] += 1
-        ts["Own team"]["qty"] += w.qty_nos or 0
-        ts["Own team"]["weight"] += w.weight_kg or 0
+        ts["Metfraa Team"]["work_lines"] += 1
+        ts["Metfraa Team"]["qty"] += w.qty_nos or 0
+        ts["Metfraa Team"]["weight"] += w.weight_kg or 0
     for w in (db.query(PlantContractorWorkLog)
               .filter(PlantContractorWorkLog.log_date >= start,
                       PlantContractorWorkLog.log_date <= end).all()):
@@ -1060,7 +1073,7 @@ def _monthly_screen_breakdown(db: Session, year: int, month: int):
               .filter(PlantLabourWorkLog.log_date >= start,
                       PlantLabourWorkLog.log_date <= end).all()):
         proj = jmap.get(w.job_id, "No job")
-        wcell["Own team"][proj] += w.weight_kg or 0
+        wcell["Metfraa Team"][proj] += w.weight_kg or 0
         projects.add(proj)
     for w in (db.query(PlantContractorWorkLog)
               .filter(PlantContractorWorkLog.log_date >= start,

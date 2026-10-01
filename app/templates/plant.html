@@ -44,10 +44,10 @@
       </div>
     </div>
 
-    <!-- Own labour -->
+    <!-- Metfraa Team -->
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
       <div class="flex items-center justify-between mb-3">
-        <div class="lbl">Own labour</div>
+        <div class="lbl">Metfraa Team</div>
         <div class="text-xs text-metfraa-gray-500">
           Present <span class="font-semibold" x-text="presentCount"></span> ·
           Half <span class="font-semibold" x-text="halfCount"></span> ·
@@ -184,7 +184,7 @@
     <!-- Labour work log -->
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
       <div class="flex items-center justify-between mb-3">
-        <div class="lbl">Own-team work log</div>
+        <div class="lbl">Metfraa Team work log</div>
         <button @click="addLabourWork()"
           class="px-3 py-1.5 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add row</button>
       </div>
@@ -569,7 +569,7 @@
 
       <template x-if="brDay && brDay.labour.length">
         <div class="mb-5">
-          <div class="lbl mb-2">Own labour</div>
+          <div class="lbl mb-2">Metfraa Team</div>
           <table class="w-full text-sm">
             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
               <th class="py-1">Name</th><th class="py-1 text-center">Status</th>
@@ -641,7 +641,7 @@
 
       <template x-if="brDay && brDay.labour_worklog.length">
         <div class="mb-5">
-          <div class="lbl mb-2">Own-team work log</div>
+          <div class="lbl mb-2">Metfraa Team work log</div>
           <div class="overflow-x-auto"><table class="w-full text-sm">
             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
               <th class="py-1">Job</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Sk</th><th class="py-1 text-center">Hp</th>
@@ -738,10 +738,10 @@
       </div>
     </div>
 
-    <!-- Own labour — day-wise spend -->
+    <!-- Metfraa Team — day-wise spend -->
     <template x-if="m && m.has_data && m.labour_daily && m.labour_daily.length">
       <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
-        <div class="lbl mb-3">Own labour — day-wise spend</div>
+        <div class="lbl mb-3">Metfraa Team — day-wise spend</div>
         <div class="overflow-x-auto"><table class="w-full text-sm">
           <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
             <th class="py-1">Date</th><th class="py-1 text-right">Regular ₹</th>

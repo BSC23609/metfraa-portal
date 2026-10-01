@@ -1,0 +1,324 @@
+diff --git a/app/routes/plant.py b/app/routes/plant.py
+index 7be42ab..84be68d 100644
+--- a/app/routes/plant.py
++++ b/app/routes/plant.py
+@@ -292,21 +292,31 @@ def _gather_day(db: Session, d):
+     la = (db.query(PlantLabourAttendance)
+           .filter(PlantLabourAttendance.att_date == d)
+           .order_by(PlantLabourAttendance.labour_id).all())
++    def _lreg(a):
++        sal = (lmap[a.labour_id].per_day_salary or 0) if a.labour_id in lmap else 0
++        return sal if a.status == "P" else (round(sal * 0.5, 2) if a.status == "H" else 0.0)
+     labour = [{"name": lmap[a.labour_id].name if a.labour_id in lmap else "—",
+                "designation": (lmap[a.labour_id].designation or "") if a.labour_id in lmap else "",
+                "status": a.status, "half_part": a.half_part, "ot": bool(a.ot),
+-               "ot_hours": a.ot_hours, "ot_amount": a.ot_amount} for a in la]
++               "ot_hours": a.ot_hours, "ot_amount": a.ot_amount,
++               "regular": _lreg(a), "total": round(_lreg(a) + a.ot_amount, 2)} for a in la]
+     cmap = {c.id: c for c in db.query(PlantContractor).all()}
+     ca = (db.query(PlantContractorAttendance)
+           .filter(PlantContractorAttendance.att_date == d)
+           .order_by(PlantContractorAttendance.contractor_id).all())
++    def _creg(a):
++        rate = (cmap[a.contractor_id].per_day_rate or 0) if a.contractor_id in cmap else 0
++        present = a.skilled + a.helper
++        half = a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper
++        return round((present + 0.5 * half) * rate, 2)
+     contractors = [{"name": cmap[a.contractor_id].name if a.contractor_id in cmap else "—",
+                     "skilled": a.skilled, "helper": a.helper,
+                     "absent": a.absent_skilled + a.absent_helper,
+                     "half": a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper,
+                     "absent_remarks": " · ".join(x for x in [a.absent_remarks, a.half1_remarks, a.half2_remarks] if x),
+                     "ot": bool(a.ot), "ot_persons": a.ot_persons, "ot_hours": a.ot_hours,
+-                    "ot_amount": a.ot_amount} for a in ca]
++                    "ot_amount": a.ot_amount,
++                    "regular": _creg(a), "total": round(_creg(a) + a.ot_amount, 2)} for a in ca]
+     jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
+             for j in db.query(PlantJob).all()}
+     lwl = [{"job": jmap.get(w.job_id, ""), "nature_of_work": w.nature_of_work or "",
+@@ -746,7 +756,7 @@ def api_dashboard(start: str | None = None, end: str | None = None,
+     """Aggregates for the dashboard over a date range:
+       * daily attendance trend (present/half/absent + contractor headcount)
+       * qty & weight produced per day (own team + contractors combined)
+-      * qty & weight totals per contractor team (own team shown as 'Own team')
++      * qty & weight totals per contractor team (own team shown as 'Metfraa Team')
+       * headline totals for the range."""
+     _guard(db, user)
+     e = _parse_date(end)
+@@ -783,11 +793,11 @@ def api_dashboard(start: str | None = None, end: str | None = None,
+         k = w.log_date.isoformat()
+         trend[k]["qty"] += w.qty_nos or 0
+         trend[k]["weight"] += w.weight_kg or 0
+-        per_team["Own team"]["qty"] += w.qty_nos or 0
+-        per_team["Own team"]["weight"] += w.weight_kg or 0
++        per_team["Metfraa Team"]["qty"] += w.qty_nos or 0
++        per_team["Metfraa Team"]["weight"] += w.weight_kg or 0
+         jn = jmap.get(w.job_id, "No job")
+-        job_team[jn]["Own team"]["qty"] += w.qty_nos or 0
+-        job_team[jn]["Own team"]["weight"] += w.weight_kg or 0
++        job_team[jn]["Metfraa Team"]["qty"] += w.qty_nos or 0
++        job_team[jn]["Metfraa Team"]["weight"] += w.weight_kg or 0
+     for w in (db.query(PlantContractorWorkLog)
+               .filter(PlantContractorWorkLog.log_date >= s_,
+                       PlantContractorWorkLog.log_date <= e).all()):
+@@ -955,11 +965,14 @@ def _build_monthly(db: Session, year: int, month: int):
+             day_md = present + 0.5 * half
+             mandays += day_md
+             ot_amt += a.ot_amount
++            day_reg = round(day_md * (c.per_day_rate or 0), 2)
+             crows.append({"date": a.att_date.strftime("%d %b %Y"),
+                           "skilled": a.skilled, "helper": a.helper, "total": present,
+                           "half": half, "absent": absent, "mandays": day_md,
+                           "ot_persons": a.ot_persons if a.ot else 0,
+-                          "ot_amount": a.ot_amount})
++                          "ot_amount": a.ot_amount,
++                          "reg_amount": day_reg,
++                          "day_amount": round(day_reg + a.ot_amount, 2)})
+         base = round(mandays * (c.per_day_rate or 0), 2)
+         contractors.append({"name": c.name, "rows": crows,
+                             "totals": {"mandays": mandays, "base": base,
+@@ -972,9 +985,9 @@ def _build_monthly(db: Session, year: int, month: int):
+     for w in (db.query(PlantLabourWorkLog)
+               .filter(PlantLabourWorkLog.log_date >= start,
+                       PlantLabourWorkLog.log_date <= end).all()):
+-        ts["Own team"]["work_lines"] += 1
+-        ts["Own team"]["qty"] += w.qty_nos or 0
+-        ts["Own team"]["weight"] += w.weight_kg or 0
++        ts["Metfraa Team"]["work_lines"] += 1
++        ts["Metfraa Team"]["qty"] += w.qty_nos or 0
++        ts["Metfraa Team"]["weight"] += w.weight_kg or 0
+     for w in (db.query(PlantContractorWorkLog)
+               .filter(PlantContractorWorkLog.log_date >= start,
+                       PlantContractorWorkLog.log_date <= end).all()):
+@@ -1060,7 +1073,7 @@ def _monthly_screen_breakdown(db: Session, year: int, month: int):
+               .filter(PlantLabourWorkLog.log_date >= start,
+                       PlantLabourWorkLog.log_date <= end).all()):
+         proj = jmap.get(w.job_id, "No job")
+-        wcell["Own team"][proj] += w.weight_kg or 0
++        wcell["Metfraa Team"][proj] += w.weight_kg or 0
+         projects.add(proj)
+     for w in (db.query(PlantContractorWorkLog)
+               .filter(PlantContractorWorkLog.log_date >= start,
+diff --git a/app/services/plant_pdf.py b/app/services/plant_pdf.py
+index 5aef8b2..acf36fa 100644
+--- a/app/services/plant_pdf.py
++++ b/app/services/plant_pdf.py
+@@ -156,60 +156,70 @@ def build_daily_pdf(d: date, labour: list, contractors: list,
+     chip(L + 378, "OT amount", "₹ " + _fmt(summary.get("ot_amount", 0), 0), BLUE)
+     y -= 64
+ 
+-    y = _section(c, y, "Own labour")
+-    y = _thead(c, y, [("Name", 0), ("Designation", 140), ("Status", 255),
+-                      ("OT hrs", 360), ("OT amt", 445)])
++    y = _section(c, y, "Metfraa Team")
++    lab_cols = [("Name", 0), ("Designation", 108), ("Status", 200), ("Reg ₹", 250),
++                ("OT hrs", 330), ("OT ₹", 385), ("Total ₹", 450)]
++    y = _thead(c, y, lab_cols)
+     c.setFont(_f(), 9)
+     for i, l in enumerate(labour):
+         rh = 18
+         if y - rh < 60:
+             _footer(c, foot, "1"); c.showPage(); y = _header(c, "Metfraa / Plant Operations",
+                                                              "Daily Attendance Report", ref)
+-            y = _thead(c, y, [("Name", 0), ("Designation", 140), ("Status", 255),
+-                              ("OT hrs", 360), ("OT amt", 445)])
++            y = _thead(c, y, lab_cols)
+         if i % 2 == 0:
+             c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
+         st = l["status"]
+         st_disp = st + ((" (1st)" if l.get("half_part") == 1 else " (2nd)") if st == "H" and l.get("half_part") else "")
+         c.setFillColor(_hx(INK)); c.setFont(_f(), 9)
+-        c.drawString(L + 8, y - 13, _clip(c, l["name"], _f(), 9, 128))
+-        c.setFillColor(_hx(MUTED)); c.drawString(L + 148, y - 13, _clip(c, l.get("designation", ""), _f(), 9, 110))
+-        c.setFillColor(_hx(STATUS_COL.get(st, INK))); c.setFont(_f(True), 9); c.drawString(L + 263, y - 13, st_disp)
++        c.drawString(L + 8, y - 13, _clip(c, l["name"], _f(), 9, 95))
++        c.setFillColor(_hx(MUTED)); c.drawString(L + 116, y - 13, _clip(c, l.get("designation", ""), _f(), 9, 82))
++        c.setFillColor(_hx(STATUS_COL.get(st, INK))); c.setFont(_f(True), 9); c.drawString(L + 208, y - 13, st_disp)
+         c.setFillColor(_hx(INK)); c.setFont(_f(), 9)
++        c.drawString(L + 258, y - 13, "₹" + _fmt(l.get("regular", 0), 0))
+         if l.get("ot"):
+-            c.drawString(L + 368, y - 13, _fmt(l.get("ot_hours", 0), 1).rstrip("0").rstrip("."))
+-            c.drawString(L + 453, y - 13, "₹" + _fmt(l.get("ot_amount", 0), 0))
++            c.drawString(L + 338, y - 13, _fmt(l.get("ot_hours", 0), 1).rstrip("0").rstrip("."))
++            c.drawString(L + 393, y - 13, "₹" + _fmt(l.get("ot_amount", 0), 0))
++        else:
++            c.setFillColor(_hx(MUTED)); c.drawString(L + 338, y - 13, "—"); c.drawString(L + 393, y - 13, "—")
++            c.setFillColor(_hx(INK))
++        c.setFont(_f(True), 9); c.drawString(L + 458, y - 13, "₹" + _fmt(l.get("total", 0), 0)); c.setFont(_f(), 9)
+         y -= rh
+     y -= 18
+ 
+     y = _section(c, y, "Contractor attendance")
+-    y = _thead(c, y, [("Team", 0), ("Sk", 170), ("Hp", 205), ("Absent", 240),
+-                      ("Half", 290), ("OT", 335), ("OT amt", 455)])
++    con_cols = [("Team", 0), ("Sk", 150), ("Hp", 180), ("Absent", 210), ("Half", 252),
++                ("OT", 292), ("Reg ₹", 340), ("OT ₹", 408), ("Total ₹", 460)]
++    y = _thead(c, y, con_cols)
+     c.setFont(_f(), 9)
+     for i, ct in enumerate(contractors):
+         rh = 18
+         if i % 2 == 0:
+             c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
+         c.setFillColor(_hx(INK)); c.setFont(_f(True), 9)
+-        c.drawString(L + 8, y - 13, _clip(c, ct["name"], _f(True), 9, 155))
++        c.drawString(L + 8, y - 13, _clip(c, ct["name"], _f(True), 9, 135))
+         c.setFont(_f(), 9)
+-        c.drawString(L + 178, y - 13, str(ct.get("skilled", 0)))
+-        c.drawString(L + 213, y - 13, str(ct.get("helper", 0)))
+-        c.drawString(L + 248, y - 13, str(ct.get("absent", 0)) if ct.get("absent") else "—")
+-        c.drawString(L + 298, y - 13, str(ct.get("half", 0)) if ct.get("half") else "—")
++        c.drawString(L + 158, y - 13, str(ct.get("skilled", 0)))
++        c.drawString(L + 188, y - 13, str(ct.get("helper", 0)))
++        c.drawString(L + 218, y - 13, str(ct.get("absent", 0)) if ct.get("absent") else "—")
++        c.drawString(L + 260, y - 13, str(ct.get("half", 0)) if ct.get("half") else "—")
++        if ct.get("ot"):
++            c.drawString(L + 300, y - 13, f"{ct.get('ot_persons', 0)}×{_fmt(ct.get('ot_hours', 0), 1).rstrip('0').rstrip('.')}h")
++        else:
++            c.setFillColor(_hx(MUTED)); c.drawString(L + 300, y - 13, "—"); c.setFillColor(_hx(INK))
++        c.drawString(L + 348, y - 13, "₹" + _fmt(ct.get("regular", 0), 0))
+         if ct.get("ot"):
+-            c.drawString(L + 343, y - 13, f"{ct.get('ot_persons', 0)}×{_fmt(ct.get('ot_hours', 0), 1).rstrip('0').rstrip('.')}h")
+-            c.drawString(L + 463, y - 13, "₹" + _fmt(ct.get("ot_amount", 0), 0))
++            c.drawString(L + 416, y - 13, "₹" + _fmt(ct.get("ot_amount", 0), 0))
+         else:
+-            c.setFillColor(_hx(MUTED)); c.drawString(L + 343, y - 13, "—")
+-            c.drawString(L + 463, y - 13, "—")
++            c.setFillColor(_hx(MUTED)); c.drawString(L + 416, y - 13, "—"); c.setFillColor(_hx(INK))
++        c.setFont(_f(True), 9); c.drawString(L + 468, y - 13, "₹" + _fmt(ct.get("total", 0), 0)); c.setFont(_f(), 9)
+         y -= rh
+     _footer(c, foot, "1")
+     c.showPage()
+ 
+     # ---- page 2: work logs ----
+     y = _header(c, "Metfraa / Plant Operations", "Daily Work Log", ref)
+-    y = _section(c, y, "Own-team work log")
++    y = _section(c, y, "Metfraa Team work log")
+     hdr = [("Job", 0), ("Nature of Work", 110), ("Sk", 235), ("Hp", 262),
+            ("Qty", 290), ("Weight (Kg)", 340), ("Remarks", 420)]
+     y = _thead(c, y, hdr)
+@@ -312,10 +322,10 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
+                        "count & pay). H counts as 0.5 day.")
+     y -= 20
+     nameW = 72
+-    cw = (R - L - nameW - 130) / ndays   # leave 130pt for the 4 summary cols
++    cw = (R - L - nameW - 168) / ndays   # leave 168pt for the 5 summary cols
+     x0 = L + nameW
+     grid_end = x0 + ndays * cw
+-    c_days = grid_end + 6; c_amt = grid_end + 34; c_oth = grid_end + 82; c_ota = grid_end + 106
++    c_days = grid_end + 6; c_amt = grid_end + 32; c_oth = grid_end + 78; c_ota = grid_end + 100; c_tot = grid_end + 132
+ 
+     def grid_header():
+         c.setFont(_f(True), 6); c.setFillColor(_hx(INK))
+@@ -324,7 +334,7 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
+             c.drawCentredString(x0 + i * cw + cw / 2, y, str(dt.day))
+         c.setFont(_f(True), 6.5)
+         c.drawString(c_days, y, "Days"); c.drawString(c_amt, y, "Salary")
+-        c.drawString(c_oth, y, "OT hr"); c.drawString(c_ota, y, "OT ₹")
++        c.drawString(c_oth, y, "OT hr"); c.drawString(c_ota, y, "OT ₹"); c.drawString(c_tot, y, "Total")
+ 
+     grid_header()
+     y -= 4; c.setStrokeColor(_hx(LINE)); c.line(L, y, R, y); y -= 12
+@@ -351,6 +361,7 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
+         c.setFillColor(_hx(BLUE) if r["ot_hours"] else _hx(MUTED))
+         c.drawString(c_oth, y, _fmt(r["ot_hours"], 1).rstrip("0").rstrip(".") if r["ot_hours"] else "—")
+         c.drawString(c_ota, y, _fmt(r["ot_amount"], 0) if r["ot_amount"] else "—")
++        c.setFillColor(_hx(INK)); c.drawString(c_tot, y, _fmt(r["amount"] + r["ot_amount"], 0))
+         y -= 14
+     y -= 10
+     t = company["totals"]
+@@ -371,8 +382,8 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
+     for ct in contractors:
+         y = _header(c, "Metfraa / Plant Operations", "Monthly — " + ct["name"], mlabel)
+         y = _section(c, y, "Daily headcount")
+-        hdr = [("Date", 0), ("Present", 95), ("Absent", 155), ("Half", 210),
+-               ("Man-days", 265), ("OT persons", 360), ("OT amt", 470)]
++        hdr = [("Date", 0), ("Present", 68), ("Absent", 118), ("Half", 160),
++               ("M-days", 205), ("Reg ₹", 258), ("OT ppl", 330), ("OT ₹", 390), ("Total ₹", 450)]
+         y = _thead(c, y, hdr)
+         c.setFont(_f(), 9)
+         for i, row in enumerate(ct["rows"]):
+@@ -385,17 +396,20 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
+                 c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
+             c.setFillColor(_hx(INK))
+             c.drawString(L + 8, y - 12, row["date"])
+-            c.drawString(L + 103, y - 12, str(row["total"]))
+-            c.drawString(L + 163, y - 12, str(row.get("absent", 0)) if row.get("absent") else "—")
+-            c.drawString(L + 218, y - 12, str(row.get("half", 0)) if row.get("half") else "—")
++            c.drawString(L + 76, y - 12, str(row["total"]))
++            c.drawString(L + 126, y - 12, str(row.get("absent", 0)) if row.get("absent") else "—")
++            c.drawString(L + 168, y - 12, str(row.get("half", 0)) if row.get("half") else "—")
+             md = row.get("mandays", row["total"])
+-            c.drawString(L + 273, y - 12, _fmt(md, 1).rstrip("0").rstrip("."))
++            c.drawString(L + 213, y - 12, _fmt(md, 1).rstrip("0").rstrip("."))
++            c.drawString(L + 266, y - 12, "₹" + _fmt(row.get("reg_amount", 0), 0))
+             if row["ot_persons"]:
+-                c.drawString(L + 368, y - 12, str(row["ot_persons"]))
+-                c.drawString(L + 478, y - 12, "₹" + _fmt(row["ot_amount"], 0))
++                c.drawString(L + 338, y - 12, str(row["ot_persons"]))
++                c.drawString(L + 398, y - 12, "₹" + _fmt(row["ot_amount"], 0))
+             else:
+                 c.setFillColor(_hx(MUTED))
+-                c.drawString(L + 368, y - 12, "—"); c.drawString(L + 478, y - 12, "—")
++                c.drawString(L + 338, y - 12, "—"); c.drawString(L + 398, y - 12, "—")
++                c.setFillColor(_hx(INK))
++            c.setFont(_f(True), 9); c.drawString(L + 458, y - 12, "₹" + _fmt(row.get("day_amount", 0), 0)); c.setFont(_f(), 9)
+             y -= rh
+         y -= 10
+         tt = ct["totals"]
+diff --git a/app/templates/plant.html b/app/templates/plant.html
+index 1ab874e..ac794b7 100644
+--- a/app/templates/plant.html
++++ b/app/templates/plant.html
+@@ -44,10 +44,10 @@
+       </div>
+     </div>
+ 
+-    <!-- Own labour -->
++    <!-- Metfraa Team -->
+     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
+       <div class="flex items-center justify-between mb-3">
+-        <div class="lbl">Own labour</div>
++        <div class="lbl">Metfraa Team</div>
+         <div class="text-xs text-metfraa-gray-500">
+           Present <span class="font-semibold" x-text="presentCount"></span> ·
+           Half <span class="font-semibold" x-text="halfCount"></span> ·
+@@ -184,7 +184,7 @@
+     <!-- Labour work log -->
+     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
+       <div class="flex items-center justify-between mb-3">
+-        <div class="lbl">Own-team work log</div>
++        <div class="lbl">Metfraa Team work log</div>
+         <button @click="addLabourWork()"
+           class="px-3 py-1.5 rounded-lg bg-metfraa-blue text-white text-xs font-bold">+ Add row</button>
+       </div>
+@@ -569,7 +569,7 @@
+ 
+       <template x-if="brDay && brDay.labour.length">
+         <div class="mb-5">
+-          <div class="lbl mb-2">Own labour</div>
++          <div class="lbl mb-2">Metfraa Team</div>
+           <table class="w-full text-sm">
+             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+               <th class="py-1">Name</th><th class="py-1 text-center">Status</th>
+@@ -641,7 +641,7 @@
+ 
+       <template x-if="brDay && brDay.labour_worklog.length">
+         <div class="mb-5">
+-          <div class="lbl mb-2">Own-team work log</div>
++          <div class="lbl mb-2">Metfraa Team work log</div>
+           <div class="overflow-x-auto"><table class="w-full text-sm">
+             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+               <th class="py-1">Job</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Sk</th><th class="py-1 text-center">Hp</th>
+@@ -738,10 +738,10 @@
+       </div>
+     </div>
+ 
+-    <!-- Own labour — day-wise spend -->
++    <!-- Metfraa Team — day-wise spend -->
+     <template x-if="m && m.has_data && m.labour_daily && m.labour_daily.length">
+       <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
+-        <div class="lbl mb-3">Own labour — day-wise spend</div>
++        <div class="lbl mb-3">Metfraa Team — day-wise spend</div>
+         <div class="overflow-x-auto"><table class="w-full text-sm">
+           <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
+             <th class="py-1">Date</th><th class="py-1 text-right">Regular ₹</th>
