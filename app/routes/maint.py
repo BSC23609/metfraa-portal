@@ -7,8 +7,8 @@ later slices. Access is gated by the maint_admin flag (superadmin implies it).
 import logging
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from ..access import get_access
 from ..database import get_db
 from ..deps import get_current_user
+from ..services import onedrive as _od
 from ..models import (Employee, MaintAsset, MaintEvent, MaintMachineType,
                       MaintPMPlan, MaintReading, PlantLabour)
 
@@ -639,3 +640,89 @@ def api_dashboard(user: Employee = Depends(get_current_user), db: Session = Depe
         "pm": {"active_plans": active_plans, "due": due, "overdue": overdue,
                "compliance_pct": compliance, "pm_done_30": pm_30},
     }
+
+
+# ------------------------------------------------------------------ PDFs
+
+def _asset_events_sorted(db: Session, asset_id: int):
+    rows = db.query(MaintEvent).filter(MaintEvent.asset_id == asset_id).all()
+    rows.sort(key=lambda e: (e.event_date or date.min, e.id))
+    return rows
+
+
+def _breakdown_rows(db: Session, frm, to, asset_id):
+    qy = db.query(MaintEvent).filter(MaintEvent.category == "Breakdown")
+    if asset_id:
+        qy = qy.filter(MaintEvent.asset_id == asset_id)
+    df, dt = _pdate(frm), _pdate(to)
+    rows = [e for e in qy.all()
+            if (not df or (e.event_date and e.event_date >= df))
+            and (not dt or (e.event_date and e.event_date <= dt))]
+    rows.sort(key=lambda e: (e.event_date or date.min, e.id), reverse=True)
+    return rows
+
+
+def _range_label(frm, to):
+    if frm and to:
+        return f"{frm} to {to}"
+    if frm:
+        return f"from {frm}"
+    if to:
+        return f"up to {to}"
+    return "All dates"
+
+
+@router.get("/api/asset/pdf")
+def api_asset_pdf(asset_id: int, user: Employee = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    _guard(db, user)
+    a = db.get(MaintAsset, asset_id)
+    if not a:
+        raise HTTPException(404, "Asset not found")
+    from ..services.maint_pdf import build_history_card
+    events = [_event_json(e) for e in _asset_events_sorted(db, asset_id)]
+    pdf = build_history_card(_asset_json(a), events)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="history-{a.asset_code}.pdf"'})
+
+
+@router.post("/api/asset/pdf/upload")
+def api_asset_pdf_upload(asset_id: int, user: Employee = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    _guard(db, user)
+    a = db.get(MaintAsset, asset_id)
+    if not a:
+        raise HTTPException(404, "Asset not found")
+    from ..services.maint_pdf import build_history_card
+    events = [_event_json(e) for e in _asset_events_sorted(db, asset_id)]
+    pdf = build_history_card(_asset_json(a), events)
+    path = f"Maintenance/Machine History Cards/{a.asset_code}.pdf"
+    info = _od.upload_to_path(pdf, path, "application/pdf")
+    return {"ok": True, "url": (info or {}).get("webUrl")}
+
+
+@router.get("/api/breakdown/pdf")
+def api_breakdown_pdf(from_: str | None = Query(None, alias="from"),
+                      to: str | None = None, asset_id: int | None = None,
+                      user: Employee = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    _guard(db, user)
+    from ..services.maint_pdf import build_breakdown_register
+    rows = [_event_json(e) for e in _breakdown_rows(db, from_, to, asset_id)]
+    pdf = build_breakdown_register(rows, _range_label(from_, to))
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="breakdown-register.pdf"'})
+
+
+@router.post("/api/breakdown/pdf/upload")
+def api_breakdown_pdf_upload(from_: str | None = Query(None, alias="from"),
+                             to: str | None = None, asset_id: int | None = None,
+                             user: Employee = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    _guard(db, user)
+    from ..services.maint_pdf import build_breakdown_register
+    rows = [_event_json(e) for e in _breakdown_rows(db, from_, to, asset_id)]
+    pdf = build_breakdown_register(rows, _range_label(from_, to))
+    path = f"Maintenance/Breakdown Register/Breakdown Register {date.today().isoformat()}.pdf"
+    info = _od.upload_to_path(pdf, path, "application/pdf")
+    return {"ok": True, "url": (info or {}).get("webUrl")}

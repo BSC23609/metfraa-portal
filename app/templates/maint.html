@@ -213,8 +213,9 @@
                           class="text-[11px] font-semibold px-2 py-0.5 rounded-full"
                           x-text="a.active ? 'Active' : 'Inactive'"></button>
                 </td>
-                <td class="px-4 py-2.5 text-right">
-                  <button @click="openEdit(a)" class="text-xs font-semibold text-metfraa-blue hover:underline">Edit</button>
+                <td class="px-4 py-2.5 text-right whitespace-nowrap">
+                  <button @click="viewPdf('/maint/api/asset/pdf?asset_id='+a.id, a.asset_code+' — Machine History Card', '/maint/api/asset/pdf/upload?asset_id='+a.id)" class="text-xs font-semibold text-metfraa-blue hover:underline">PDF</button>
+                  <button @click="openEdit(a)" class="text-xs font-semibold text-metfraa-blue hover:underline ml-3">Edit</button>
                 </td>
               </tr>
             </template>
@@ -342,7 +343,10 @@
         <select x-model="bAsset" class="inp"><option value="">All</option>
           <template x-for="a in assets" :key="a.id"><option :value="a.id" x-text="a.asset_code"></option></template></select>
       </div>
-      <div class="ml-auto"><span class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-50 text-red-700">Open: <span x-text="openBreakdowns"></span></span></div>
+      <div class="ml-auto flex items-center gap-3">
+        <button @click="viewPdf('/maint/api/breakdown/pdf'+bdQuery(), 'Breakdown Register', '/maint/api/breakdown/pdf/upload'+bdQuery())" class="text-xs font-semibold px-3 py-1.5 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue hover:bg-metfraa-blue/5">Register PDF</button>
+        <span class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-50 text-red-700">Open: <span x-text="openBreakdowns"></span></span>
+      </div>
     </div>
     <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
       <div class="overflow-x-auto">
@@ -541,6 +545,22 @@
     </div>
   </div>
 
+  <!-- ===================== PDF VIEWER ===================== -->
+  <div x-show="pdfUrl" x-cloak @keydown.escape.window="closePdf()" @click.self="closePdf()"
+       class="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-3 sm:p-6">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[88vh] flex flex-col overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-metfraa-gray-200">
+        <div class="font-bold text-metfraa-ink text-sm" x-text="pdfTitle"></div>
+        <div class="flex items-center gap-4">
+          <button x-show="pdfUploadUrl" @click="saveToOneDrive()" :disabled="pdfUploading" class="text-xs font-semibold text-metfraa-blue hover:underline disabled:opacity-50"><span x-show="!pdfUploading">Save to OneDrive</span><span x-show="pdfUploading">Saving…</span></button>
+          <a :href="pdfUrl" target="_blank" class="text-xs font-semibold text-metfraa-blue hover:underline">Open in new tab ↗</a>
+          <button @click="closePdf()" class="text-metfraa-gray-500 hover:text-metfraa-ink text-2xl leading-none">&times;</button>
+        </div>
+      </div>
+      <iframe :src="pdfUrl" class="flex-1 w-full" title="PDF preview"></iframe>
+    </div>
+  </div>
+
   <!-- ===================== ADD / EDIT MODAL ===================== -->
   <div x-show="modal" x-cloak @click.self="modal=false"
        class="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto">
@@ -655,6 +675,7 @@ function maintApp() {
     readings: [], rAssetId: '', rForm: {}, rSaving: false,
     pmPlans: [], pmForm: {}, pmModal: false, pmSaving: false, pmDueOnly: false,
     dash: {},
+    pdfUrl: '', pdfTitle: '', pdfUploadUrl: '', pdfUploading: false,
 
     async init() {
       this.eForm = this.blankEvent();
@@ -899,6 +920,22 @@ function maintApp() {
     // ----- dashboard -----
     async loadDashboard() { const r = await fetch('/maint/api/dashboard'); if (r.ok) this.dash = await r.json(); },
     dtPct(h) { const arr = (this.dash.downtime_by_machine || []).map(m => m.hours); const max = Math.max(1, ...arr); return Math.round(h / max * 100); },
+
+    // ----- PDFs -----
+    bdQuery() { return this.bAsset ? ('?asset_id=' + this.bAsset) : ''; },
+    viewPdf(url, title, uploadUrl) { this.pdfUrl = url; this.pdfTitle = title || 'PDF'; this.pdfUploadUrl = uploadUrl || ''; },
+    closePdf() { this.pdfUrl = ''; this.pdfUploadUrl = ''; },
+    async saveToOneDrive() {
+      if (!this.pdfUploadUrl) return;
+      this.pdfUploading = true;
+      try {
+        const res = await fetch(this.pdfUploadUrl, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Upload failed');
+        toast('Saved to OneDrive', 'success');
+        if (data.url) window.open(data.url, '_blank');
+      } catch (e) { toast(e.message, 'error'); } finally { this.pdfUploading = false; }
+    },
   };
 }
 </script>
