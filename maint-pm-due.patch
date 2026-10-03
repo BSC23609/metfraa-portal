@@ -1,0 +1,348 @@
+diff --git a/app/routes/maint.py b/app/routes/maint.py
+index 15dd0b2..15ea1e6 100644
+--- a/app/routes/maint.py
++++ b/app/routes/maint.py
+@@ -5,7 +5,7 @@ Breakdown/PM logging, readings, PM scheduling, reports and dashboard follow in
+ later slices. Access is gated by the maint_admin flag (superadmin implies it).
+ """
+ import logging
+-from datetime import date, datetime
++from datetime import date, datetime, timedelta
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Request
+ from fastapi.responses import HTMLResponse
+@@ -17,7 +17,7 @@ from ..access import get_access
+ from ..database import get_db
+ from ..deps import get_current_user
+ from ..models import (Employee, MaintAsset, MaintEvent, MaintMachineType,
+-                      MaintReading, PlantLabour)
++                      MaintPMPlan, MaintReading, PlantLabour)
+ 
+ router = APIRouter(prefix="/maint", tags=["maint"])
+ log = logging.getLogger("maint")
+@@ -408,3 +408,142 @@ def api_delete_reading(reading_id: int, user: Employee = Depends(get_current_use
+     _recompute_readings(db, asset_id, _asset_meter_param(db, asset_id))
+     db.commit()
+     return {"ok": True}
++
++
++# ------------------------------------------------------------------ PM plans
++
++def _latest_meter(db: Session, asset_id: int):
++    rows = db.query(MaintReading).filter(MaintReading.asset_id == asset_id).all()
++    rows.sort(key=lambda r: (r.reading_date, r.start_time or "", r.id))
++    for r in reversed(rows):
++        if r.meter_value is not None:
++            return r.meter_value
++    return None
++
++
++def _plan_json(db: Session, p: MaintPMPlan):
++    today = date.today()
++    cur = _latest_meter(db, p.asset_id)
++    ndd = (p.last_done_date + timedelta(days=p.interval_days)) if (p.last_done_date and p.interval_days) else None
++    ndm = (p.last_done_meter + p.interval_meter) if (p.last_done_meter is not None and p.interval_meter is not None) else None
++    due_date = bool(ndd and today >= ndd)
++    due_meter = bool(ndm is not None and cur is not None and cur >= ndm)
++    never_done = p.last_done_date is None and p.last_done_meter is None
++    a = db.get(MaintAsset, p.asset_id)
++    return {
++        "id": p.id, "asset_id": p.asset_id,
++        "asset_code": a.asset_code if a else None,
++        "asset_description": a.description if a else None,
++        "task": p.task, "interval_days": p.interval_days, "interval_meter": p.interval_meter,
++        "last_done_date": _iso(p.last_done_date), "last_done_meter": p.last_done_meter,
++        "next_due_date": _iso(ndd), "next_due_meter": ndm, "current_meter": cur,
++        "due_date": due_date, "due_meter": due_meter, "due": (due_date or due_meter),
++        "never_done": never_done,
++        "days_overdue": (today - ndd).days if (ndd and today >= ndd) else None,
++        "meter_remaining": round(ndm - cur, 2) if (ndm is not None and cur is not None) else None,
++        "active": p.active,
++    }
++
++
++class PMPlanIn(BaseModel):
++    asset_id: int
++    task: str
++    interval_days: int | None = None
++    interval_meter: float | None = None
++    last_done_date: str | None = None
++    last_done_meter: float | None = None
++    active: bool = True
++
++
++class PMDoneIn(BaseModel):
++    done_date: str | None = None
++    attended_by_id: int | None = None
++    verified_by_id: int | None = None
++    remarks: str | None = None
++
++
++def _apply_plan(p: MaintPMPlan, payload: PMPlanIn):
++    p.asset_id = payload.asset_id
++    p.task = (payload.task or "").strip()
++    p.interval_days = payload.interval_days
++    p.interval_meter = payload.interval_meter
++    p.last_done_date = _pdate(payload.last_done_date)
++    p.last_done_meter = payload.last_done_meter
++    p.active = payload.active
++
++
++@router.get("/api/pm-plans")
++def api_pm_plans(asset_id: int | None = None, user: Employee = Depends(get_current_user),
++                 db: Session = Depends(get_db)):
++    _guard(db, user)
++    qy = db.query(MaintPMPlan)
++    if asset_id:
++        qy = qy.filter(MaintPMPlan.asset_id == asset_id)
++    out = [_plan_json(db, p) for p in qy.all()]
++    out.sort(key=lambda x: (not x["due"], not x["never_done"], x["next_due_date"] or "9999-12-31"))
++    return out
++
++
++@router.post("/api/pm-plans")
++def api_create_plan(payload: PMPlanIn, user: Employee = Depends(get_current_user),
++                    db: Session = Depends(get_db)):
++    _guard(db, user)
++    if not db.get(MaintAsset, payload.asset_id):
++        raise HTTPException(400, "Unknown asset")
++    if not (payload.task or "").strip():
++        raise HTTPException(400, "Task is required")
++    if not payload.interval_days and payload.interval_meter is None:
++        raise HTTPException(400, "Set an interval (days and/or meter)")
++    p = MaintPMPlan(asset_id=payload.asset_id)
++    _apply_plan(p, payload)
++    db.add(p); db.commit(); db.refresh(p)
++    return _plan_json(db, p)
++
++
++@router.put("/api/pm-plans/{plan_id}")
++def api_update_plan(plan_id: int, payload: PMPlanIn,
++                    user: Employee = Depends(get_current_user),
++                    db: Session = Depends(get_db)):
++    _guard(db, user)
++    p = db.get(MaintPMPlan, plan_id)
++    if not p:
++        raise HTTPException(404, "Plan not found")
++    if not (payload.task or "").strip():
++        raise HTTPException(400, "Task is required")
++    if not payload.interval_days and payload.interval_meter is None:
++        raise HTTPException(400, "Set an interval (days and/or meter)")
++    _apply_plan(p, payload)
++    db.commit(); db.refresh(p)
++    return _plan_json(db, p)
++
++
++@router.delete("/api/pm-plans/{plan_id}")
++def api_delete_plan(plan_id: int, user: Employee = Depends(get_current_user),
++                    db: Session = Depends(get_db)):
++    _guard(db, user)
++    p = db.get(MaintPMPlan, plan_id)
++    if not p:
++        raise HTTPException(404, "Plan not found")
++    db.delete(p); db.commit()
++    return {"ok": True}
++
++
++@router.post("/api/pm-plans/{plan_id}/done")
++def api_plan_done(plan_id: int, payload: PMDoneIn,
++                  user: Employee = Depends(get_current_user),
++                  db: Session = Depends(get_db)):
++    _guard(db, user)
++    p = db.get(MaintPMPlan, plan_id)
++    if not p:
++        raise HTTPException(404, "Plan not found")
++    dd = _pdate(payload.done_date) or date.today()
++    cur = _latest_meter(db, p.asset_id)
++    e = MaintEvent(asset_id=p.asset_id, event_date=dd, category="Scheduled PM",
++                   complaint=p.task, action="PM completed", meter_at_event=cur,
++                   attended_by_id=payload.attended_by_id, verified_by_id=payload.verified_by_id,
++                   remarks=payload.remarks, pm_plan_id=p.id)
++    db.add(e)
++    p.last_done_date = dd
++    p.last_done_meter = cur
++    db.commit(); db.refresh(p)
++    return _plan_json(db, p)
+diff --git a/app/templates/maint.html b/app/templates/maint.html
+index dc0f3da..cba10d7 100644
+--- a/app/templates/maint.html
++++ b/app/templates/maint.html
+@@ -28,8 +28,9 @@
+       <button @click="tab='readings'"
+               :class="tab==='readings' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+               class="px-4 py-2.5 text-sm font-semibold border-b-2">Readings</button>
+-      <span class="px-4 py-2.5 text-sm font-semibold text-metfraa-gray-300 border-b-2 border-transparent cursor-not-allowed"
+-            title="Coming next">PM Due</span>
++      <button @click="tab='pm'; loadPlans()"
++              :class="tab==='pm' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
++              class="px-4 py-2.5 text-sm font-semibold border-b-2">PM Due</button>
+     </nav>
+   </div>
+ 
+@@ -348,6 +349,96 @@
+     </div>
+   </div>
+ 
++  <!-- ===================== PM DUE ===================== -->
++  <div x-show="tab==='pm'" x-cloak>
++    <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
++      <div class="flex items-center gap-3">
++        <span class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700">Due / overdue: <span x-text="pmDueCount"></span></span>
++        <label class="flex items-center gap-2 text-sm text-metfraa-gray-700"><input type="checkbox" x-model="pmDueOnly" class="rounded border-metfraa-gray-300 text-metfraa-blue focus:ring-metfraa-blue" /> Due only</label>
++      </div>
++      <button @click="openNewPlan()" class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg">+ Add plan</button>
++    </div>
++    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
++      <div class="overflow-x-auto">
++        <table class="w-full text-sm">
++          <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
++            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Asset</th>
++            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Task</th>
++            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Every</th>
++            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Last done</th>
++            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Next due</th>
++            <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Meter now</th>
++            <th class="px-3 py-2 text-center text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Status</th>
++            <th class="px-3 py-2"></th>
++          </tr></thead>
++          <tbody>
++            <template x-for="p in pmFiltered" :key="p.id">
++              <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50" :class="!p.active && 'opacity-50'">
++                <td class="px-3 py-2 mono font-semibold" :title="p.asset_description" x-text="p.asset_code"></td>
++                <td class="px-3 py-2 text-metfraa-ink" x-text="p.task"></td>
++                <td class="px-3 py-2 text-metfraa-gray-600 mono text-xs" x-text="[p.interval_days ? p.interval_days+'d' : null, p.interval_meter!=null ? p.interval_meter+' mtr' : null].filter(Boolean).join(' / ')"></td>
++                <td class="px-3 py-2 text-metfraa-gray-600 text-xs">
++                  <span x-text="p.last_done_date || '—'"></span><span x-show="p.last_done_meter!=null" class="text-metfraa-gray-400" x-text="' @'+p.last_done_meter"></span>
++                </td>
++                <td class="px-3 py-2 text-xs">
++                  <span class="mono" x-text="p.next_due_date || '—'"></span><span x-show="p.next_due_meter!=null" class="text-metfraa-gray-400" x-text="' @'+p.next_due_meter"></span>
++                </td>
++                <td class="px-3 py-2 text-right mono" x-text="p.current_meter!=null ? p.current_meter : '—'"></td>
++                <td class="px-3 py-2 text-center">
++                  <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full"
++                    :class="p.never_done ? 'bg-metfraa-gray-100 text-metfraa-gray-600' : (p.due ? ((p.days_overdue>0 || p.due_meter) ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700') : 'bg-emerald-100 text-emerald-700')"
++                    x-text="p.never_done ? 'Not scheduled' : (p.due ? ((p.days_overdue>0) ? ('Overdue '+p.days_overdue+'d') : 'Due') : 'OK')"></span>
++                </td>
++                <td class="px-3 py-2 text-right whitespace-nowrap">
++                  <button @click="markDone(p)" class="text-xs font-semibold text-emerald-700 hover:underline">Mark done</button>
++                  <button @click="editPlan(p)" class="text-xs font-semibold text-metfraa-blue hover:underline ml-3">Edit</button>
++                  <button @click="deletePlan(p)" class="text-xs font-semibold text-red-600 hover:underline ml-3">Delete</button>
++                </td>
++              </tr>
++            </template>
++            <tr x-show="pmFiltered.length===0"><td colspan="8" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No plans yet. Add one to start scheduling preventive maintenance.</td></tr>
++          </tbody>
++        </table>
++      </div>
++    </div>
++
++    <!-- plan modal -->
++    <div x-show="pmModal" x-cloak @click.self="pmModal=false" class="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto">
++      <div class="bg-white rounded-xl shadow-2xl max-w-xl w-full my-8">
++        <div class="p-5 border-b border-metfraa-gray-200 flex items-center justify-between">
++          <h3 class="display font-bold text-metfraa-ink text-xl" x-text="pmForm.id ? 'Edit plan' : 'Add plan'"></h3>
++          <button @click="pmModal=false" class="text-metfraa-gray-400 hover:text-metfraa-ink text-2xl leading-none">&times;</button>
++        </div>
++        <div class="p-5 space-y-4">
++          <div>
++            <label class="lbl-f">Asset *</label>
++            <select x-model.number="pmForm.asset_id" class="inp">
++              <option :value="''">Select machine…</option>
++              <template x-for="a in assets" :key="a.id"><option :value="a.id" x-text="a.asset_code + ' — ' + a.description"></option></template>
++            </select>
++          </div>
++          <div><label class="lbl-f">Task *</label><input type="text" x-model="pmForm.task" class="inp" placeholder="e.g. Oil + filter change" /></div>
++          <div class="grid grid-cols-2 gap-3">
++            <div><label class="lbl-f">Every (days)</label><input type="number" x-model.number="pmForm.interval_days" class="inp" placeholder="90" /></div>
++            <div><label class="lbl-f">Every (meter)</label><input type="number" step="any" x-model.number="pmForm.interval_meter" class="inp" placeholder="500" /></div>
++          </div>
++          <p class="text-[11px] text-metfraa-gray-500 -mt-2">Set days, meter, or both. Due when either threshold is reached.</p>
++          <div class="grid grid-cols-2 gap-3">
++            <div><label class="lbl-f">Last done (date)</label><input type="date" x-model="pmForm.last_done_date" class="inp" /></div>
++            <div><label class="lbl-f">Last done (meter)</label><input type="number" step="any" x-model.number="pmForm.last_done_meter" class="inp" /></div>
++          </div>
++          <label class="flex items-center gap-2 text-sm text-metfraa-gray-700"><input type="checkbox" x-model="pmForm.active" class="rounded border-metfraa-gray-300 text-metfraa-blue focus:ring-metfraa-blue" /> Active</label>
++        </div>
++        <div class="p-5 border-t border-metfraa-gray-200 flex justify-end gap-2">
++          <button @click="pmModal=false" class="text-sm px-4 py-2 rounded-lg border border-metfraa-gray-300 hover:bg-metfraa-gray-50">Cancel</button>
++          <button @click="savePlan()" :disabled="pmSaving" class="text-sm font-semibold px-4 py-2 rounded-lg bg-metfraa-blue text-white hover:bg-metfraa-blue-dark disabled:opacity-50">
++            <span x-show="!pmSaving">Save</span><span x-show="pmSaving">Saving…</span>
++          </button>
++        </div>
++      </div>
++    </div>
++  </div>
++
+   <!-- ===================== ADD / EDIT MODAL ===================== -->
+   <div x-show="modal" x-cloak @click.self="modal=false"
+        class="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto">
+@@ -460,10 +551,12 @@ function maintApp() {
+     events: [], eForm: {}, eSaving: false,
+     bStatus: '', bAsset: '',
+     readings: [], rAssetId: '', rForm: {}, rSaving: false,
++    pmPlans: [], pmForm: {}, pmModal: false, pmSaving: false, pmDueOnly: false,
+ 
+     async init() {
+       this.eForm = this.blankEvent();
+       this.rForm = this.blankReading();
++      await this.loadPlans();
+       await this.loadMeta();
+       await this.loadAssets();
+       await this.loadEvents();
+@@ -648,6 +741,56 @@ function maintApp() {
+         await this.loadReadings();
+       } catch (e) { toast(e.message, 'error'); }
+     },
++
++    // ----- PM plans -----
++    get pmFiltered() { return this.pmDueOnly ? this.pmPlans.filter(p => p.due || p.never_done) : this.pmPlans; },
++    get pmDueCount() { return this.pmPlans.filter(p => p.due).length; },
++    blankPlan() { return { id: null, asset_id: '', task: '', interval_days: null, interval_meter: null, last_done_date: '', last_done_meter: null, active: true }; },
++    async loadPlans() { const r = await fetch('/maint/api/pm-plans'); if (r.ok) this.pmPlans = await r.json(); },
++    openNewPlan() { this.pmForm = this.blankPlan(); this.pmModal = true; },
++    editPlan(p) {
++      this.pmForm = { id: p.id, asset_id: p.asset_id, task: p.task, interval_days: p.interval_days,
++        interval_meter: p.interval_meter, last_done_date: p.last_done_date || '',
++        last_done_meter: p.last_done_meter, active: p.active };
++      this.pmModal = true;
++    },
++    async savePlan() {
++      if (!this.pmForm.asset_id) { toast('Select an asset', 'error'); return; }
++      if (!this.pmForm.task || !this.pmForm.task.trim()) { toast('Task is required', 'error'); return; }
++      if (!this.pmForm.interval_days && this.pmForm.interval_meter == null) { toast('Set an interval (days and/or meter)', 'error'); return; }
++      this.pmSaving = true;
++      try {
++        const p = { ...this.pmForm };
++        if (!p.last_done_date) p.last_done_date = null;
++        const url = this.pmForm.id ? `/maint/api/pm-plans/${this.pmForm.id}` : '/maint/api/pm-plans';
++        const res = await fetch(url, { method: this.pmForm.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
++        const data = await res.json();
++        if (!res.ok) throw new Error(data.detail || 'Save failed');
++        toast(this.pmForm.id ? 'Plan updated' : 'Plan added', 'success');
++        this.pmModal = false;
++        await this.loadPlans();
++      } catch (e) { toast(e.message, 'error'); } finally { this.pmSaving = false; }
++    },
++    async deletePlan(p) {
++      if (!confirm('Delete this plan?')) return;
++      try {
++        const res = await fetch(`/maint/api/pm-plans/${p.id}`, { method: 'DELETE' });
++        const data = await res.json();
++        if (!res.ok) throw new Error(data.detail || 'Failed');
++        await this.loadPlans();
++      } catch (e) { toast(e.message, 'error'); }
++    },
++    async markDone(p) {
++      if (!confirm(`Mark "${p.task}" done today for ${p.asset_code}? This logs a Scheduled PM event.`)) return;
++      try {
++        const res = await fetch(`/maint/api/pm-plans/${p.id}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
++        const data = await res.json();
++        if (!res.ok) throw new Error(data.detail || 'Failed');
++        toast('PM marked done', 'success');
++        await this.loadPlans();
++        await this.loadEvents();
++      } catch (e) { toast(e.message, 'error'); }
++    },
+   };
+ }
+ </script>
