@@ -1,0 +1,315 @@
+{% extends "base.html" %}
+{% block title %}Maintenance — Metfraa{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="maintApp()" x-init="init()" x-cloak>
+
+  <div class="mb-8">
+    <div class="lbl mb-2">Metfraa Portal</div>
+    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">Maintenance</h1>
+    <div class="flex items-center gap-3 mt-3">
+      <span class="h-px w-10 bg-metfraa-blue"></span>
+      <p class="text-sm text-metfraa-gray-500">Equipment master, breakdown &amp; preventive maintenance.</p>
+    </div>
+  </div>
+
+  <!-- Tab nav (only Assets live for now) -->
+  <div class="border-b border-metfraa-gray-200 mb-6">
+    <nav class="flex gap-1 flex-wrap">
+      <button @click="tab='assets'"
+              :class="tab==='assets' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">Assets</button>
+      <span class="px-4 py-2.5 text-sm font-semibold text-metfraa-gray-300 border-b-2 border-transparent cursor-not-allowed"
+            title="Coming next">Log Event</span>
+      <span class="px-4 py-2.5 text-sm font-semibold text-metfraa-gray-300 border-b-2 border-transparent cursor-not-allowed"
+            title="Coming next">Breakdown Register</span>
+      <span class="px-4 py-2.5 text-sm font-semibold text-metfraa-gray-300 border-b-2 border-transparent cursor-not-allowed"
+            title="Coming next">Readings</span>
+      <span class="px-4 py-2.5 text-sm font-semibold text-metfraa-gray-300 border-b-2 border-transparent cursor-not-allowed"
+            title="Coming next">PM Due</span>
+    </nav>
+  </div>
+
+  <!-- ===================== ASSETS ===================== -->
+  <div x-show="tab==='assets'">
+    <!-- toolbar -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-4 mb-5">
+      <div class="flex flex-wrap items-end gap-3">
+        <div class="flex-1 min-w-[180px]">
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Search</label>
+          <input type="text" x-model="q" placeholder="Code, description, serial…"
+                 class="w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Location</label>
+          <select x-model="fLocation" class="text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue">
+            <option value="">All</option>
+            <template x-for="l in meta.locations" :key="l"><option :value="l" x-text="l"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1">Type</label>
+          <select x-model="fType" class="text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue">
+            <option value="">All</option>
+            <template x-for="t in meta.types" :key="t.id"><option :value="t.id" x-text="t.name"></option></template>
+          </select>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-metfraa-gray-700 mb-1.5">
+          <input type="checkbox" x-model="activeOnly" class="rounded border-metfraa-gray-300 text-metfraa-blue focus:ring-metfraa-blue" />
+          Active only
+        </label>
+        <div class="ml-auto flex items-center gap-3">
+          <span class="text-xs text-metfraa-gray-500"><span x-text="filtered.length"></span> of <span x-text="assets.length"></span></span>
+          <button @click="openNew()"
+                  class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-sm">
+            + Add asset
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- table -->
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
+              <th class="px-4 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Code</th>
+              <th class="px-4 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Description</th>
+              <th class="px-4 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Type</th>
+              <th class="px-4 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Category</th>
+              <th class="px-4 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Location</th>
+              <th class="px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Capacity</th>
+              <th class="px-4 py-3 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Manufacturer</th>
+              <th class="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Active</th>
+              <th class="px-4 py-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="a in filtered" :key="a.id">
+              <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50" :class="!a.active && 'opacity-50'">
+                <td class="px-4 py-2.5 mono font-semibold text-metfraa-ink" x-text="a.asset_code"></td>
+                <td class="px-4 py-2.5 text-metfraa-ink" x-text="a.description"></td>
+                <td class="px-4 py-2.5">
+                  <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                        :class="a.type_key==='breakdown_only' ? 'bg-metfraa-gray-100 text-metfraa-gray-600' : 'bg-blue-50 text-metfraa-blue'"
+                        x-text="a.type_name || '—'"></span>
+                </td>
+                <td class="px-4 py-2.5 text-metfraa-gray-600" x-text="a.category || '—'"></td>
+                <td class="px-4 py-2.5 text-metfraa-gray-600" x-text="a.location || '—'"></td>
+                <td class="px-4 py-2.5 text-right mono text-metfraa-gray-600">
+                  <span x-text="a.capacity != null ? (a.capacity + ' ' + (a.capacity_unit||'')) : '—'"></span>
+                </td>
+                <td class="px-4 py-2.5 text-metfraa-gray-600" x-text="a.manufacturer || '—'"></td>
+                <td class="px-4 py-2.5 text-center">
+                  <button @click="toggle(a)"
+                          :class="a.active ? 'bg-emerald-100 text-emerald-700' : 'bg-metfraa-gray-200 text-metfraa-gray-500'"
+                          class="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                          x-text="a.active ? 'Active' : 'Inactive'"></button>
+                </td>
+                <td class="px-4 py-2.5 text-right">
+                  <button @click="openEdit(a)" class="text-xs font-semibold text-metfraa-blue hover:underline">Edit</button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="filtered.length===0">
+              <td colspan="9" class="px-4 py-10 text-center text-metfraa-gray-500 text-sm">No assets match the filters.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== ADD / EDIT MODAL ===================== -->
+  <div x-show="modal" x-cloak @click.self="modal=false"
+       class="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full my-8">
+      <div class="p-5 border-b border-metfraa-gray-200 flex items-center justify-between">
+        <h3 class="display font-bold text-metfraa-ink text-xl" x-text="form.id ? 'Edit asset' : 'Add asset'"></h3>
+        <button @click="modal=false" class="text-metfraa-gray-400 hover:text-metfraa-ink text-2xl leading-none">&times;</button>
+      </div>
+      <div class="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="lbl-f">Asset code *</label>
+          <input type="text" x-model="form.asset_code" class="inp mono" placeholder="M088" />
+        </div>
+        <div>
+          <label class="lbl-f">Machine type</label>
+          <select x-model.number="form.type_id" class="inp">
+            <option :value="null">—</option>
+            <template x-for="t in meta.types" :key="t.id"><option :value="t.id" x-text="t.name"></option></template>
+          </select>
+        </div>
+        <div class="sm:col-span-2">
+          <label class="lbl-f">Description *</label>
+          <input type="text" x-model="form.description" class="inp" />
+        </div>
+        <div>
+          <label class="lbl-f">Category</label>
+          <select x-model="form.category" class="inp">
+            <option value="">—</option>
+            <option>Machinery</option>
+            <option>Portable Machinery</option>
+          </select>
+        </div>
+        <div>
+          <label class="lbl-f">Location</label>
+          <input type="text" x-model="form.location" class="inp" list="maint-locations" />
+          <datalist id="maint-locations">
+            <template x-for="l in meta.locations" :key="l"><option :value="l"></option></template>
+          </datalist>
+        </div>
+        <div>
+          <label class="lbl-f">Serial / Model no.</label>
+          <input type="text" x-model="form.serial_model_no" class="inp" />
+        </div>
+        <div>
+          <label class="lbl-f">Manufacturer / Vendor</label>
+          <input type="text" x-model="form.manufacturer" class="inp" />
+        </div>
+        <div>
+          <label class="lbl-f">Capacity</label>
+          <div class="flex gap-2">
+            <input type="number" step="any" x-model.number="form.capacity" class="inp flex-1" />
+            <input type="text" x-model="form.capacity_unit" class="inp w-24" placeholder="Unit" />
+          </div>
+        </div>
+        <div>
+          <label class="lbl-f">Manufacturing year</label>
+          <input type="number" x-model.number="form.mfg_year" class="inp" placeholder="2025" />
+        </div>
+        <div>
+          <label class="lbl-f">Acquisition date</label>
+          <input type="date" x-model="form.acquisition_date" class="inp" />
+        </div>
+        <div>
+          <label class="lbl-f">Acquisition value</label>
+          <input type="number" step="any" x-model.number="form.acquisition_value" class="inp" />
+        </div>
+        <div>
+          <label class="lbl-f">Supplier</label>
+          <input type="text" x-model="form.supplier" class="inp" />
+        </div>
+        <div>
+          <label class="lbl-f">Warranty until</label>
+          <input type="date" x-model="form.warranty_until" class="inp" />
+        </div>
+        <div>
+          <label class="lbl-f">Date installed</label>
+          <input type="date" x-model="form.date_installed" class="inp" />
+        </div>
+        <label class="flex items-center gap-2 text-sm text-metfraa-gray-700 mt-6">
+          <input type="checkbox" x-model="form.active" class="rounded border-metfraa-gray-300 text-metfraa-blue focus:ring-metfraa-blue" />
+          Active
+        </label>
+      </div>
+      <div class="p-5 border-t border-metfraa-gray-200 flex justify-end gap-2">
+        <button @click="modal=false" class="text-sm px-4 py-2 rounded-lg border border-metfraa-gray-300 hover:bg-metfraa-gray-50">Cancel</button>
+        <button @click="save()" :disabled="saving"
+                class="text-sm font-semibold px-4 py-2 rounded-lg bg-metfraa-blue text-white hover:bg-metfraa-blue-dark disabled:opacity-50">
+          <span x-show="!saving">Save</span><span x-show="saving">Saving…</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<style>
+  .lbl-f { @apply text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1; }
+  .inp  { @apply w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue; }
+</style>
+
+<script>
+function maintApp() {
+  return {
+    tab: 'assets',
+    assets: [],
+    meta: { types: [], locations: [], team: [] },
+    q: '', fLocation: '', fType: '', activeOnly: false,
+    modal: false, saving: false,
+    form: {},
+
+    async init() {
+      await this.loadMeta();
+      await this.loadAssets();
+    },
+    async loadMeta() {
+      const r = await fetch('/maint/api/meta');
+      if (r.ok) this.meta = await r.json();
+    },
+    async loadAssets() {
+      const r = await fetch('/maint/api/assets');
+      if (r.ok) this.assets = await r.json();
+    },
+    get filtered() {
+      const q = this.q.trim().toLowerCase();
+      return this.assets.filter(a => {
+        if (this.activeOnly && !a.active) return false;
+        if (this.fLocation && a.location !== this.fLocation) return false;
+        if (this.fType && String(a.type_id) !== String(this.fType)) return false;
+        if (q) {
+          const hay = [a.asset_code, a.description, a.serial_model_no, a.manufacturer]
+            .filter(Boolean).join(' ').toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+    },
+    blank() {
+      return { id: null, asset_code: '', description: '', category: '', type_id: null,
+               serial_model_no: '', manufacturer: '', location: '', acquisition_date: '',
+               acquisition_value: null, capacity: null, capacity_unit: '', mfg_year: null,
+               supplier: '', warranty_until: '', date_installed: '', active: true };
+    },
+    openNew() { this.form = this.blank(); this.modal = true; },
+    openEdit(a) {
+      this.form = {
+        id: a.id, asset_code: a.asset_code, description: a.description,
+        category: a.category || '', type_id: a.type_id,
+        serial_model_no: a.serial_model_no || '', manufacturer: a.manufacturer || '',
+        location: a.location || '', acquisition_date: a.acquisition_date || '',
+        acquisition_value: a.acquisition_value, capacity: a.capacity,
+        capacity_unit: a.capacity_unit || '', mfg_year: a.mfg_year,
+        supplier: a.supplier || '', warranty_until: a.warranty_until || '',
+        date_installed: a.date_installed || '', active: a.active,
+      };
+      this.modal = true;
+    },
+    async save() {
+      if (!this.form.asset_code || !this.form.asset_code.trim()) { toast('Asset code is required', 'error'); return; }
+      if (!this.form.description || !this.form.description.trim()) { toast('Description is required', 'error'); return; }
+      this.saving = true;
+      try {
+        const payload = { ...this.form };
+        ['acquisition_date','warranty_until','date_installed'].forEach(k => { if (!payload[k]) payload[k] = null; });
+        if (payload.category === '') payload.category = null;
+        if (payload.location === '') payload.location = null;
+        const url = this.form.id ? `/maint/api/assets/${this.form.id}` : '/maint/api/assets';
+        const method = this.form.id ? 'PUT' : 'POST';
+        const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Save failed');
+        toast(this.form.id ? 'Asset updated' : 'Asset added', 'success');
+        this.modal = false;
+        await this.loadAssets();
+        await this.loadMeta();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.saving = false;
+      }
+    },
+    async toggle(a) {
+      try {
+        const res = await fetch(`/maint/api/assets/${a.id}/toggle`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        a.active = data.active;
+      } catch (e) { toast(e.message, 'error'); }
+    },
+  };
+}
+</script>
+{% endblock %}
