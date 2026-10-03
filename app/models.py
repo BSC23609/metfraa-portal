@@ -550,6 +550,7 @@ class EmployeeAccess(Base):
     gatepass_admin = Column(Boolean, default=False, nullable=False)
     plant_admin = Column(Boolean, default=False, nullable=False)
     project_ops_admin = Column(Boolean, default=False, nullable=False)
+    maint_admin = Column(Boolean, default=False, nullable=False)
     kpi_access = Column(Boolean, default=True, nullable=False)
     expense_access = Column(Boolean, default=True, nullable=False)
     ehs_access = Column(Boolean, default=True, nullable=False)
@@ -1115,3 +1116,120 @@ class ProjReportRecipients(Base):
     cc_emails = Column(Text, nullable=True)   # comma-separated
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     updated_by = Column(String(255), nullable=True)
+
+
+# ============================================================
+# Maintenance module (CMMS) — assets, readings, events, PM plans
+# ============================================================
+
+class MaintMachineType(Base):
+    """Machine type -> which reading fields apply. reading_params is a list of
+    {code,label,unit}; meter_param names the cumulative meter (None = no meter)."""
+    __tablename__ = "maint_machine_types"
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String(40), unique=True, nullable=False)
+    name = Column(String(120), nullable=False)
+    reading_params = Column(JSON, nullable=False, default=list)
+    meter_param = Column(String(40), nullable=True)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MaintAsset(Base):
+    """Equipment master -- one row per machine (seeded from the masterlist)."""
+    __tablename__ = "maint_assets"
+
+    id = Column(Integer, primary_key=True)
+    asset_code = Column(String(20), unique=True, nullable=False)
+    description = Column(String(255), nullable=False)
+    category = Column(String(40), nullable=True)
+    type_id = Column(Integer, ForeignKey("maint_machine_types.id"), nullable=True)
+    serial_model_no = Column(String(255), nullable=True)
+    manufacturer = Column(String(255), nullable=True)
+    location = Column(String(120), nullable=True)
+    acquisition_date = Column(Date, nullable=True)
+    acquisition_value = Column(Float, nullable=True)
+    capacity = Column(Float, nullable=True)
+    capacity_unit = Column(String(20), nullable=True)
+    mfg_year = Column(Integer, nullable=True)
+    supplier = Column(String(255), nullable=True)
+    warranty_until = Column(Date, nullable=True)
+    date_installed = Column(Date, nullable=True)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    machine_type = relationship("MaintMachineType")
+
+
+class MaintReading(Base):
+    """Daily / run readings for metered assets. values keyed by the type's param
+    codes; meter_value is the cumulative meter at this reading."""
+    __tablename__ = "maint_readings"
+
+    id = Column(Integer, primary_key=True)
+    asset_id = Column(Integer, ForeignKey("maint_assets.id"), nullable=False)
+    reading_date = Column(Date, nullable=False)
+    start_time = Column(String(8), nullable=True)
+    end_time = Column(String(8), nullable=True)
+    values = Column(JSON, nullable=False, default=dict)
+    meter_value = Column(Float, nullable=True)
+    diff = Column(Float, nullable=True)
+    remarks = Column(Text, nullable=True)
+    entered_by = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    asset = relationship("MaintAsset")
+
+
+class MaintPMPlan(Base):
+    """Preventive schedule -- due by date OR meter (whichever comes first)."""
+    __tablename__ = "maint_pm_plans"
+
+    id = Column(Integer, primary_key=True)
+    asset_id = Column(Integer, ForeignKey("maint_assets.id"), nullable=False)
+    task = Column(String(255), nullable=False)
+    interval_days = Column(Integer, nullable=True)
+    interval_meter = Column(Float, nullable=True)
+    last_done_date = Column(Date, nullable=True)
+    last_done_meter = Column(Float, nullable=True)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    asset = relationship("MaintAsset")
+
+
+class MaintEvent(Base):
+    """One store for maintenance events: PM (scheduled/unscheduled) + breakdown.
+    Breakdowns use status/reported_at/restored_at; PM events leave them null.
+    attended_by / verified_by reference the Plant team (plant_labour)."""
+    __tablename__ = "maint_events"
+
+    id = Column(Integer, primary_key=True)
+    asset_id = Column(Integer, ForeignKey("maint_assets.id"), nullable=False)
+    event_date = Column(Date, nullable=False)
+    category = Column(String(24), nullable=False)   # Breakdown / Scheduled PM / Unscheduled PM
+    status = Column(String(16), nullable=True)       # Open / Under repair / Closed (breakdowns)
+    reported_at = Column(DateTime, nullable=True)
+    restored_at = Column(DateTime, nullable=True)
+    downtime_hrs = Column(Float, nullable=True)
+    complaint = Column(Text, nullable=True)
+    cause = Column(Text, nullable=True)
+    action = Column(Text, nullable=True)
+    parts = Column(Text, nullable=True)
+    cost = Column(Float, nullable=True)
+    meter_at_event = Column(Float, nullable=True)
+    attended_by_id = Column(Integer, ForeignKey("plant_labour.id"), nullable=True)
+    verified_by_id = Column(Integer, ForeignKey("plant_labour.id"), nullable=True)
+    pm_plan_id = Column(Integer, ForeignKey("maint_pm_plans.id"), nullable=True)
+    remarks = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    asset = relationship("MaintAsset")
+    attended_by = relationship("PlantLabour", foreign_keys=[attended_by_id])
+    verified_by = relationship("PlantLabour", foreign_keys=[verified_by_id])

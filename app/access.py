@@ -25,6 +25,7 @@ class Access:
     gatepass_admin: bool = False
     plant_admin: bool = False
     project_ops_admin: bool = False
+    maint_admin: bool = False
     kpi_access: bool = True
     expense_access: bool = True
     ehs_access: bool = True
@@ -33,7 +34,7 @@ class Access:
     def any_admin(self) -> bool:
         return (self.superadmin or self.hr_admin or self.kpi_admin
                 or self.expense_admin or self.ehs_admin or self.gatepass_admin
-                or self.plant_admin or self.project_ops_admin)
+                or self.plant_admin or self.project_ops_admin or self.maint_admin)
 
     @property
     def can_manage_employees(self) -> bool:
@@ -67,6 +68,12 @@ class Access:
     def can_admin_project_ops(self) -> bool:
         return self.superadmin or self.project_ops_admin
 
+    @property
+    def can_admin_maint(self) -> bool:
+        # Maintenance (CMMS) module. superadmin implies it; the flag lets the
+        # maintenance team run it without any other admin rights.
+        return self.superadmin or self.maint_admin
+
 
 def get_access(db: Session, user: Employee) -> Access:
     row = db.query(EmployeeAccess).filter(EmployeeAccess.employee_id == user.id).first()
@@ -82,6 +89,7 @@ def get_access(db: Session, user: Employee) -> Access:
         gatepass_admin=row.gatepass_admin,
         plant_admin=getattr(row, 'plant_admin', False),
         project_ops_admin=getattr(row, 'project_ops_admin', False),
+        maint_admin=getattr(row, 'maint_admin', False),
         kpi_access=row.kpi_access,
         expense_access=row.expense_access,
         ehs_access=row.ehs_access,

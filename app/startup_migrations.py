@@ -79,6 +79,7 @@ EXPENSE_PARITY_MIGRATIONS += [
 # same class of break that took out the gatepass page.
 MISC_MIGRATIONS = [
     "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS project_ops_admin BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS maint_admin BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE plant_contractors ADD COLUMN IF NOT EXISTS ot_rate_per_half_hour DOUBLE PRECISION NOT NULL DEFAULT 50",
     "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS working_hours DOUBLE PRECISION NOT NULL DEFAULT 8",
     "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS ot_category VARCHAR(16) NOT NULL DEFAULT 'salary'",

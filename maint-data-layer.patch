@@ -1,0 +1,388 @@
+diff --git a/app/access.py b/app/access.py
+index 896a2fc..dc0a1eb 100644
+--- a/app/access.py
++++ b/app/access.py
+@@ -25,6 +25,7 @@ class Access:
+     gatepass_admin: bool = False
+     plant_admin: bool = False
+     project_ops_admin: bool = False
++    maint_admin: bool = False
+     kpi_access: bool = True
+     expense_access: bool = True
+     ehs_access: bool = True
+@@ -33,7 +34,7 @@ class Access:
+     def any_admin(self) -> bool:
+         return (self.superadmin or self.hr_admin or self.kpi_admin
+                 or self.expense_admin or self.ehs_admin or self.gatepass_admin
+-                or self.plant_admin or self.project_ops_admin)
++                or self.plant_admin or self.project_ops_admin or self.maint_admin)
+ 
+     @property
+     def can_manage_employees(self) -> bool:
+@@ -67,6 +68,12 @@ class Access:
+     def can_admin_project_ops(self) -> bool:
+         return self.superadmin or self.project_ops_admin
+ 
++    @property
++    def can_admin_maint(self) -> bool:
++        # Maintenance (CMMS) module. superadmin implies it; the flag lets the
++        # maintenance team run it without any other admin rights.
++        return self.superadmin or self.maint_admin
++
+ 
+ def get_access(db: Session, user: Employee) -> Access:
+     row = db.query(EmployeeAccess).filter(EmployeeAccess.employee_id == user.id).first()
+@@ -82,6 +89,7 @@ def get_access(db: Session, user: Employee) -> Access:
+         gatepass_admin=row.gatepass_admin,
+         plant_admin=getattr(row, 'plant_admin', False),
+         project_ops_admin=getattr(row, 'project_ops_admin', False),
++        maint_admin=getattr(row, 'maint_admin', False),
+         kpi_access=row.kpi_access,
+         expense_access=row.expense_access,
+         ehs_access=row.ehs_access,
+diff --git a/app/data/maint_assets_seed.csv b/app/data/maint_assets_seed.csv
+new file mode 100644
+index 0000000..1f6b063
+--- /dev/null
++++ b/app/data/maint_assets_seed.csv
+@@ -0,0 +1,88 @@
++asset_code,description,category,machine_type,serial_model_no,manufacturer,location,acquisition_date,acquisition_value,capacity,capacity_unit,mfg_year,active
++M001,EOT CRANE - 01,Machinery,breakdown_only,4442,AMSAK,Metfraa-factory,,2560600,15,Ton,2025,true
++M002,EOT CRANE -02,Machinery,breakdown_only,4459,AMSAK,Metfraa-factory,,1475000,5,Ton,2025,true
++M003,EOT CRANE- 03,Machinery,breakdown_only,4460,AMSAK,Metfraa-factory,,1026600,3,Ton,2025,true
++M004,CNC PLASMA,Machinery,cnc_plasma,9300093,MESSER,Metfraa-factory,,4991400,30,kW,2026,true
++M005,UPS- 01,Machinery,breakdown_only,25K0M0R0P100010032,MICROTEK,Metfraa-factory,,194700,7.5,kW,2026,true
++M006,AIR COMPRESSOR- 01,Machinery,screw_air_compressor,BZKC370742,ELGI,Metfraa-factory,,149200,8.5,Bar,2026,true
++M007,PTW,Machinery,breakdown_only,PTW/00057-10,PRIMO,Metfraa-factory,,7198000,125,kW,2026,true
++M008,MIG WELDING- 01,Machinery,breakdown_only,1250703758,RILON,Metfraa-factory,,75520,13.8,kW,2025,true
++M009,MIG WELDING- 02,Machinery,breakdown_only,1250703799,RILON,Metfraa-factory,,75520,13.8,kW,2025,true
++M010,MIG WELDING- 03,Machinery,breakdown_only,1250909707,RILON,Metfraa-factory,,75520,13.8,kW,2025,true
++M011,MIG WELDING- 04,Machinery,breakdown_only,1250703792,RILON,Metfraa-factory,,75520,13.8,kW,2025,true
++M012,MIG WELDING- 05,Machinery,breakdown_only,1250703829,RILON,Metfraa-factory,,79060,13.8,kW,2025,true
++M013,MIG WELDING- 06,Machinery,breakdown_only,1250703793,RILON,Metfraa-factory,,79060,13.8,kW,2025,true
++M014,MIG WELDING- 07,Machinery,breakdown_only,1250703796,RILON,Metfraa-factory,,79060,13.8,kW,2025,true
++M015,MIG WELDING- 08,Machinery,breakdown_only,1251216323,RILON,Metfraa-factory,,79060,13.8,kW,2025,true
++M016,MIG WELDING- 09,Machinery,breakdown_only,1251216329,RILON,Metfraa-factory,,79060,13.8,kW,2025,true
++M017,ARC WELDING- 01,Machinery,breakdown_only,1260111194,RILON,Metfraa-factory,,24780,13.8,kW,2025,true
++M018,ARC WELDING- 02,Machinery,breakdown_only,1260111088,RILON,Metfraa-factory,,24780,13.8,kW,2025,true
++M019,AG-7 GRINDER- 01,Portable Machinery,breakdown_only,621087865,BOSCH,Metfraa-factory,,9086,2.2,kW,2025,true
++M020,AG-7 GRINDER- 02,Portable Machinery,breakdown_only,622013747,BOSCH,Metfraa-factory,,9086,2.2,kW,2025,true
++M021,AG-7 GRINDER- 03,Portable Machinery,breakdown_only,622093748,BOSCH,Metfraa-factory,,9086,2.2,kW,2025,true
++M022,AG-7 GRINDER- 04,Portable Machinery,breakdown_only,622093749,BOSCH,Metfraa-factory,,9086,2.2,kW,2025,true
++M023,AG-4 GRINDER- 01,Portable Machinery,breakdown_only,13122526,DEWALT,Metfraa-factory,,2891,0.85,kW,2025,true
++M024,AG-4 GRINDER- 02,Portable Machinery,breakdown_only,13121705,DEWALT,Metfraa-factory,,2891,0.85,kW,2025,true
++M025,AG-4 GRINDER- 03,Portable Machinery,breakdown_only,13122524,DEWALT,Metfraa-factory,,2891,0.85,kW,2025,true
++M026,AG-4 GRINDER- 04,Portable Machinery,breakdown_only,13122525,DEWALT,Metfraa-factory,,2891,0.85,kW,2025,true
++M027,STRAIGHT GRINDER- 01,Portable Machinery,breakdown_only,530005564,BOSCH,Metfraa-factory,,7316,0.55,kW,2025,true
++M028,STRAIGHT GRINDER- 02,Portable Machinery,breakdown_only,528001718,BOSCH,Metfraa-factory,,7316,0.55,kW,2025,true
++M029,STRAIGHT GRINDER- 03,Portable Machinery,breakdown_only,530005569,BOSCH,Metfraa-factory,,7316,0.55,kW,2025,true
++M030,STRAIGHT GRINDER- 04,Portable Machinery,breakdown_only,530005584,BOSCH,Metfraa-factory,,7316,0.55,kW,2025,true
++M031,MAGNETIC DRILL- 01,Portable Machinery,breakdown_only,20260054,EIBENSTOCK POSITRON,Metfraa-factory,,43070,1.2,kW,2026,true
++M032,MAGNETIC DRILL- 02,Portable Machinery,breakdown_only,20250273,EIBENSTOCK POSITRON,Metfraa-factory,,43070,1.2,kW,2025,true
++M033,MAGNETIC DRILL- 03,Portable Machinery,breakdown_only,20250267,EIBENSTOCK POSITRON,Metfraa-factory,,43070,1.2,kW,2025,true
++M034,MAGNETIC DRILL- 04,Portable Machinery,breakdown_only,20260053,EIBENSTOCK POSITRON,Metfraa-factory,,43070,1.2,kW,2026,true
++M035,PUG CUTTING- 01,Portable Machinery,breakdown_only,260130119,KONARK,Metfraa-factory,,10856,0.09,kW,2025,true
++M036,CUT OFF M/C- 01,Portable Machinery,breakdown_only,531004659,BOSCH,Metfraa-factory,,10677,2.2,kW,2025,true
++M037,AIRLESS SPRAY,Machinery,airless_spray,J25A17E624001801,GRACO,Metfraa-factory,,309160,1.2,kW,2025,true
++M038,MOTORISED ROLLING SHUTTER 1 & 2,Machinery,breakdown_only,,CHENNAI WINDOW SYSTEMS PVT LTD,Metfraa-factory,,267915,1.1,kW,2025,true
++M039,ARC WELDING- 03,Machinery,breakdown_only,1250514615,RILON,KV CONSTRUCTION,,24780,13.8,kW,,true
++M040,ARC WELDING- 04,Machinery,breakdown_only,1250616517,RILON,KV CONSTRUCTION,,24780,13.8,kW,,true
++M041,ARC WELDING- 05,Machinery,breakdown_only,1250403637,RILON,Metfraa-factory,,24780,13.8,kW,,true
++M042,ARC WELDING- 06,Machinery,breakdown_only,RI 20250182,RILON,Metfraa-factory,,24780,10.2,kW,,true
++M043,ARC WELDING- 07,Machinery,breakdown_only,RI 20250184,RILON,Metfraa-factory,,24780,10.2,kW,,true
++M044,ARC WELDING- 08,Machinery,breakdown_only,250402237,TOSHWELD,AMNS SITE,,24780,17,kW,,true
++M045,MAGNETIC DRILL- 05,Portable Machinery,breakdown_only,MABASIC 40,BDS,AMNS SITE,,43000,1.1,kW,,true
++M046,ARC WELDING- 09,Machinery,breakdown_only,,,KGISL SITE,,24780,,,,true
++M047,ARC WELDING- 010,Machinery,breakdown_only,,,KGISL SITE,,24780,,,,true
++M048,ARC WELDING- 011,Machinery,breakdown_only,,,METFRAA-STORE,,10000,,,,true
++M049,FLUX HEATING OVEN,Machinery,breakdown_only,,INDOTECH,Metfraa-factory,,25000,2.2,kW,2025,true
++M050,AG-7 GRINDER- 05,Portable Machinery,breakdown_only,GWS 2200,BOSCH,KV CONSTRUCTION,,8799,2.2,kW,,true
++M051,AG-5 GRINDER- 01,Portable Machinery,breakdown_only,DWE 4235,DEWALT,KV CONSTRUCTION,,7999,1.4,kW,,true
++M052,AG-4 GRINDER- 05,Portable Machinery,breakdown_only,DW 801,DEWALT,KV CONSTRUCTION,,2891,0.85,kW,,true
++M053,STRAIGHT GRINDER- 05,Portable Machinery,breakdown_only,GGS 5 LS,BOSCH,KV CONSTRUCTION,,7316,0.55,kW,,true
++M054,CUT OFF M/C- 02,Portable Machinery,breakdown_only,GCO 220,BOSCH,KV CONSTRUCTION,,10677,2.2,kW,,true
++M055,MAGNETIC DRILL- 06,Portable Machinery,breakdown_only,KBC 38N,KPT,KV CONSTRUCTION,,44839,1.1,kW,,true
++M056,PUG CUTTING- 02,Portable Machinery,breakdown_only,,KONARK,KV CONSTRUCTION,,10856,0.09,kW,,true
++M057,HAND DRILL- 01,Portable Machinery,breakdown_only,DWD014,DEWALT,METFRAA-STORE,,3402,0.55,kW,,true
++M058,HAND DRILL- 02,Portable Machinery,breakdown_only,DWD014,DEWALT,METFRAA-STORE,,3402,0.55,kW,,true
++M059,ELECTRIC WRENCH,Portable Machinery,breakdown_only,DPB 20C,DONG CHENG,METFRAA-STORE,,4100,0.34,kW,,true
++M060,PAINT STITTER,Portable Machinery,breakdown_only,SERIES M-02,ASIAN PAINT,METFRAA-STORE,,2714,0.8,kW,,true
++M061,AIR COMPRESSOR- 02,Machinery,screw_air_compressor,M-100,MECCO,Metfraa-factory,,13000,1.5,HP,,true
++M062,AG-4 GRINDER- 06,Portable Machinery,breakdown_only,DW 801,DEWALT,AMNS SITE,,2891,0.85,kW,,true
++M063,AG-4 GRINDER- 07,Portable Machinery,breakdown_only,DW 801,DEWALT,KGISL SITE,,2891,0.85,kW,,true
++M064,AG-4 GRINDER- 08,Portable Machinery,breakdown_only,DW 801,DEWALT,KGISL SITE,,2891,0.85,kW,,true
++M065,SHOT BLASTING M/C,Machinery,breakdown_only,,KMS,Metfraa-factory,,69620,600,KG,2026,true
++M066,SCREW COMPRESSOR,Machinery,screw_air_compressor,KS40-8,KOMTER,Metfraa-factory,,534662,40,HP,2026,true
++M067,CUT OFF M/C- 03,Portable Machinery,breakdown_only,GCO 220,BOSCH,Metfraa-factory,,10677,2.2,kW,2025,true
++M068,CUTT OFF M/C- 04,Portable Machinery,breakdown_only,GCO 220,BOSCH,Metfraa-factory,,10677,2.2,kW,2026,true
++M069,CUT OFF M/C- 05,Portable Machinery,breakdown_only,GCO 220,BOSCH,Metfraa-factory,,10677,2.2,kW,2026,true
++M070,UPS- 02,Machinery,breakdown_only,,MICROTEK,Metfraa-factory,,59000,3,kW,2026,true
++M071,AG-4 GRINDER- 09,Portable Machinery,breakdown_only,GWS 700,BOSCH,METFRAA-STORE,,2200,0.75,kW,2026,true
++M072,AG-4 GRINDER- 10,Portable Machinery,breakdown_only,GWS 700,BOSCH,METFRAA-STORE,,2200,0.75,kW,2026,true
++M073,AG-4 GRINDER- 11,Portable Machinery,breakdown_only,GWS 700,BOSCH,METFRAA-STORE,,2200,0.75,kW,2026,true
++M074,AG-4 GRINDER- 12,Portable Machinery,breakdown_only,GWS 700,BOSCH,METFRAA-STORE,,2200,0.75,kW,2026,true
++M075,AG-7 GRINDER- 06,Portable Machinery,breakdown_only,GWS 2200,BOSCH,METFRAA-STORE,,7700,2.2,kW,2026,true
++M076,AG-7 GRINDER- 07,Portable Machinery,breakdown_only,GWS 2200,BOSCH,METFRAA-STORE,,7700,2.2,kW,2026,true
++M077,AG-7 GRINDER- 08,Portable Machinery,breakdown_only,GWS 2200,BOSCH,METFRAA-STORE,,7700,2.2,kW,2026,true
++M078,AG-7 GRINDER- 09,Portable Machinery,breakdown_only,GWS 2200,BOSCH,METFRAA-STORE,,7700,2.2,kW,2026,true
++M079,ELECTRODE OVEN- 01,Portable Machinery,breakdown_only,A2510009,WELD-CRAFT,Metfraa-factory,,4400,5,KG,2025,true
++M080,ELECTRODE OVEN- 02,Portable Machinery,breakdown_only,A2510011,WELD-CRAFT,Metfraa-factory,,4400,5,KG,2025,true
++M081,ARC WELDING- 12,Machinery,breakdown_only,MMA 400G,RILON,METFRAA-STORE,,22000,13.8,kW,2026,true
++M082,ARC WELDING- 13,Machinery,breakdown_only,MMA 400G,RILON,METFRAA-STORE,,22000,13.8,kW,2026,true
++M083,ARC WELDING- 14,Machinery,breakdown_only,MMA 400G,RILON,METFRAA-STORE,,22000,13.8,kW,2026,true
++M084,ARC WELDING- 15,Machinery,breakdown_only,MMA 400G,RILON,METFRAA-STORE,,22000,13.8,kW,2026,true
++M085,ELECTRONIC WEIGHING M/C,Machinery,breakdown_only,AG-PF,ATGO,METFRAA-STORE,,8500,500,KG,2026,true
++M086,MAGNETIC LIFTER,Portable Machinery,breakdown_only,842519,KMS,Metfraa-factory,,17400,1,Ton,2026,true
++M087,DIESEL GENERATOR (DG-01) 125 kVA,Machinery,dg_set,C125D5P/F77 / Engine 6BTAA5.9-G13,Cummins,Metfraa-factory,,,125,kVA,,true
+diff --git a/app/models.py b/app/models.py
+index 539f6cc..082314a 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -550,6 +550,7 @@ class EmployeeAccess(Base):
+     gatepass_admin = Column(Boolean, default=False, nullable=False)
+     plant_admin = Column(Boolean, default=False, nullable=False)
+     project_ops_admin = Column(Boolean, default=False, nullable=False)
++    maint_admin = Column(Boolean, default=False, nullable=False)
+     kpi_access = Column(Boolean, default=True, nullable=False)
+     expense_access = Column(Boolean, default=True, nullable=False)
+     ehs_access = Column(Boolean, default=True, nullable=False)
+@@ -1115,3 +1116,120 @@ class ProjReportRecipients(Base):
+     cc_emails = Column(Text, nullable=True)   # comma-separated
+     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+     updated_by = Column(String(255), nullable=True)
++
++
++# ============================================================
++# Maintenance module (CMMS) — assets, readings, events, PM plans
++# ============================================================
++
++class MaintMachineType(Base):
++    """Machine type -> which reading fields apply. reading_params is a list of
++    {code,label,unit}; meter_param names the cumulative meter (None = no meter)."""
++    __tablename__ = "maint_machine_types"
++
++    id = Column(Integer, primary_key=True)
++    key = Column(String(40), unique=True, nullable=False)
++    name = Column(String(120), nullable=False)
++    reading_params = Column(JSON, nullable=False, default=list)
++    meter_param = Column(String(40), nullable=True)
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++
++class MaintAsset(Base):
++    """Equipment master -- one row per machine (seeded from the masterlist)."""
++    __tablename__ = "maint_assets"
++
++    id = Column(Integer, primary_key=True)
++    asset_code = Column(String(20), unique=True, nullable=False)
++    description = Column(String(255), nullable=False)
++    category = Column(String(40), nullable=True)
++    type_id = Column(Integer, ForeignKey("maint_machine_types.id"), nullable=True)
++    serial_model_no = Column(String(255), nullable=True)
++    manufacturer = Column(String(255), nullable=True)
++    location = Column(String(120), nullable=True)
++    acquisition_date = Column(Date, nullable=True)
++    acquisition_value = Column(Float, nullable=True)
++    capacity = Column(Float, nullable=True)
++    capacity_unit = Column(String(20), nullable=True)
++    mfg_year = Column(Integer, nullable=True)
++    supplier = Column(String(255), nullable=True)
++    warranty_until = Column(Date, nullable=True)
++    date_installed = Column(Date, nullable=True)
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    machine_type = relationship("MaintMachineType")
++
++
++class MaintReading(Base):
++    """Daily / run readings for metered assets. values keyed by the type's param
++    codes; meter_value is the cumulative meter at this reading."""
++    __tablename__ = "maint_readings"
++
++    id = Column(Integer, primary_key=True)
++    asset_id = Column(Integer, ForeignKey("maint_assets.id"), nullable=False)
++    reading_date = Column(Date, nullable=False)
++    start_time = Column(String(8), nullable=True)
++    end_time = Column(String(8), nullable=True)
++    values = Column(JSON, nullable=False, default=dict)
++    meter_value = Column(Float, nullable=True)
++    diff = Column(Float, nullable=True)
++    remarks = Column(Text, nullable=True)
++    entered_by = Column(String(255), nullable=True)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    asset = relationship("MaintAsset")
++
++
++class MaintPMPlan(Base):
++    """Preventive schedule -- due by date OR meter (whichever comes first)."""
++    __tablename__ = "maint_pm_plans"
++
++    id = Column(Integer, primary_key=True)
++    asset_id = Column(Integer, ForeignKey("maint_assets.id"), nullable=False)
++    task = Column(String(255), nullable=False)
++    interval_days = Column(Integer, nullable=True)
++    interval_meter = Column(Float, nullable=True)
++    last_done_date = Column(Date, nullable=True)
++    last_done_meter = Column(Float, nullable=True)
++    active = Column(Boolean, default=True, nullable=False)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    asset = relationship("MaintAsset")
++
++
++class MaintEvent(Base):
++    """One store for maintenance events: PM (scheduled/unscheduled) + breakdown.
++    Breakdowns use status/reported_at/restored_at; PM events leave them null.
++    attended_by / verified_by reference the Plant team (plant_labour)."""
++    __tablename__ = "maint_events"
++
++    id = Column(Integer, primary_key=True)
++    asset_id = Column(Integer, ForeignKey("maint_assets.id"), nullable=False)
++    event_date = Column(Date, nullable=False)
++    category = Column(String(24), nullable=False)   # Breakdown / Scheduled PM / Unscheduled PM
++    status = Column(String(16), nullable=True)       # Open / Under repair / Closed (breakdowns)
++    reported_at = Column(DateTime, nullable=True)
++    restored_at = Column(DateTime, nullable=True)
++    downtime_hrs = Column(Float, nullable=True)
++    complaint = Column(Text, nullable=True)
++    cause = Column(Text, nullable=True)
++    action = Column(Text, nullable=True)
++    parts = Column(Text, nullable=True)
++    cost = Column(Float, nullable=True)
++    meter_at_event = Column(Float, nullable=True)
++    attended_by_id = Column(Integer, ForeignKey("plant_labour.id"), nullable=True)
++    verified_by_id = Column(Integer, ForeignKey("plant_labour.id"), nullable=True)
++    pm_plan_id = Column(Integer, ForeignKey("maint_pm_plans.id"), nullable=True)
++    remarks = Column(Text, nullable=True)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    asset = relationship("MaintAsset")
++    attended_by = relationship("PlantLabour", foreign_keys=[attended_by_id])
++    verified_by = relationship("PlantLabour", foreign_keys=[verified_by_id])
+diff --git a/app/startup_migrations.py b/app/startup_migrations.py
+index 802c3f1..3b10191 100644
+--- a/app/startup_migrations.py
++++ b/app/startup_migrations.py
+@@ -79,6 +79,7 @@ EXPENSE_PARITY_MIGRATIONS += [
+ # same class of break that took out the gatepass page.
+ MISC_MIGRATIONS = [
+     "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS project_ops_admin BOOLEAN NOT NULL DEFAULT FALSE",
++    "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS maint_admin BOOLEAN NOT NULL DEFAULT FALSE",
+     "ALTER TABLE plant_contractors ADD COLUMN IF NOT EXISTS ot_rate_per_half_hour DOUBLE PRECISION NOT NULL DEFAULT 50",
+     "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS working_hours DOUBLE PRECISION NOT NULL DEFAULT 8",
+     "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS ot_category VARCHAR(16) NOT NULL DEFAULT 'salary'",
+diff --git a/scripts/seed_maint.py b/scripts/seed_maint.py
+new file mode 100644
+index 0000000..71e8bea
+--- /dev/null
++++ b/scripts/seed_maint.py
+@@ -0,0 +1,101 @@
++"""Seed the maintenance module: machine types + asset master.
++
++Idempotent — safe to re-run. Upserts by machine-type key and asset_code.
++Run once against Neon (new tables are created by create_all / INIT_DB):
++
++    DATABASE_URL="postgresql://..." python scripts/seed_maint.py
++"""
++import csv, os
++from datetime import date
++from app.database import engine, SessionLocal, Base
++from app import models  # noqa: F401 — register all tables
++from app.models import MaintMachineType, MaintAsset
++
++HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++CSV_PATH = os.path.join(HERE, "app", "data", "maint_assets_seed.csv")
++
++TYPES = [
++    {"key": "breakdown_only", "name": "Breakdown only (no readings)", "reading_params": [], "meter_param": None},
++    {"key": "screw_air_compressor", "name": "Screw / air compressor", "meter_param": "running_hrs",
++     "reading_params": [
++        {"code": "running_hrs", "label": "Running hours", "unit": "hrs"},
++        {"code": "pressure", "label": "Pressure", "unit": "bar"},
++        {"code": "temp", "label": "Temperature", "unit": "C"},
++        {"code": "voltage", "label": "Voltage", "unit": "V"},
++        {"code": "current", "label": "Current", "unit": "A"},
++        {"code": "load_hrs", "label": "Load hours", "unit": "hrs"}]},
++    {"key": "airless_spray", "name": "Airless spray", "meter_param": "meter_gallons",
++     "reading_params": [
++        {"code": "meter_gallons", "label": "Meter (gallons)", "unit": "gal"},
++        {"code": "ltr", "label": "Litres", "unit": "L"},
++        {"code": "working_pressure", "label": "Working pressure", "unit": "psi"}]},
++    {"key": "dg_set", "name": "DG set", "meter_param": "engine_hrs_end",
++     "reading_params": [
++        {"code": "engine_hrs_start", "label": "Engine hrs (start)", "unit": "hrs"},
++        {"code": "engine_hrs_end", "label": "Engine hrs (end)", "unit": "hrs"},
++        {"code": "run_time", "label": "Run time", "unit": "h"},
++        {"code": "diesel_used", "label": "Diesel used", "unit": "L"},
++        {"code": "kwh_start", "label": "kWh (start)", "unit": "kWh"},
++        {"code": "kwh_end", "label": "kWh (end)", "unit": "kWh"}]},
++    {"key": "cnc_plasma", "name": "CNC plasma (event-only)", "reading_params": [], "meter_param": None},
++]
++
++
++def _f(v):
++    return float(v) if str(v).strip() != "" else None
++
++def _i(v):
++    return int(float(v)) if str(v).strip() != "" else None
++
++def _d(v):
++    return date.fromisoformat(v) if str(v).strip() != "" else None
++
++
++def run():
++    Base.metadata.create_all(bind=engine)
++    db = SessionLocal()
++    try:
++        # types
++        tmap = {}
++        for t in TYPES:
++            row = db.query(MaintMachineType).filter_by(key=t["key"]).first()
++            if not row:
++                row = MaintMachineType(key=t["key"])
++                db.add(row)
++            row.name = t["name"]
++            row.reading_params = t["reading_params"]
++            row.meter_param = t["meter_param"]
++            row.active = True
++            db.flush()
++            tmap[t["key"]] = row.id
++        # assets
++        ins = upd = 0
++        with open(CSV_PATH, newline="", encoding="utf-8") as f:
++            for r in csv.DictReader(f):
++                a = db.query(MaintAsset).filter_by(asset_code=r["asset_code"]).first()
++                if not a:
++                    a = MaintAsset(asset_code=r["asset_code"]); db.add(a); ins += 1
++                else:
++                    upd += 1
++                a.description = r["description"]
++                a.category = r["category"] or None
++                a.type_id = tmap.get(r["machine_type"], tmap["breakdown_only"])
++                a.serial_model_no = r["serial_model_no"] or None
++                a.manufacturer = r["manufacturer"] or None
++                a.location = r["location"] or None
++                a.acquisition_date = _d(r["acquisition_date"])
++                a.acquisition_value = _f(r["acquisition_value"])
++                a.capacity = _f(r["capacity"])
++                a.capacity_unit = r["capacity_unit"] or None
++                a.mfg_year = _i(r["mfg_year"])
++                a.active = (r["active"] == "true")
++        db.commit()
++        total = db.query(MaintAsset).count()
++        print(f"machine types: {db.query(MaintMachineType).count()}")
++        print(f"assets inserted: {ins}, updated: {upd}, total now: {total}")
++    finally:
++        db.close()
++
++
++if __name__ == "__main__":
++    run()

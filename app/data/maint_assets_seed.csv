@@ -1,0 +1,88 @@
+asset_code,description,category,machine_type,serial_model_no,manufacturer,location,acquisition_date,acquisition_value,capacity,capacity_unit,mfg_year,active
+M001,EOT CRANE - 01,Machinery,breakdown_only,4442,AMSAK,Metfraa-factory,,2560600,15,Ton,2025,true
+M002,EOT CRANE -02,Machinery,breakdown_only,4459,AMSAK,Metfraa-factory,,1475000,5,Ton,2025,true
+M003,EOT CRANE- 03,Machinery,breakdown_only,4460,AMSAK,Metfraa-factory,,1026600,3,Ton,2025,true
+M004,CNC PLASMA,Machinery,cnc_plasma,9300093,MESSER,Metfraa-factory,,4991400,30,kW,2026,true
+M005,UPS- 01,Machinery,breakdown_only,25K0M0R0P100010032,MICROTEK,Metfraa-factory,,194700,7.5,kW,2026,true
+M006,AIR COMPRESSOR- 01,Machinery,screw_air_compressor,BZKC370742,ELGI,Metfraa-factory,,149200,8.5,Bar,2026,true
+M007,PTW,Machinery,breakdown_only,PTW/00057-10,PRIMO,Metfraa-factory,,7198000,125,kW,2026,true
+M008,MIG WELDING- 01,Machinery,breakdown_only,1250703758,RILON,Metfraa-factory,,75520,13.8,kW,2025,true
+M009,MIG WELDING- 02,Machinery,breakdown_only,1250703799,RILON,Metfraa-factory,,75520,13.8,kW,2025,true
+M010,MIG WELDING- 03,Machinery,breakdown_only,1250909707,RILON,Metfraa-factory,,75520,13.8,kW,2025,true
+M011,MIG WELDING- 04,Machinery,breakdown_only,1250703792,RILON,Metfraa-factory,,75520,13.8,kW,2025,true
+M012,MIG WELDING- 05,Machinery,breakdown_only,1250703829,RILON,Metfraa-factory,,79060,13.8,kW,2025,true
+M013,MIG WELDING- 06,Machinery,breakdown_only,1250703793,RILON,Metfraa-factory,,79060,13.8,kW,2025,true
+M014,MIG WELDING- 07,Machinery,breakdown_only,1250703796,RILON,Metfraa-factory,,79060,13.8,kW,2025,true
+M015,MIG WELDING- 08,Machinery,breakdown_only,1251216323,RILON,Metfraa-factory,,79060,13.8,kW,2025,true
+M016,MIG WELDING- 09,Machinery,breakdown_only,1251216329,RILON,Metfraa-factory,,79060,13.8,kW,2025,true
+M017,ARC WELDING- 01,Machinery,breakdown_only,1260111194,RILON,Metfraa-factory,,24780,13.8,kW,2025,true
+M018,ARC WELDING- 02,Machinery,breakdown_only,1260111088,RILON,Metfraa-factory,,24780,13.8,kW,2025,true
+M019,AG-7 GRINDER- 01,Portable Machinery,breakdown_only,621087865,BOSCH,Metfraa-factory,,9086,2.2,kW,2025,true
+M020,AG-7 GRINDER- 02,Portable Machinery,breakdown_only,622013747,BOSCH,Metfraa-factory,,9086,2.2,kW,2025,true
+M021,AG-7 GRINDER- 03,Portable Machinery,breakdown_only,622093748,BOSCH,Metfraa-factory,,9086,2.2,kW,2025,true
+M022,AG-7 GRINDER- 04,Portable Machinery,breakdown_only,622093749,BOSCH,Metfraa-factory,,9086,2.2,kW,2025,true
+M023,AG-4 GRINDER- 01,Portable Machinery,breakdown_only,13122526,DEWALT,Metfraa-factory,,2891,0.85,kW,2025,true
+M024,AG-4 GRINDER- 02,Portable Machinery,breakdown_only,13121705,DEWALT,Metfraa-factory,,2891,0.85,kW,2025,true
+M025,AG-4 GRINDER- 03,Portable Machinery,breakdown_only,13122524,DEWALT,Metfraa-factory,,2891,0.85,kW,2025,true
+M026,AG-4 GRINDER- 04,Portable Machinery,breakdown_only,13122525,DEWALT,Metfraa-factory,,2891,0.85,kW,2025,true
+M027,STRAIGHT GRINDER- 01,Portable Machinery,breakdown_only,530005564,BOSCH,Metfraa-factory,,7316,0.55,kW,2025,true
+M028,STRAIGHT GRINDER- 02,Portable Machinery,breakdown_only,528001718,BOSCH,Metfraa-factory,,7316,0.55,kW,2025,true
+M029,STRAIGHT GRINDER- 03,Portable Machinery,breakdown_only,530005569,BOSCH,Metfraa-factory,,7316,0.55,kW,2025,true
+M030,STRAIGHT GRINDER- 04,Portable Machinery,breakdown_only,530005584,BOSCH,Metfraa-factory,,7316,0.55,kW,2025,true
+M031,MAGNETIC DRILL- 01,Portable Machinery,breakdown_only,20260054,EIBENSTOCK POSITRON,Metfraa-factory,,43070,1.2,kW,2026,true
+M032,MAGNETIC DRILL- 02,Portable Machinery,breakdown_only,20250273,EIBENSTOCK POSITRON,Metfraa-factory,,43070,1.2,kW,2025,true
+M033,MAGNETIC DRILL- 03,Portable Machinery,breakdown_only,20250267,EIBENSTOCK POSITRON,Metfraa-factory,,43070,1.2,kW,2025,true
+M034,MAGNETIC DRILL- 04,Portable Machinery,breakdown_only,20260053,EIBENSTOCK POSITRON,Metfraa-factory,,43070,1.2,kW,2026,true
+M035,PUG CUTTING- 01,Portable Machinery,breakdown_only,260130119,KONARK,Metfraa-factory,,10856,0.09,kW,2025,true
+M036,CUT OFF M/C- 01,Portable Machinery,breakdown_only,531004659,BOSCH,Metfraa-factory,,10677,2.2,kW,2025,true
+M037,AIRLESS SPRAY,Machinery,airless_spray,J25A17E624001801,GRACO,Metfraa-factory,,309160,1.2,kW,2025,true
+M038,MOTORISED ROLLING SHUTTER 1 & 2,Machinery,breakdown_only,,CHENNAI WINDOW SYSTEMS PVT LTD,Metfraa-factory,,267915,1.1,kW,2025,true
+M039,ARC WELDING- 03,Machinery,breakdown_only,1250514615,RILON,KV CONSTRUCTION,,24780,13.8,kW,,true
+M040,ARC WELDING- 04,Machinery,breakdown_only,1250616517,RILON,KV CONSTRUCTION,,24780,13.8,kW,,true
+M041,ARC WELDING- 05,Machinery,breakdown_only,1250403637,RILON,Metfraa-factory,,24780,13.8,kW,,true
+M042,ARC WELDING- 06,Machinery,breakdown_only,RI 20250182,RILON,Metfraa-factory,,24780,10.2,kW,,true
+M043,ARC WELDING- 07,Machinery,breakdown_only,RI 20250184,RILON,Metfraa-factory,,24780,10.2,kW,,true
+M044,ARC WELDING- 08,Machinery,breakdown_only,250402237,TOSHWELD,AMNS SITE,,24780,17,kW,,true
+M045,MAGNETIC DRILL- 05,Portable Machinery,breakdown_only,MABASIC 40,BDS,AMNS SITE,,43000,1.1,kW,,true
+M046,ARC WELDING- 09,Machinery,breakdown_only,,,KGISL SITE,,24780,,,,true
+M047,ARC WELDING- 010,Machinery,breakdown_only,,,KGISL SITE,,24780,,,,true
+M048,ARC WELDING- 011,Machinery,breakdown_only,,,METFRAA-STORE,,10000,,,,true
+M049,FLUX HEATING OVEN,Machinery,breakdown_only,,INDOTECH,Metfraa-factory,,25000,2.2,kW,2025,true
+M050,AG-7 GRINDER- 05,Portable Machinery,breakdown_only,GWS 2200,BOSCH,KV CONSTRUCTION,,8799,2.2,kW,,true
+M051,AG-5 GRINDER- 01,Portable Machinery,breakdown_only,DWE 4235,DEWALT,KV CONSTRUCTION,,7999,1.4,kW,,true
+M052,AG-4 GRINDER- 05,Portable Machinery,breakdown_only,DW 801,DEWALT,KV CONSTRUCTION,,2891,0.85,kW,,true
+M053,STRAIGHT GRINDER- 05,Portable Machinery,breakdown_only,GGS 5 LS,BOSCH,KV CONSTRUCTION,,7316,0.55,kW,,true
+M054,CUT OFF M/C- 02,Portable Machinery,breakdown_only,GCO 220,BOSCH,KV CONSTRUCTION,,10677,2.2,kW,,true
+M055,MAGNETIC DRILL- 06,Portable Machinery,breakdown_only,KBC 38N,KPT,KV CONSTRUCTION,,44839,1.1,kW,,true
+M056,PUG CUTTING- 02,Portable Machinery,breakdown_only,,KONARK,KV CONSTRUCTION,,10856,0.09,kW,,true
+M057,HAND DRILL- 01,Portable Machinery,breakdown_only,DWD014,DEWALT,METFRAA-STORE,,3402,0.55,kW,,true
+M058,HAND DRILL- 02,Portable Machinery,breakdown_only,DWD014,DEWALT,METFRAA-STORE,,3402,0.55,kW,,true
+M059,ELECTRIC WRENCH,Portable Machinery,breakdown_only,DPB 20C,DONG CHENG,METFRAA-STORE,,4100,0.34,kW,,true
+M060,PAINT STITTER,Portable Machinery,breakdown_only,SERIES M-02,ASIAN PAINT,METFRAA-STORE,,2714,0.8,kW,,true
+M061,AIR COMPRESSOR- 02,Machinery,screw_air_compressor,M-100,MECCO,Metfraa-factory,,13000,1.5,HP,,true
+M062,AG-4 GRINDER- 06,Portable Machinery,breakdown_only,DW 801,DEWALT,AMNS SITE,,2891,0.85,kW,,true
+M063,AG-4 GRINDER- 07,Portable Machinery,breakdown_only,DW 801,DEWALT,KGISL SITE,,2891,0.85,kW,,true
+M064,AG-4 GRINDER- 08,Portable Machinery,breakdown_only,DW 801,DEWALT,KGISL SITE,,2891,0.85,kW,,true
+M065,SHOT BLASTING M/C,Machinery,breakdown_only,,KMS,Metfraa-factory,,69620,600,KG,2026,true
+M066,SCREW COMPRESSOR,Machinery,screw_air_compressor,KS40-8,KOMTER,Metfraa-factory,,534662,40,HP,2026,true
+M067,CUT OFF M/C- 03,Portable Machinery,breakdown_only,GCO 220,BOSCH,Metfraa-factory,,10677,2.2,kW,2025,true
+M068,CUTT OFF M/C- 04,Portable Machinery,breakdown_only,GCO 220,BOSCH,Metfraa-factory,,10677,2.2,kW,2026,true
+M069,CUT OFF M/C- 05,Portable Machinery,breakdown_only,GCO 220,BOSCH,Metfraa-factory,,10677,2.2,kW,2026,true
+M070,UPS- 02,Machinery,breakdown_only,,MICROTEK,Metfraa-factory,,59000,3,kW,2026,true
+M071,AG-4 GRINDER- 09,Portable Machinery,breakdown_only,GWS 700,BOSCH,METFRAA-STORE,,2200,0.75,kW,2026,true
+M072,AG-4 GRINDER- 10,Portable Machinery,breakdown_only,GWS 700,BOSCH,METFRAA-STORE,,2200,0.75,kW,2026,true
+M073,AG-4 GRINDER- 11,Portable Machinery,breakdown_only,GWS 700,BOSCH,METFRAA-STORE,,2200,0.75,kW,2026,true
+M074,AG-4 GRINDER- 12,Portable Machinery,breakdown_only,GWS 700,BOSCH,METFRAA-STORE,,2200,0.75,kW,2026,true
+M075,AG-7 GRINDER- 06,Portable Machinery,breakdown_only,GWS 2200,BOSCH,METFRAA-STORE,,7700,2.2,kW,2026,true
+M076,AG-7 GRINDER- 07,Portable Machinery,breakdown_only,GWS 2200,BOSCH,METFRAA-STORE,,7700,2.2,kW,2026,true
+M077,AG-7 GRINDER- 08,Portable Machinery,breakdown_only,GWS 2200,BOSCH,METFRAA-STORE,,7700,2.2,kW,2026,true
+M078,AG-7 GRINDER- 09,Portable Machinery,breakdown_only,GWS 2200,BOSCH,METFRAA-STORE,,7700,2.2,kW,2026,true
+M079,ELECTRODE OVEN- 01,Portable Machinery,breakdown_only,A2510009,WELD-CRAFT,Metfraa-factory,,4400,5,KG,2025,true
+M080,ELECTRODE OVEN- 02,Portable Machinery,breakdown_only,A2510011,WELD-CRAFT,Metfraa-factory,,4400,5,KG,2025,true
+M081,ARC WELDING- 12,Machinery,breakdown_only,MMA 400G,RILON,METFRAA-STORE,,22000,13.8,kW,2026,true
+M082,ARC WELDING- 13,Machinery,breakdown_only,MMA 400G,RILON,METFRAA-STORE,,22000,13.8,kW,2026,true
+M083,ARC WELDING- 14,Machinery,breakdown_only,MMA 400G,RILON,METFRAA-STORE,,22000,13.8,kW,2026,true
+M084,ARC WELDING- 15,Machinery,breakdown_only,MMA 400G,RILON,METFRAA-STORE,,22000,13.8,kW,2026,true
+M085,ELECTRONIC WEIGHING M/C,Machinery,breakdown_only,AG-PF,ATGO,METFRAA-STORE,,8500,500,KG,2026,true
+M086,MAGNETIC LIFTER,Portable Machinery,breakdown_only,842519,KMS,Metfraa-factory,,17400,1,Ton,2026,true
+M087,DIESEL GENERATOR (DG-01) 125 kVA,Machinery,dg_set,C125D5P/F77 / Engine 6BTAA5.9-G13,Cummins,Metfraa-factory,,,125,kVA,,true
