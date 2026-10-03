@@ -547,3 +547,95 @@ def api_plan_done(plan_id: int, payload: PMDoneIn,
     p.last_done_meter = cur
     db.commit(); db.refresh(p)
     return _plan_json(db, p)
+
+
+# ------------------------------------------------------------------ dashboard
+
+@router.get("/api/dashboard")
+def api_dashboard(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    from collections import defaultdict
+    today = date.today()
+    since30 = today - timedelta(days=30)
+    assets = {a.id: a for a in db.query(MaintAsset).all()}
+    events = db.query(MaintEvent).all()
+
+    def acode(aid):
+        return assets[aid].asset_code if aid in assets else "?"
+
+    def adesc(aid):
+        return assets[aid].description if aid in assets else ""
+
+    breakdowns = [e for e in events if e.category == "Breakdown"]
+    pms = [e for e in events if e.category in ("Scheduled PM", "Unscheduled PM")]
+    open_bd = [e for e in breakdowns if (e.status or "Open") != "Closed"]
+
+    total_downtime = round(sum(e.downtime_hrs or 0 for e in breakdowns), 1)
+    downtime_30 = round(sum(e.downtime_hrs or 0 for e in breakdowns
+                            if e.event_date and e.event_date >= since30), 1)
+    cost_all = round(sum(e.cost or 0 for e in events), 2)
+    cost_30 = round(sum(e.cost or 0 for e in events
+                        if e.event_date and e.event_date >= since30), 2)
+    bd_30 = sum(1 for e in breakdowns if e.event_date and e.event_date >= since30)
+    pm_30 = sum(1 for e in pms if e.event_date and e.event_date >= since30)
+
+    open_list = sorted(
+        [{"id": e.id, "asset_code": acode(e.asset_id), "asset_description": adesc(e.asset_id),
+          "event_date": _iso(e.event_date), "complaint": e.complaint, "status": e.status or "Open",
+          "days_open": (today - e.event_date).days if e.event_date else None} for e in open_bd],
+        key=lambda x: (x["days_open"] is None, -(x["days_open"] or 0)))
+
+    dt = defaultdict(float)
+    freq = defaultdict(int)
+    dates = defaultdict(list)
+    for e in breakdowns:
+        dt[e.asset_id] += e.downtime_hrs or 0
+        freq[e.asset_id] += 1
+        if e.event_date:
+            dates[e.asset_id].append(e.event_date)
+    downtime_by_machine = sorted(
+        [{"asset_code": acode(k), "asset_description": adesc(k), "hours": round(v, 1)}
+         for k, v in dt.items() if v > 0], key=lambda x: -x["hours"])[:10]
+    freq_by_machine = []
+    for k, c in freq.items():
+        ds = sorted(dates[k])
+        mtbf = None
+        if len(ds) >= 2:
+            span = (ds[-1] - ds[0]).days
+            mtbf = round(span / (len(ds) - 1), 1) if span > 0 else 0
+        freq_by_machine.append({"asset_code": acode(k), "asset_description": adesc(k),
+                                "count": c, "mtbf_days": mtbf})
+    freq_by_machine.sort(key=lambda x: -x["count"])
+    freq_by_machine = freq_by_machine[:10]
+
+    cost_cat = defaultdict(float)
+    for e in events:
+        cost_cat[e.category] += e.cost or 0
+    cost_by_category = sorted([{"category": k, "amount": round(v, 2)} for k, v in cost_cat.items()],
+                              key=lambda x: -x["amount"])
+
+    plans = db.query(MaintPMPlan).filter(MaintPMPlan.active.is_(True)).all()
+    due = overdue = 0
+    for p in plans:
+        pj = _plan_json(db, p)
+        if pj["due"]:
+            due += 1
+        if pj["days_overdue"] and pj["days_overdue"] > 0:
+            overdue += 1
+    active_plans = len(plans)
+    compliance = round((active_plans - due) / active_plans * 100) if active_plans else None
+
+    return {
+        "open_breakdowns": len(open_bd),
+        "total_downtime_hrs": total_downtime, "downtime_30_hrs": downtime_30,
+        "cost_all": cost_all, "cost_30": cost_30,
+        "breakdowns_30": bd_30, "pm_done_30": pm_30,
+        "counts": {"assets": len(assets), "events": len(events),
+                   "breakdowns": len(breakdowns), "pms": len(pms)},
+        "open_list": open_list,
+        "downtime_by_machine": downtime_by_machine,
+        "freq_by_machine": freq_by_machine,
+        "cost_by_category": cost_by_category,
+        "pm": {"active_plans": active_plans, "due": due, "overdue": overdue,
+               "compliance_pct": compliance, "pm_done_30": pm_30},
+    }

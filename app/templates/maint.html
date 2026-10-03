@@ -16,6 +16,9 @@
   <!-- Tab nav (only Assets live for now) -->
   <div class="border-b border-metfraa-gray-200 mb-6">
     <nav class="flex gap-1 flex-wrap">
+      <button @click="tab='dashboard'; loadDashboard()"
+              :class="tab==='dashboard' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">Dashboard</button>
       <button @click="tab='assets'"
               :class="tab==='assets' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">Assets</button>
@@ -32,6 +35,105 @@
               :class="tab==='pm' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">PM Due</button>
     </nav>
+  </div>
+
+  <!-- ===================== DASHBOARD ===================== -->
+  <div x-show="tab==='dashboard'" x-cloak>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="lbl-f">Open breakdowns</div>
+        <div class="display text-3xl font-bold" :class="dash.open_breakdowns ? 'text-red-600' : 'text-metfraa-ink'" x-text="dash.open_breakdowns ?? '—'"></div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="lbl-f">Downtime (30d)</div>
+        <div class="display text-3xl font-bold text-metfraa-ink"><span x-text="dash.downtime_30_hrs ?? '—'"></span><span class="text-base text-metfraa-gray-400">h</span></div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="lbl-f">Cost (30d)</div>
+        <div class="display text-3xl font-bold text-metfraa-ink">₹<span x-text="(dash.cost_30 ?? 0).toLocaleString('en-IN')"></span></div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="lbl-f">PM compliance</div>
+        <div class="display text-3xl font-bold" :class="(dash.pm && dash.pm.compliance_pct!=null && dash.pm.compliance_pct<80) ? 'text-amber-600' : 'text-emerald-600'"><span x-text="(dash.pm && dash.pm.compliance_pct!=null) ? dash.pm.compliance_pct : '—'"></span><span class="text-base text-metfraa-gray-400">%</span></div>
+        <div class="text-[11px] text-metfraa-gray-500 mt-1" x-show="dash.pm" x-text="((dash.pm&&dash.pm.due)||0)+' due · '+((dash.pm&&dash.pm.overdue)||0)+' overdue'"></div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 overflow-hidden">
+        <div class="px-5 py-3 border-b border-metfraa-gray-200 flex items-center justify-between">
+          <h3 class="display font-bold text-metfraa-ink">Open breakdowns</h3>
+          <button @click="tab='breakdown'" class="text-xs font-semibold text-metfraa-blue hover:underline">View register →</button>
+        </div>
+        <div class="divide-y divide-metfraa-gray-100 max-h-80 overflow-y-auto">
+          <template x-for="e in (dash.open_list||[])" :key="e.id">
+            <div class="px-5 py-2.5 flex items-center gap-3">
+              <span class="mono font-semibold text-sm" x-text="e.asset_code"></span>
+              <span class="text-sm text-metfraa-gray-600 flex-1 truncate" :title="e.complaint" x-text="e.complaint || '—'"></span>
+              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full" :class="e.status==='Under repair' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'" x-text="e.status"></span>
+              <span class="text-[11px] text-metfraa-gray-500 mono w-16 text-right" x-text="e.days_open!=null ? e.days_open+'d' : ''"></span>
+            </div>
+          </template>
+          <div x-show="!(dash.open_list||[]).length" class="px-5 py-8 text-center text-sm text-metfraa-gray-500">No open breakdowns.</div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 overflow-hidden">
+        <div class="px-5 py-3 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Downtime by machine</h3></div>
+        <div class="p-5 space-y-2">
+          <template x-for="m in (dash.downtime_by_machine||[])" :key="m.asset_code">
+            <div>
+              <div class="flex items-center justify-between text-xs mb-0.5">
+                <span class="font-semibold text-metfraa-ink" :title="m.asset_description" x-text="m.asset_code"></span>
+                <span class="mono text-metfraa-gray-500" x-text="m.hours+'h'"></span>
+              </div>
+              <div class="h-2 bg-metfraa-gray-100 rounded-full overflow-hidden"><div class="h-full bg-metfraa-blue rounded-full" :style="`width:${dtPct(m.hours)}%`"></div></div>
+            </div>
+          </template>
+          <div x-show="!(dash.downtime_by_machine||[]).length" class="text-center text-sm text-metfraa-gray-500 py-6">No downtime recorded.</div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 overflow-hidden">
+        <div class="px-5 py-3 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Breakdown frequency</h3></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
+              <th class="px-4 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Machine</th>
+              <th class="px-4 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Breakdowns</th>
+              <th class="px-4 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Avg days between</th>
+            </tr></thead>
+            <tbody>
+              <template x-for="m in (dash.freq_by_machine||[])" :key="m.asset_code">
+                <tr class="border-b border-metfraa-gray-100">
+                  <td class="px-4 py-2 mono font-semibold" :title="m.asset_description" x-text="m.asset_code"></td>
+                  <td class="px-4 py-2 text-right mono" x-text="m.count"></td>
+                  <td class="px-4 py-2 text-right mono text-metfraa-gray-500" x-text="m.mtbf_days!=null ? m.mtbf_days : '—'"></td>
+                </tr>
+              </template>
+              <tr x-show="!(dash.freq_by_machine||[]).length"><td colspan="3" class="px-4 py-6 text-center text-sm text-metfraa-gray-500">No breakdowns recorded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 overflow-hidden">
+        <div class="px-5 py-3 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Cost by category</h3></div>
+        <div class="p-5 space-y-3">
+          <template x-for="c in (dash.cost_by_category||[])" :key="c.category">
+            <div class="flex items-center justify-between">
+              <span class="text-sm text-metfraa-gray-700" x-text="c.category"></span>
+              <span class="mono font-semibold text-metfraa-ink">₹<span x-text="(c.amount||0).toLocaleString('en-IN')"></span></span>
+            </div>
+          </template>
+          <div class="flex items-center justify-between pt-3 border-t border-metfraa-gray-200">
+            <span class="text-sm font-semibold text-metfraa-ink">Total (all time)</span>
+            <span class="mono font-bold text-metfraa-ink">₹<span x-text="(dash.cost_all||0).toLocaleString('en-IN')"></span></span>
+          </div>
+          <div x-show="!(dash.cost_by_category||[]).length" class="text-center text-sm text-metfraa-gray-500 py-4">No costs recorded.</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ===================== ASSETS ===================== -->
@@ -542,7 +644,7 @@
 <script>
 function maintApp() {
   return {
-    tab: 'assets',
+    tab: 'dashboard',
     assets: [],
     meta: { types: [], locations: [], team: [] },
     q: '', fLocation: '', fType: '', activeOnly: false,
@@ -552,11 +654,13 @@ function maintApp() {
     bStatus: '', bAsset: '',
     readings: [], rAssetId: '', rForm: {}, rSaving: false,
     pmPlans: [], pmForm: {}, pmModal: false, pmSaving: false, pmDueOnly: false,
+    dash: {},
 
     async init() {
       this.eForm = this.blankEvent();
       this.rForm = this.blankReading();
       await this.loadPlans();
+      await this.loadDashboard();
       await this.loadMeta();
       await this.loadAssets();
       await this.loadEvents();
@@ -791,6 +895,10 @@ function maintApp() {
         await this.loadEvents();
       } catch (e) { toast(e.message, 'error'); }
     },
+
+    // ----- dashboard -----
+    async loadDashboard() { const r = await fetch('/maint/api/dashboard'); if (r.ok) this.dash = await r.json(); },
+    dtPct(h) { const arr = (this.dash.downtime_by_machine || []).map(m => m.hours); const max = Math.max(1, ...arr); return Math.round(h / max * 100); },
   };
 }
 </script>
