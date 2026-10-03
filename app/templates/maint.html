@@ -657,8 +657,36 @@
 </div>
 
 <style>
-  .lbl-f { @apply text-xs font-semibold uppercase tracking-wider text-metfraa-gray-500 block mb-1; }
-  .inp  { @apply w-full text-sm rounded-lg border-metfraa-gray-300 focus:border-metfraa-blue focus:ring-metfraa-blue; }
+  /* Real CSS: the Tailwind Play CDN does not compile the @ apply directive in a
+     plain style block, which left these empty and broke form alignment. */
+  .lbl-f {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b7689;
+  }
+  .inp {
+    display: block;
+    width: 100%;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #bcc6d4;
+    border-radius: 0.5rem;
+    background-color: #fff;
+    color: #0d1421;
+  }
+  .inp:focus {
+    outline: none;
+    border-color: #1F7CCB;
+    box-shadow: 0 0 0 1px #1F7CCB;
+  }
+  select.inp { padding-right: 2rem; }
+  textarea.inp { min-height: 2.5rem; }
 </style>
 
 <script>
