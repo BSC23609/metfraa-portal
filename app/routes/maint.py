@@ -5,7 +5,7 @@ Breakdown/PM logging, readings, PM scheduling, reports and dashboard follow in
 later slices. Access is gated by the maint_admin flag (superadmin implies it).
 """
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 from ..access import get_access
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import Employee, MaintAsset, MaintMachineType, PlantLabour
+from ..models import (Employee, MaintAsset, MaintEvent, MaintMachineType,
+                      MaintPMPlan, MaintReading, PlantLabour)
 
 router = APIRouter(prefix="/maint", tags=["maint"])
 log = logging.getLogger("maint")
@@ -166,3 +167,383 @@ def api_toggle_asset(asset_id: int, user: Employee = Depends(get_current_user),
     a.active = not a.active
     db.commit()
     return {"id": a.id, "active": a.active}
+
+
+# ------------------------------------------------------------------ events
+
+VALID_CATEGORIES = {"Breakdown", "Scheduled PM", "Unscheduled PM"}
+
+
+def _pdt(s):
+    if not s:
+        return None
+    s = s.replace("T", " ").strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+    return None
+
+
+def _event_json(e: MaintEvent):
+    return {
+        "id": e.id, "asset_id": e.asset_id,
+        "asset_code": e.asset.asset_code if e.asset else None,
+        "asset_description": e.asset.description if e.asset else None,
+        "event_date": _iso(e.event_date), "category": e.category, "status": e.status,
+        "reported_at": e.reported_at.isoformat(timespec="minutes") if e.reported_at else None,
+        "restored_at": e.restored_at.isoformat(timespec="minutes") if e.restored_at else None,
+        "downtime_hrs": e.downtime_hrs, "complaint": e.complaint, "cause": e.cause,
+        "action": e.action, "parts": e.parts, "cost": e.cost,
+        "meter_at_event": e.meter_at_event,
+        "attended_by_id": e.attended_by_id, "verified_by_id": e.verified_by_id,
+        "attended_by_name": e.attended_by.name if e.attended_by else None,
+        "verified_by_name": e.verified_by.name if e.verified_by else None,
+        "remarks": e.remarks,
+    }
+
+
+class EventIn(BaseModel):
+    asset_id: int
+    event_date: str
+    category: str
+    status: str | None = None
+    reported_at: str | None = None
+    restored_at: str | None = None
+    complaint: str | None = None
+    cause: str | None = None
+    action: str | None = None
+    parts: str | None = None
+    cost: float | None = None
+    meter_at_event: float | None = None
+    attended_by_id: int | None = None
+    verified_by_id: int | None = None
+    remarks: str | None = None
+
+
+def _apply_event(e: MaintEvent, p: EventIn):
+    e.asset_id = p.asset_id
+    e.event_date = _pdate(p.event_date)
+    e.category = p.category
+    if p.category == "Breakdown":
+        e.status = p.status or "Open"
+        e.reported_at = _pdt(p.reported_at)
+        e.restored_at = _pdt(p.restored_at)
+        if e.reported_at and e.restored_at:
+            e.downtime_hrs = round((e.restored_at - e.reported_at).total_seconds() / 3600, 2)
+        else:
+            e.downtime_hrs = None
+    else:
+        e.status = None
+        e.reported_at = None
+        e.restored_at = None
+        e.downtime_hrs = None
+    e.complaint = p.complaint
+    e.cause = p.cause
+    e.action = p.action
+    e.parts = p.parts
+    e.cost = p.cost
+    e.meter_at_event = p.meter_at_event
+    e.attended_by_id = p.attended_by_id
+    e.verified_by_id = p.verified_by_id
+    e.remarks = p.remarks
+
+
+@router.get("/api/events")
+def api_events(asset_id: int | None = None, category: str | None = None,
+               status: str | None = None, limit: int = 300,
+               user: Employee = Depends(get_current_user),
+               db: Session = Depends(get_db)):
+    _guard(db, user)
+    qy = db.query(MaintEvent)
+    if asset_id:
+        qy = qy.filter(MaintEvent.asset_id == asset_id)
+    if category:
+        qy = qy.filter(MaintEvent.category == category)
+    if status:
+        qy = qy.filter(MaintEvent.status == status)
+    rows = qy.order_by(MaintEvent.event_date.desc(), MaintEvent.id.desc()).limit(limit).all()
+    return [_event_json(e) for e in rows]
+
+
+@router.post("/api/events")
+def api_create_event(payload: EventIn, user: Employee = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    _guard(db, user)
+    if payload.category not in VALID_CATEGORIES:
+        raise HTTPException(400, "Invalid category")
+    if not db.get(MaintAsset, payload.asset_id):
+        raise HTTPException(400, "Unknown asset")
+    if not _pdate(payload.event_date):
+        raise HTTPException(400, "Event date is required (YYYY-MM-DD)")
+    e = MaintEvent(asset_id=payload.asset_id)
+    _apply_event(e, payload)
+    db.add(e); db.commit(); db.refresh(e)
+    return _event_json(e)
+
+
+@router.put("/api/events/{event_id}")
+def api_update_event(event_id: int, payload: EventIn,
+                     user: Employee = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    _guard(db, user)
+    e = db.get(MaintEvent, event_id)
+    if not e:
+        raise HTTPException(404, "Event not found")
+    if payload.category not in VALID_CATEGORIES:
+        raise HTTPException(400, "Invalid category")
+    if not _pdate(payload.event_date):
+        raise HTTPException(400, "Event date is required (YYYY-MM-DD)")
+    _apply_event(e, payload)
+    db.commit(); db.refresh(e)
+    return _event_json(e)
+
+
+# ------------------------------------------------------------------ readings
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _reading_json(r: MaintReading):
+    return {
+        "id": r.id, "asset_id": r.asset_id,
+        "asset_code": r.asset.asset_code if r.asset else None,
+        "reading_date": _iso(r.reading_date), "start_time": r.start_time,
+        "end_time": r.end_time, "values": r.values or {},
+        "meter_value": r.meter_value, "diff": r.diff,
+        "remarks": r.remarks, "entered_by": r.entered_by,
+    }
+
+
+class ReadingIn(BaseModel):
+    asset_id: int
+    reading_date: str
+    start_time: str | None = None
+    end_time: str | None = None
+    values: dict = {}
+    remarks: str | None = None
+
+
+def _asset_meter_param(db: Session, asset_id: int):
+    a = db.get(MaintAsset, asset_id)
+    return a.machine_type.meter_param if (a and a.machine_type) else None
+
+
+def _recompute_readings(db: Session, asset_id: int, meter_param):
+    """Recompute meter_value + diff for every reading of an asset, in true
+    chronological order (date, then time, then entry order). DB-agnostic."""
+    rows = db.query(MaintReading).filter(MaintReading.asset_id == asset_id).all()
+    rows.sort(key=lambda r: (r.reading_date, r.start_time or "", r.id))
+    prev = None
+    for r in rows:
+        m = _num((r.values or {}).get(meter_param)) if meter_param else None
+        r.meter_value = m
+        r.diff = round(m - prev, 2) if (m is not None and prev is not None) else None
+        if m is not None:
+            prev = m
+
+
+@router.get("/api/readings")
+def api_readings(asset_id: int, user: Employee = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    _guard(db, user)
+    rows = db.query(MaintReading).filter(MaintReading.asset_id == asset_id).all()
+    rows.sort(key=lambda r: (r.reading_date, r.start_time or "", r.id), reverse=True)
+    return [_reading_json(r) for r in rows]
+
+
+@router.post("/api/readings")
+def api_create_reading(payload: ReadingIn, user: Employee = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    _guard(db, user)
+    if not db.get(MaintAsset, payload.asset_id):
+        raise HTTPException(400, "Unknown asset")
+    if not _pdate(payload.reading_date):
+        raise HTTPException(400, "Reading date is required (YYYY-MM-DD)")
+    r = MaintReading(asset_id=payload.asset_id, reading_date=_pdate(payload.reading_date),
+                     start_time=(payload.start_time or None), end_time=(payload.end_time or None),
+                     values=payload.values or {}, remarks=payload.remarks,
+                     entered_by=getattr(user, "name", None))
+    db.add(r); db.flush()
+    _recompute_readings(db, payload.asset_id, _asset_meter_param(db, payload.asset_id))
+    db.commit(); db.refresh(r)
+    return _reading_json(r)
+
+
+@router.put("/api/readings/{reading_id}")
+def api_update_reading(reading_id: int, payload: ReadingIn,
+                       user: Employee = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    _guard(db, user)
+    r = db.get(MaintReading, reading_id)
+    if not r:
+        raise HTTPException(404, "Reading not found")
+    if not _pdate(payload.reading_date):
+        raise HTTPException(400, "Reading date is required (YYYY-MM-DD)")
+    r.reading_date = _pdate(payload.reading_date)
+    r.start_time = payload.start_time or None
+    r.end_time = payload.end_time or None
+    r.values = payload.values or {}
+    r.remarks = payload.remarks
+    db.flush()
+    _recompute_readings(db, r.asset_id, _asset_meter_param(db, r.asset_id))
+    db.commit(); db.refresh(r)
+    return _reading_json(r)
+
+
+@router.delete("/api/readings/{reading_id}")
+def api_delete_reading(reading_id: int, user: Employee = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    _guard(db, user)
+    r = db.get(MaintReading, reading_id)
+    if not r:
+        raise HTTPException(404, "Reading not found")
+    asset_id = r.asset_id
+    db.delete(r); db.flush()
+    _recompute_readings(db, asset_id, _asset_meter_param(db, asset_id))
+    db.commit()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ PM plans
+
+def _latest_meter(db: Session, asset_id: int):
+    rows = db.query(MaintReading).filter(MaintReading.asset_id == asset_id).all()
+    rows.sort(key=lambda r: (r.reading_date, r.start_time or "", r.id))
+    for r in reversed(rows):
+        if r.meter_value is not None:
+            return r.meter_value
+    return None
+
+
+def _plan_json(db: Session, p: MaintPMPlan):
+    today = date.today()
+    cur = _latest_meter(db, p.asset_id)
+    ndd = (p.last_done_date + timedelta(days=p.interval_days)) if (p.last_done_date and p.interval_days) else None
+    ndm = (p.last_done_meter + p.interval_meter) if (p.last_done_meter is not None and p.interval_meter is not None) else None
+    due_date = bool(ndd and today >= ndd)
+    due_meter = bool(ndm is not None and cur is not None and cur >= ndm)
+    never_done = p.last_done_date is None and p.last_done_meter is None
+    a = db.get(MaintAsset, p.asset_id)
+    return {
+        "id": p.id, "asset_id": p.asset_id,
+        "asset_code": a.asset_code if a else None,
+        "asset_description": a.description if a else None,
+        "task": p.task, "interval_days": p.interval_days, "interval_meter": p.interval_meter,
+        "last_done_date": _iso(p.last_done_date), "last_done_meter": p.last_done_meter,
+        "next_due_date": _iso(ndd), "next_due_meter": ndm, "current_meter": cur,
+        "due_date": due_date, "due_meter": due_meter, "due": (due_date or due_meter),
+        "never_done": never_done,
+        "days_overdue": (today - ndd).days if (ndd and today >= ndd) else None,
+        "meter_remaining": round(ndm - cur, 2) if (ndm is not None and cur is not None) else None,
+        "active": p.active,
+    }
+
+
+class PMPlanIn(BaseModel):
+    asset_id: int
+    task: str
+    interval_days: int | None = None
+    interval_meter: float | None = None
+    last_done_date: str | None = None
+    last_done_meter: float | None = None
+    active: bool = True
+
+
+class PMDoneIn(BaseModel):
+    done_date: str | None = None
+    attended_by_id: int | None = None
+    verified_by_id: int | None = None
+    remarks: str | None = None
+
+
+def _apply_plan(p: MaintPMPlan, payload: PMPlanIn):
+    p.asset_id = payload.asset_id
+    p.task = (payload.task or "").strip()
+    p.interval_days = payload.interval_days
+    p.interval_meter = payload.interval_meter
+    p.last_done_date = _pdate(payload.last_done_date)
+    p.last_done_meter = payload.last_done_meter
+    p.active = payload.active
+
+
+@router.get("/api/pm-plans")
+def api_pm_plans(asset_id: int | None = None, user: Employee = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    _guard(db, user)
+    qy = db.query(MaintPMPlan)
+    if asset_id:
+        qy = qy.filter(MaintPMPlan.asset_id == asset_id)
+    out = [_plan_json(db, p) for p in qy.all()]
+    out.sort(key=lambda x: (not x["due"], not x["never_done"], x["next_due_date"] or "9999-12-31"))
+    return out
+
+
+@router.post("/api/pm-plans")
+def api_create_plan(payload: PMPlanIn, user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    _guard(db, user)
+    if not db.get(MaintAsset, payload.asset_id):
+        raise HTTPException(400, "Unknown asset")
+    if not (payload.task or "").strip():
+        raise HTTPException(400, "Task is required")
+    if not payload.interval_days and payload.interval_meter is None:
+        raise HTTPException(400, "Set an interval (days and/or meter)")
+    p = MaintPMPlan(asset_id=payload.asset_id)
+    _apply_plan(p, payload)
+    db.add(p); db.commit(); db.refresh(p)
+    return _plan_json(db, p)
+
+
+@router.put("/api/pm-plans/{plan_id}")
+def api_update_plan(plan_id: int, payload: PMPlanIn,
+                    user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    _guard(db, user)
+    p = db.get(MaintPMPlan, plan_id)
+    if not p:
+        raise HTTPException(404, "Plan not found")
+    if not (payload.task or "").strip():
+        raise HTTPException(400, "Task is required")
+    if not payload.interval_days and payload.interval_meter is None:
+        raise HTTPException(400, "Set an interval (days and/or meter)")
+    _apply_plan(p, payload)
+    db.commit(); db.refresh(p)
+    return _plan_json(db, p)
+
+
+@router.delete("/api/pm-plans/{plan_id}")
+def api_delete_plan(plan_id: int, user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    _guard(db, user)
+    p = db.get(MaintPMPlan, plan_id)
+    if not p:
+        raise HTTPException(404, "Plan not found")
+    db.delete(p); db.commit()
+    return {"ok": True}
+
+
+@router.post("/api/pm-plans/{plan_id}/done")
+def api_plan_done(plan_id: int, payload: PMDoneIn,
+                  user: Employee = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    _guard(db, user)
+    p = db.get(MaintPMPlan, plan_id)
+    if not p:
+        raise HTTPException(404, "Plan not found")
+    dd = _pdate(payload.done_date) or date.today()
+    cur = _latest_meter(db, p.asset_id)
+    e = MaintEvent(asset_id=p.asset_id, event_date=dd, category="Scheduled PM",
+                   complaint=p.task, action="PM completed", meter_at_event=cur,
+                   attended_by_id=payload.attended_by_id, verified_by_id=payload.verified_by_id,
+                   remarks=payload.remarks, pm_plan_id=p.id)
+    db.add(e)
+    p.last_done_date = dd
+    p.last_done_meter = cur
+    db.commit(); db.refresh(p)
+    return _plan_json(db, p)

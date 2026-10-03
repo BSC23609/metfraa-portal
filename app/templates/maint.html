@@ -19,14 +19,18 @@
       <button @click="tab='assets'"
               :class="tab==='assets' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">Assets</button>
-      <span class="px-4 py-2.5 text-sm font-semibold text-metfraa-gray-300 border-b-2 border-transparent cursor-not-allowed"
-            title="Coming next">Log Event</span>
-      <span class="px-4 py-2.5 text-sm font-semibold text-metfraa-gray-300 border-b-2 border-transparent cursor-not-allowed"
-            title="Coming next">Breakdown Register</span>
-      <span class="px-4 py-2.5 text-sm font-semibold text-metfraa-gray-300 border-b-2 border-transparent cursor-not-allowed"
-            title="Coming next">Readings</span>
-      <span class="px-4 py-2.5 text-sm font-semibold text-metfraa-gray-300 border-b-2 border-transparent cursor-not-allowed"
-            title="Coming next">PM Due</span>
+      <button @click="tab='log'"
+              :class="tab==='log' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">Log Event</button>
+      <button @click="tab='breakdown'"
+              :class="tab==='breakdown' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">Breakdown Register</button>
+      <button @click="tab='readings'"
+              :class="tab==='readings' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">Readings</button>
+      <button @click="tab='pm'; loadPlans()"
+              :class="tab==='pm' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">PM Due</button>
     </nav>
   </div>
 
@@ -117,6 +121,320 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== LOG EVENT ===================== -->
+  <div x-show="tab==='log'" x-cloak>
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-5">
+      <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="display font-bold text-metfraa-ink" x-text="eForm.id ? 'Edit event' : 'New event'"></h3>
+          <button x-show="eForm.id" @click="newEvent()" class="text-xs font-semibold text-metfraa-blue hover:underline">+ New</button>
+        </div>
+        <div class="space-y-3">
+          <div>
+            <label class="lbl-f">Asset *</label>
+            <select x-model.number="eForm.asset_id" class="inp">
+              <option :value="''">Select machine…</option>
+              <template x-for="a in assets" :key="a.id"><option :value="a.id" x-text="a.asset_code + ' — ' + a.description"></option></template>
+            </select>
+          </div>
+          <div>
+            <label class="lbl-f">Category *</label>
+            <div class="grid grid-cols-3 gap-2">
+              <template x-for="c in ['Scheduled PM','Unscheduled PM','Breakdown']" :key="c">
+                <button type="button" @click="eForm.category=c"
+                  :class="eForm.category===c ? 'bg-metfraa-black text-white border-metfraa-black' : 'bg-white text-metfraa-gray-700 border-metfraa-gray-200 hover:border-metfraa-blue'"
+                  class="border-2 rounded-lg px-2 py-2 text-xs font-semibold" x-text="c"></button>
+              </template>
+            </div>
+          </div>
+          <div><label class="lbl-f">Date *</label><input type="date" x-model="eForm.event_date" class="inp" /></div>
+          <template x-if="eForm.category==='Breakdown'">
+            <div class="space-y-3 p-3 rounded-lg bg-red-50/60 border border-red-100">
+              <div>
+                <label class="lbl-f">Status</label>
+                <select x-model="eForm.status" class="inp"><option>Open</option><option>Under repair</option><option>Closed</option></select>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div><label class="lbl-f">Reported at</label><input type="datetime-local" x-model="eForm.reported_at" class="inp" /></div>
+                <div><label class="lbl-f">Restored at</label><input type="datetime-local" x-model="eForm.restored_at" class="inp" /></div>
+              </div>
+              <div class="text-xs text-metfraa-gray-500">Downtime: <span class="font-semibold mono" x-text="downtimePreview"></span></div>
+              <div><label class="lbl-f">Cause of failure</label><textarea x-model="eForm.cause" rows="2" class="inp"></textarea></div>
+            </div>
+          </template>
+          <div>
+            <label class="lbl-f" x-text="eForm.category==='Breakdown' ? 'Complaint / problem' : 'Task / work done'"></label>
+            <textarea x-model="eForm.complaint" rows="2" class="inp"></textarea>
+          </div>
+          <div><label class="lbl-f">Action taken</label><textarea x-model="eForm.action" rows="2" class="inp"></textarea></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="lbl-f">Parts used</label><input type="text" x-model="eForm.parts" class="inp" /></div>
+            <div><label class="lbl-f">Cost</label><input type="number" step="any" x-model.number="eForm.cost" class="inp" /></div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="lbl-f">Attended by</label>
+              <select x-model.number="eForm.attended_by_id" class="inp"><option :value="null">—</option>
+                <template x-for="p in meta.team" :key="p.id"><option :value="p.id" x-text="p.name"></option></template></select>
+            </div>
+            <div>
+              <label class="lbl-f">Verified by</label>
+              <select x-model.number="eForm.verified_by_id" class="inp"><option :value="null">—</option>
+                <template x-for="p in meta.team" :key="p.id"><option :value="p.id" x-text="p.name"></option></template></select>
+            </div>
+          </div>
+          <div><label class="lbl-f">Remarks</label><input type="text" x-model="eForm.remarks" class="inp" /></div>
+          <button @click="saveEvent()" :disabled="eSaving"
+            class="w-full bg-metfraa-blue hover:bg-metfraa-blue-dark text-white font-semibold px-4 py-2.5 rounded-lg disabled:opacity-50">
+            <span x-show="!eSaving" x-text="eForm.id ? 'Update event' : 'Save event'"></span><span x-show="eSaving">Saving…</span>
+          </button>
+        </div>
+      </div>
+      <div class="lg:col-span-3 bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+        <div class="px-5 py-4 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Recent events</h3></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
+              <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Date</th>
+              <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Asset</th>
+              <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Category</th>
+              <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Downtime</th>
+              <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Cost</th>
+              <th class="px-3 py-2"></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="e in events" :key="e.id">
+                <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
+                  <td class="px-3 py-2 mono" x-text="e.event_date"></td>
+                  <td class="px-3 py-2 mono font-semibold" x-text="e.asset_code"></td>
+                  <td class="px-3 py-2">
+                    <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full" :class="e.category==='Breakdown' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-metfraa-blue'" x-text="e.category"></span>
+                    <span x-show="e.status" class="text-[10px] text-metfraa-gray-500 ml-1" x-text="e.status"></span>
+                  </td>
+                  <td class="px-3 py-2 text-right mono" x-text="e.downtime_hrs!=null ? e.downtime_hrs+'h' : '—'"></td>
+                  <td class="px-3 py-2 text-right mono" x-text="e.cost!=null ? '₹'+e.cost.toLocaleString('en-IN') : '—'"></td>
+                  <td class="px-3 py-2 text-right"><button @click="editEvent(e)" class="text-xs font-semibold text-metfraa-blue hover:underline">Edit</button></td>
+                </tr>
+              </template>
+              <tr x-show="events.length===0"><td colspan="6" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No events logged yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== BREAKDOWN REGISTER ===================== -->
+  <div x-show="tab==='breakdown'" x-cloak>
+    <div class="flex flex-wrap items-end gap-3 mb-4">
+      <div>
+        <label class="lbl-f">Status</label>
+        <select x-model="bStatus" class="inp"><option value="">All</option><option>Open</option><option>Under repair</option><option>Closed</option></select>
+      </div>
+      <div>
+        <label class="lbl-f">Asset</label>
+        <select x-model="bAsset" class="inp"><option value="">All</option>
+          <template x-for="a in assets" :key="a.id"><option :value="a.id" x-text="a.asset_code"></option></template></select>
+      </div>
+      <div class="ml-auto"><span class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-50 text-red-700">Open: <span x-text="openBreakdowns"></span></span></div>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Date</th>
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Asset</th>
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Complaint</th>
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Cause</th>
+            <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Downtime</th>
+            <th class="px-3 py-2 text-center text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Status</th>
+            <th class="px-3 py-2"></th>
+          </tr></thead>
+          <tbody>
+            <template x-for="e in breakdowns" :key="e.id">
+              <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
+                <td class="px-3 py-2 mono" x-text="e.event_date"></td>
+                <td class="px-3 py-2"><span class="mono font-semibold" x-text="e.asset_code"></span></td>
+                <td class="px-3 py-2 text-metfraa-gray-700 max-w-[220px] truncate" :title="e.complaint" x-text="e.complaint || '—'"></td>
+                <td class="px-3 py-2 text-metfraa-gray-600 max-w-[180px] truncate" :title="e.cause" x-text="e.cause || '—'"></td>
+                <td class="px-3 py-2 text-right mono" x-text="e.downtime_hrs!=null ? e.downtime_hrs+'h' : '—'"></td>
+                <td class="px-3 py-2 text-center">
+                  <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                    :class="e.status==='Closed' ? 'bg-emerald-100 text-emerald-700' : (e.status==='Under repair' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700')"
+                    x-text="e.status || 'Open'"></span>
+                </td>
+                <td class="px-3 py-2 text-right whitespace-nowrap">
+                  <button @click="editEvent(e)" class="text-xs font-semibold text-metfraa-blue hover:underline">Edit</button>
+                  <button x-show="e.status!=='Closed'" @click="closeBreakdown(e)" class="text-xs font-semibold text-emerald-700 hover:underline ml-3">Close</button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="breakdowns.length===0"><td colspan="7" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No breakdowns match the filters.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== READINGS ===================== -->
+  <div x-show="tab==='readings'" x-cloak>
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-4 mb-5">
+      <label class="lbl-f">Machine</label>
+      <select x-model="rAssetId" @change="onPickAsset()" class="inp max-w-md">
+        <option value="">Select a metered machine…</option>
+        <template x-for="a in meteredAssets" :key="a.id"><option :value="a.id" x-text="a.asset_code + ' — ' + a.description"></option></template>
+      </select>
+      <p x-show="rAssetId && rParams.length===0" class="text-sm text-metfraa-gray-500 mt-2">This machine type has no reading fields.</p>
+    </div>
+
+    <div x-show="rAssetId && rParams.length" class="grid grid-cols-1 lg:grid-cols-5 gap-5">
+      <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="display font-bold text-metfraa-ink" x-text="rForm.id ? 'Edit reading' : 'New reading'"></h3>
+          <button x-show="rForm.id" @click="newReading()" class="text-xs font-semibold text-metfraa-blue hover:underline">+ New</button>
+        </div>
+        <div class="space-y-3">
+          <div class="grid grid-cols-3 gap-2">
+            <div><label class="lbl-f">Date *</label><input type="date" x-model="rForm.reading_date" class="inp" /></div>
+            <div><label class="lbl-f">Start</label><input type="time" x-model="rForm.start_time" class="inp" /></div>
+            <div><label class="lbl-f">End</label><input type="time" x-model="rForm.end_time" class="inp" /></div>
+          </div>
+          <template x-for="p in rParams" :key="p.code">
+            <div>
+              <label class="lbl-f"><span x-text="p.label"></span>
+                <span class="text-metfraa-gray-400 normal-case" x-show="p.unit" x-text="'(' + p.unit + ')'"></span>
+                <span x-show="p.code===rMeter" class="text-metfraa-blue normal-case">• meter</span></label>
+              <input type="number" step="any" x-model.number="rForm.values[p.code]" class="inp" />
+            </div>
+          </template>
+          <div><label class="lbl-f">Remarks</label><input type="text" x-model="rForm.remarks" class="inp" /></div>
+          <button @click="saveReading()" :disabled="rSaving" class="w-full bg-metfraa-blue hover:bg-metfraa-blue-dark text-white font-semibold px-4 py-2.5 rounded-lg disabled:opacity-50">
+            <span x-show="!rSaving" x-text="rForm.id ? 'Update reading' : 'Save reading'"></span><span x-show="rSaving">Saving…</span>
+          </button>
+        </div>
+      </div>
+      <div class="lg:col-span-3 bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+        <div class="px-5 py-4 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Readings history</h3></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
+              <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Date</th>
+              <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Time</th>
+              <template x-for="p in rParams" :key="p.code"><th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500" x-text="p.label"></th></template>
+              <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Diff</th>
+              <th class="px-3 py-2"></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="rd in readings" :key="rd.id">
+                <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
+                  <td class="px-3 py-2 mono" x-text="rd.reading_date"></td>
+                  <td class="px-3 py-2 mono text-metfraa-gray-500" x-text="(rd.start_time||'') + (rd.end_time ? '–'+rd.end_time : '')"></td>
+                  <template x-for="p in rParams" :key="p.code"><td class="px-3 py-2 text-right mono" x-text="(rd.values && rd.values[p.code]!=null) ? rd.values[p.code] : '—'"></td></template>
+                  <td class="px-3 py-2 text-right mono font-semibold" x-text="rd.diff!=null ? rd.diff : '—'"></td>
+                  <td class="px-3 py-2 text-right whitespace-nowrap">
+                    <button @click="editReading(rd)" class="text-xs font-semibold text-metfraa-blue hover:underline">Edit</button>
+                    <button @click="deleteReading(rd)" class="text-xs font-semibold text-red-600 hover:underline ml-3">Delete</button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="readings.length===0"><td :colspan="rParams.length+4" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No readings yet for this machine.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== PM DUE ===================== -->
+  <div x-show="tab==='pm'" x-cloak>
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+      <div class="flex items-center gap-3">
+        <span class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700">Due / overdue: <span x-text="pmDueCount"></span></span>
+        <label class="flex items-center gap-2 text-sm text-metfraa-gray-700"><input type="checkbox" x-model="pmDueOnly" class="rounded border-metfraa-gray-300 text-metfraa-blue focus:ring-metfraa-blue" /> Due only</label>
+      </div>
+      <button @click="openNewPlan()" class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg">+ Add plan</button>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Asset</th>
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Task</th>
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Every</th>
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Last done</th>
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Next due</th>
+            <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Meter now</th>
+            <th class="px-3 py-2 text-center text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Status</th>
+            <th class="px-3 py-2"></th>
+          </tr></thead>
+          <tbody>
+            <template x-for="p in pmFiltered" :key="p.id">
+              <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50" :class="!p.active && 'opacity-50'">
+                <td class="px-3 py-2 mono font-semibold" :title="p.asset_description" x-text="p.asset_code"></td>
+                <td class="px-3 py-2 text-metfraa-ink" x-text="p.task"></td>
+                <td class="px-3 py-2 text-metfraa-gray-600 mono text-xs" x-text="[p.interval_days ? p.interval_days+'d' : null, p.interval_meter!=null ? p.interval_meter+' mtr' : null].filter(Boolean).join(' / ')"></td>
+                <td class="px-3 py-2 text-metfraa-gray-600 text-xs">
+                  <span x-text="p.last_done_date || '—'"></span><span x-show="p.last_done_meter!=null" class="text-metfraa-gray-400" x-text="' @'+p.last_done_meter"></span>
+                </td>
+                <td class="px-3 py-2 text-xs">
+                  <span class="mono" x-text="p.next_due_date || '—'"></span><span x-show="p.next_due_meter!=null" class="text-metfraa-gray-400" x-text="' @'+p.next_due_meter"></span>
+                </td>
+                <td class="px-3 py-2 text-right mono" x-text="p.current_meter!=null ? p.current_meter : '—'"></td>
+                <td class="px-3 py-2 text-center">
+                  <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                    :class="p.never_done ? 'bg-metfraa-gray-100 text-metfraa-gray-600' : (p.due ? ((p.days_overdue>0 || p.due_meter) ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700') : 'bg-emerald-100 text-emerald-700')"
+                    x-text="p.never_done ? 'Not scheduled' : (p.due ? ((p.days_overdue>0) ? ('Overdue '+p.days_overdue+'d') : 'Due') : 'OK')"></span>
+                </td>
+                <td class="px-3 py-2 text-right whitespace-nowrap">
+                  <button @click="markDone(p)" class="text-xs font-semibold text-emerald-700 hover:underline">Mark done</button>
+                  <button @click="editPlan(p)" class="text-xs font-semibold text-metfraa-blue hover:underline ml-3">Edit</button>
+                  <button @click="deletePlan(p)" class="text-xs font-semibold text-red-600 hover:underline ml-3">Delete</button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="pmFiltered.length===0"><td colspan="8" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No plans yet. Add one to start scheduling preventive maintenance.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- plan modal -->
+    <div x-show="pmModal" x-cloak @click.self="pmModal=false" class="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto">
+      <div class="bg-white rounded-xl shadow-2xl max-w-xl w-full my-8">
+        <div class="p-5 border-b border-metfraa-gray-200 flex items-center justify-between">
+          <h3 class="display font-bold text-metfraa-ink text-xl" x-text="pmForm.id ? 'Edit plan' : 'Add plan'"></h3>
+          <button @click="pmModal=false" class="text-metfraa-gray-400 hover:text-metfraa-ink text-2xl leading-none">&times;</button>
+        </div>
+        <div class="p-5 space-y-4">
+          <div>
+            <label class="lbl-f">Asset *</label>
+            <select x-model.number="pmForm.asset_id" class="inp">
+              <option :value="''">Select machine…</option>
+              <template x-for="a in assets" :key="a.id"><option :value="a.id" x-text="a.asset_code + ' — ' + a.description"></option></template>
+            </select>
+          </div>
+          <div><label class="lbl-f">Task *</label><input type="text" x-model="pmForm.task" class="inp" placeholder="e.g. Oil + filter change" /></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl-f">Every (days)</label><input type="number" x-model.number="pmForm.interval_days" class="inp" placeholder="90" /></div>
+            <div><label class="lbl-f">Every (meter)</label><input type="number" step="any" x-model.number="pmForm.interval_meter" class="inp" placeholder="500" /></div>
+          </div>
+          <p class="text-[11px] text-metfraa-gray-500 -mt-2">Set days, meter, or both. Due when either threshold is reached.</p>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl-f">Last done (date)</label><input type="date" x-model="pmForm.last_done_date" class="inp" /></div>
+            <div><label class="lbl-f">Last done (meter)</label><input type="number" step="any" x-model.number="pmForm.last_done_meter" class="inp" /></div>
+          </div>
+          <label class="flex items-center gap-2 text-sm text-metfraa-gray-700"><input type="checkbox" x-model="pmForm.active" class="rounded border-metfraa-gray-300 text-metfraa-blue focus:ring-metfraa-blue" /> Active</label>
+        </div>
+        <div class="p-5 border-t border-metfraa-gray-200 flex justify-end gap-2">
+          <button @click="pmModal=false" class="text-sm px-4 py-2 rounded-lg border border-metfraa-gray-300 hover:bg-metfraa-gray-50">Cancel</button>
+          <button @click="savePlan()" :disabled="pmSaving" class="text-sm font-semibold px-4 py-2 rounded-lg bg-metfraa-blue text-white hover:bg-metfraa-blue-dark disabled:opacity-50">
+            <span x-show="!pmSaving">Save</span><span x-show="pmSaving">Saving…</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -230,10 +548,18 @@ function maintApp() {
     q: '', fLocation: '', fType: '', activeOnly: false,
     modal: false, saving: false,
     form: {},
+    events: [], eForm: {}, eSaving: false,
+    bStatus: '', bAsset: '',
+    readings: [], rAssetId: '', rForm: {}, rSaving: false,
+    pmPlans: [], pmForm: {}, pmModal: false, pmSaving: false, pmDueOnly: false,
 
     async init() {
+      this.eForm = this.blankEvent();
+      this.rForm = this.blankReading();
+      await this.loadPlans();
       await this.loadMeta();
       await this.loadAssets();
+      await this.loadEvents();
     },
     async loadMeta() {
       const r = await fetch('/maint/api/meta');
@@ -307,6 +633,162 @@ function maintApp() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed');
         a.active = data.active;
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    // ----- events -----
+    get downtimePreview() {
+      if (!this.eForm.reported_at || !this.eForm.restored_at) return '—';
+      const d = (new Date(this.eForm.restored_at) - new Date(this.eForm.reported_at)) / 3600000;
+      return d >= 0 ? d.toFixed(2) + ' h' : 'check times';
+    },
+    get breakdowns() {
+      return this.events.filter(e => e.category === 'Breakdown')
+        .filter(e => !this.bStatus || e.status === this.bStatus)
+        .filter(e => !this.bAsset || String(e.asset_id) === String(this.bAsset));
+    },
+    get openBreakdowns() {
+      return this.events.filter(e => e.category === 'Breakdown' && e.status && e.status !== 'Closed').length;
+    },
+    blankEvent() {
+      return { id: null, asset_id: '', event_date: new Date().toISOString().slice(0,10),
+        category: 'Scheduled PM', status: 'Open', reported_at: '', restored_at: '',
+        complaint: '', cause: '', action: '', parts: '', cost: null, meter_at_event: null,
+        attended_by_id: null, verified_by_id: null, remarks: '' };
+    },
+    newEvent() { this.eForm = this.blankEvent(); },
+    async loadEvents() { const r = await fetch('/maint/api/events'); if (r.ok) this.events = await r.json(); },
+    editEvent(e) {
+      this.eForm = { id: e.id, asset_id: e.asset_id, event_date: e.event_date, category: e.category,
+        status: e.status || 'Open', reported_at: e.reported_at || '', restored_at: e.restored_at || '',
+        complaint: e.complaint || '', cause: e.cause || '', action: e.action || '', parts: e.parts || '',
+        cost: e.cost, meter_at_event: e.meter_at_event, attended_by_id: e.attended_by_id,
+        verified_by_id: e.verified_by_id, remarks: e.remarks || '' };
+      this.tab = 'log';
+    },
+    async saveEvent() {
+      if (!this.eForm.asset_id) { toast('Select an asset', 'error'); return; }
+      if (!this.eForm.event_date) { toast('Date is required', 'error'); return; }
+      this.eSaving = true;
+      try {
+        const p = { ...this.eForm };
+        ['reported_at','restored_at'].forEach(k => { if (!p[k]) p[k] = null; });
+        if (p.category !== 'Breakdown') { p.status = null; p.reported_at = null; p.restored_at = null; }
+        const url = this.eForm.id ? `/maint/api/events/${this.eForm.id}` : '/maint/api/events';
+        const res = await fetch(url, { method: this.eForm.id ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Save failed');
+        toast(this.eForm.id ? 'Event updated' : 'Event logged', 'success');
+        this.newEvent();
+        await this.loadEvents();
+      } catch (e) { toast(e.message, 'error'); } finally { this.eSaving = false; }
+    },
+    async closeBreakdown(e) {
+      const p = { asset_id: e.asset_id, event_date: e.event_date, category: 'Breakdown',
+        status: 'Closed', reported_at: e.reported_at || null,
+        restored_at: e.restored_at || new Date().toISOString().slice(0,16),
+        complaint: e.complaint, cause: e.cause, action: e.action, parts: e.parts, cost: e.cost,
+        meter_at_event: e.meter_at_event, attended_by_id: e.attended_by_id,
+        verified_by_id: e.verified_by_id, remarks: e.remarks };
+      try {
+        const res = await fetch(`/maint/api/events/${e.id}`, { method: 'PUT',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        toast('Breakdown closed', 'success');
+        await this.loadEvents();
+      } catch (err) { toast(err.message, 'error'); }
+    },
+
+    // ----- readings -----
+    typeById(id) { return this.meta.types.find(t => String(t.id) === String(id)); },
+    get rAsset() { return this.assets.find(a => String(a.id) === String(this.rAssetId)); },
+    get rParams() { const a = this.rAsset; if (!a) return []; const t = this.typeById(a.type_id); return (t && t.reading_params) || []; },
+    get rMeter() { const a = this.rAsset; const t = a && this.typeById(a.type_id); return t && t.meter_param; },
+    get meteredAssets() { return this.assets.filter(a => { const t = this.typeById(a.type_id); return t && t.reading_params && t.reading_params.length; }); },
+    blankReading() { return { id: null, reading_date: new Date().toISOString().slice(0,10), start_time: '', end_time: '', values: {}, remarks: '' }; },
+    async onPickAsset() { this.rForm = this.blankReading(); this.readings = []; if (this.rAssetId) await this.loadReadings(); },
+    async loadReadings() { const r = await fetch(`/maint/api/readings?asset_id=${this.rAssetId}`); if (r.ok) this.readings = await r.json(); },
+    newReading() { this.rForm = this.blankReading(); },
+    editReading(rd) {
+      this.rForm = { id: rd.id, reading_date: rd.reading_date, start_time: rd.start_time || '',
+        end_time: rd.end_time || '', values: Object.assign({}, rd.values || {}), remarks: rd.remarks || '' };
+    },
+    async saveReading() {
+      if (!this.rAssetId) { toast('Select an asset', 'error'); return; }
+      if (!this.rForm.reading_date) { toast('Date is required', 'error'); return; }
+      this.rSaving = true;
+      try {
+        const p = { asset_id: this.rAssetId, reading_date: this.rForm.reading_date,
+          start_time: this.rForm.start_time || null, end_time: this.rForm.end_time || null,
+          values: this.rForm.values || {}, remarks: this.rForm.remarks || null };
+        const url = this.rForm.id ? `/maint/api/readings/${this.rForm.id}` : '/maint/api/readings';
+        const res = await fetch(url, { method: this.rForm.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Save failed');
+        toast(this.rForm.id ? 'Reading updated' : 'Reading added', 'success');
+        this.newReading();
+        await this.loadReadings();
+      } catch (e) { toast(e.message, 'error'); } finally { this.rSaving = false; }
+    },
+    async deleteReading(rd) {
+      if (!confirm('Delete this reading?')) return;
+      try {
+        const res = await fetch(`/maint/api/readings/${rd.id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        await this.loadReadings();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    // ----- PM plans -----
+    get pmFiltered() { return this.pmDueOnly ? this.pmPlans.filter(p => p.due || p.never_done) : this.pmPlans; },
+    get pmDueCount() { return this.pmPlans.filter(p => p.due).length; },
+    blankPlan() { return { id: null, asset_id: '', task: '', interval_days: null, interval_meter: null, last_done_date: '', last_done_meter: null, active: true }; },
+    async loadPlans() { const r = await fetch('/maint/api/pm-plans'); if (r.ok) this.pmPlans = await r.json(); },
+    openNewPlan() { this.pmForm = this.blankPlan(); this.pmModal = true; },
+    editPlan(p) {
+      this.pmForm = { id: p.id, asset_id: p.asset_id, task: p.task, interval_days: p.interval_days,
+        interval_meter: p.interval_meter, last_done_date: p.last_done_date || '',
+        last_done_meter: p.last_done_meter, active: p.active };
+      this.pmModal = true;
+    },
+    async savePlan() {
+      if (!this.pmForm.asset_id) { toast('Select an asset', 'error'); return; }
+      if (!this.pmForm.task || !this.pmForm.task.trim()) { toast('Task is required', 'error'); return; }
+      if (!this.pmForm.interval_days && this.pmForm.interval_meter == null) { toast('Set an interval (days and/or meter)', 'error'); return; }
+      this.pmSaving = true;
+      try {
+        const p = { ...this.pmForm };
+        if (!p.last_done_date) p.last_done_date = null;
+        const url = this.pmForm.id ? `/maint/api/pm-plans/${this.pmForm.id}` : '/maint/api/pm-plans';
+        const res = await fetch(url, { method: this.pmForm.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Save failed');
+        toast(this.pmForm.id ? 'Plan updated' : 'Plan added', 'success');
+        this.pmModal = false;
+        await this.loadPlans();
+      } catch (e) { toast(e.message, 'error'); } finally { this.pmSaving = false; }
+    },
+    async deletePlan(p) {
+      if (!confirm('Delete this plan?')) return;
+      try {
+        const res = await fetch(`/maint/api/pm-plans/${p.id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        await this.loadPlans();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+    async markDone(p) {
+      if (!confirm(`Mark "${p.task}" done today for ${p.asset_code}? This logs a Scheduled PM event.`)) return;
+      try {
+        const res = await fetch(`/maint/api/pm-plans/${p.id}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        toast('PM marked done', 'success');
+        await this.loadPlans();
+        await this.loadEvents();
       } catch (e) { toast(e.message, 'error'); }
     },
   };
