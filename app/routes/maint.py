@@ -6,6 +6,7 @@ later slices. Access is gated by the maint_admin flag (superadmin implies it).
 """
 import calendar
 import logging
+import os
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -18,8 +19,11 @@ from ..access import get_access
 from ..database import get_db
 from ..deps import get_current_user
 from ..services import onedrive as _od
+from ..services import email_service as _email
+from ..services import wati as _wati
 from ..models import (Employee, MaintAsset, MaintEvent, MaintMachineType,
-                      MaintHoliday, MaintPMPlan, MaintReading, PlantLabour)
+                      MaintHoliday, MaintPMPlan, MaintReading,
+                      MaintReminderLog, PlantLabour)
 
 router = APIRouter(prefix="/maint", tags=["maint"])
 log = logging.getLogger("maint")
@@ -875,3 +879,119 @@ def api_breakdown_pdf_upload(from_: str | None = Query(None, alias="from"),
     path = f"Maintenance/Breakdown Register/Breakdown Register {date.today().isoformat()}.pdf"
     info = _od.upload_to_path(pdf, path, "application/pdf")
     return {"ok": True, "url": (info or {}).get("webUrl")}
+
+
+# ------------------------------------------------------------------ daily reminder
+
+def _ist_today():
+    """Server runs UTC; the plant works on IST, so compute 'today' as IST."""
+    return (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
+
+
+def _reminder_email_html(due, obd, today):
+    def rows_pm():
+        if not due:
+            return '<tr><td colspan="4" style="padding:10px;color:#6b7689;">None</td></tr>'
+        out = ""
+        for p in due:
+            status = (f"Overdue {p['days_overdue']}d" if (p.get("days_overdue") or 0) > 0
+                      else ("Due" if p["due_date"] else "Meter due"))
+            out += (f'<tr>'
+                    f'<td style="padding:6px 10px;border-top:1px solid #eef2f7;font-family:monospace;font-weight:700;">{p["asset_code"]}</td>'
+                    f'<td style="padding:6px 10px;border-top:1px solid #eef2f7;">{p["task"]}</td>'
+                    f'<td style="padding:6px 10px;border-top:1px solid #eef2f7;color:#4d5769;font-size:12px;">{p.get("schedule_label") or ""}</td>'
+                    f'<td style="padding:6px 10px;border-top:1px solid #eef2f7;color:#b91c1c;font-weight:600;">{status}</td>'
+                    f'</tr>')
+        return out
+
+    def rows_bd():
+        if not obd:
+            return '<tr><td colspan="3" style="padding:10px;color:#6b7689;">None</td></tr>'
+        out = ""
+        for e in obd:
+            out += (f'<tr>'
+                    f'<td style="padding:6px 10px;border-top:1px solid #eef2f7;font-family:monospace;font-weight:700;">{e["asset_code"]}</td>'
+                    f'<td style="padding:6px 10px;border-top:1px solid #eef2f7;">{e["complaint"] or "-"}</td>'
+                    f'<td style="padding:6px 10px;border-top:1px solid #eef2f7;color:#4d5769;">{e["days_open"]}d open</td>'
+                    f'</tr>')
+        return out
+
+    return f"""<html><body style="font-family:Segoe UI,Roboto,Arial,sans-serif;background:#f4f6f9;padding:24px;color:#1a2332;">
+  <div style="max-width:640px;margin:auto;background:#fff;border:1px solid #d6dde6;border-radius:10px;overflow:hidden;">
+    <div style="background:#0d1421;color:#fff;padding:16px 20px;">
+      <div style="font-size:12px;letter-spacing:.14em;color:#8e9aad;text-transform:uppercase;">Metfraa / Maintenance</div>
+      <div style="font-size:20px;font-weight:700;">Pending tasks — {today.strftime('%d %b %Y')}</div>
+    </div>
+    <div style="padding:20px;">
+      <p style="margin:0 0 14px;">Good morning Ajoy, here are the maintenance items pending today.</p>
+      <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#6b7689;margin:6px 0;">Preventive maintenance due ({len(due)})</div>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;"><thead><tr style="background:#f4f6f9;text-align:left;">
+        <th style="padding:8px 10px;">Asset</th><th style="padding:8px 10px;">Task</th><th style="padding:8px 10px;">Schedule</th><th style="padding:8px 10px;">Status</th>
+      </tr></thead><tbody>{rows_pm()}</tbody></table>
+      <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#6b7689;margin:18px 0 6px;">Open breakdowns ({len(obd)})</div>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;"><thead><tr style="background:#f4f6f9;text-align:left;">
+        <th style="padding:8px 10px;">Asset</th><th style="padding:8px 10px;">Complaint</th><th style="padding:8px 10px;">Age</th>
+      </tr></thead><tbody>{rows_bd()}</tbody></table>
+      <p style="margin:18px 0 0;"><a href="https://app.metfraa.com/maint" style="background:#1F7CCB;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;display:inline-block;">Open Maintenance portal</a></p>
+    </div>
+  </div></body></html>"""
+
+
+def run_pm_reminder(db: Session):
+    """Daily reminder of pending maintenance to Ajoy (email + WhatsApp).
+    Skips Sundays and holidays; idempotent per IST day; sends only when there is
+    something pending. 'Pending' = due/overdue PM plans + open breakdowns."""
+    today = _ist_today()
+    holidays = _load_holidays(db)
+    if today.weekday() == 6 or today in holidays:
+        return {"skipped": "sunday_or_holiday", "date": today.isoformat()}
+    if db.query(MaintReminderLog).filter_by(sent_date=today).first():
+        return {"skipped": "already_sent", "date": today.isoformat()}
+
+    due = []
+    for p in db.query(MaintPMPlan).filter(MaintPMPlan.active.is_(True)).all():
+        pj = _plan_json(db, p, holidays)
+        if pj["due"]:
+            due.append(pj)
+    due.sort(key=lambda x: (x["days_overdue"] is None, -(x["days_overdue"] or 0)))
+
+    assets = {a.id: a for a in db.query(MaintAsset).all()}
+    obd = []
+    for e in db.query(MaintEvent).filter(MaintEvent.category == "Breakdown").all():
+        if (e.status or "Open") != "Closed":
+            a = assets.get(e.asset_id)
+            obd.append({"asset_code": a.asset_code if a else "?",
+                        "complaint": e.complaint,
+                        "days_open": (today - e.event_date).days if e.event_date else 0})
+    obd.sort(key=lambda x: -x["days_open"])
+
+    if not due and not obd:
+        return {"date": today.isoformat(), "pm_due": 0, "breakdowns_open": 0,
+                "sent": False, "reason": "nothing pending"}
+
+    subject = f"Maintenance pending — {len(due)} PM due, {len(obd)} breakdown(s) open ({today.strftime('%d %b')})"
+    html = _reminder_email_html(due, obd, today)
+    to = os.getenv("MAINT_REMINDER_EMAIL", "maintenance@metfraa.com")
+    try:
+        email_ok = bool(_email.send_email(to, subject, html))
+    except Exception as ex:
+        log.error("[maint-reminder] email failed: %s", ex)
+        email_ok = False
+
+    wa_ok = False
+    phone = os.getenv("MAINT_REMINDER_PHONE", "")
+    if phone:
+        try:
+            wa_ok = bool(_wati.send_template(
+                phone, os.getenv("MAINT_WATI_TEMPLATE", "met_maint_pm_reminder"),
+                {"name": "Ajoy", "date": today.strftime("%d %b %Y"),
+                 "pm_count": str(len(due)), "bd_count": str(len(obd)),
+                 "url": "https://app.metfraa.com/maint"}, db))
+        except Exception as ex:
+            log.error("[maint-reminder] whatsapp failed: %s", ex)
+
+    db.add(MaintReminderLog(sent_date=today, pm_due=len(due), breakdowns_open=len(obd),
+                            email_ok=email_ok, whatsapp_ok=wa_ok))
+    db.commit()
+    return {"date": today.isoformat(), "pm_due": len(due), "breakdowns_open": len(obd),
+            "sent": True, "email": email_ok, "whatsapp": wa_ok}

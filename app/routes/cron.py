@@ -65,6 +65,20 @@ def cron_daily_task_report(request: Request):
     return {"status": "ok", "job": "daily_task_report"}
 
 
+@router.get("/maint-reminder")
+def cron_maint_reminder(request: Request, db: Session = Depends(get_db)):
+    """Daily pending-maintenance reminder to Ajoy (email + WhatsApp).
+
+    Skips Sundays and holidays and is idempotent per day, so it is safe to ping
+    daily (or more often). Driven by .github/workflows/maint-reminder.yml.
+    """
+    _authorize(request)
+    if not _enabled():
+        return {"ok": True, "skipped": "cron disabled"}
+    from .maint import run_pm_reminder
+    return {"ok": True, **run_pm_reminder(db)}
+
+
 @router.get("/gatepass-overdue")
 def cron_gatepass_overdue(request: Request, db: Session = Depends(get_db)):
     """Nudge on gatepasses that were never returned.

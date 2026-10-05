@@ -1,0 +1,29 @@
+name: Maintenance daily reminder
+
+# Pings /cron/maint-reminder once each morning. The endpoint itself skips
+# Sundays and holidays and is idempotent per day, so a daily ping is enough and
+# an accidental double-fire is a no-op. 03:30 UTC = 09:00 IST.
+on:
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit /cron/maint-reminder
+        run: |
+          hit() {
+            curl -sS --max-time 70 -o /tmp/resp.txt -w "%{http_code}" \
+              "https://app.metfraa.com/cron/maint-reminder" \
+              -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" || echo "000"
+          }
+          code=$(hit)
+          echo "HTTP $code"; cat /tmp/resp.txt; echo
+          if [ "$code" -ge 500 ] || [ "$code" = "000" ]; then
+            echo "::warning::first attempt returned $code - retrying in 20s"
+            sleep 20
+            code=$(hit); echo "HTTP $code"; cat /tmp/resp.txt; echo
+          fi
+          [ "$code" = "200" ] || { echo "::error::maint-reminder failed ($code)"; exit 1; }

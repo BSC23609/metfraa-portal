@@ -1241,6 +1241,20 @@ class MaintEvent(Base):
     verified_by = relationship("PlantLabour", foreign_keys=[verified_by_id])
 
 
+class MaintReminderLog(Base):
+    """One row per day a maintenance reminder was actually sent — makes the
+    daily cron idempotent so repeat pings don't re-notify Ajoy."""
+    __tablename__ = "maint_reminder_log"
+
+    id = Column(Integer, primary_key=True)
+    sent_date = Column(Date, nullable=False, unique=True)
+    pm_due = Column(Integer, default=0)
+    breakdowns_open = Column(Integer, default=0)
+    email_ok = Column(Boolean, default=False)
+    whatsapp_ok = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class MaintHoliday(Base):
     """Holiday calendar for PM scheduling. A scheduled date landing on a Sunday
     or one of these dates rolls forward to the next working day."""
