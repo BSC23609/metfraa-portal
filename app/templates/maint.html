@@ -462,7 +462,10 @@
         <span class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700">Due / overdue: <span x-text="pmDueCount"></span></span>
         <label class="flex items-center gap-2 text-sm text-metfraa-gray-700"><input type="checkbox" x-model="pmDueOnly" class="rounded border-metfraa-gray-300 text-metfraa-blue focus:ring-metfraa-blue" /> Due only</label>
       </div>
-      <button @click="openNewPlan()" class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg">+ Add plan</button>
+      <div class="flex items-center gap-2">
+        <button @click="openHolidays()" class="text-sm font-semibold px-4 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-metfraa-ink hover:bg-metfraa-gray-50">Holidays</button>
+        <button @click="openNewPlan()" class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg">+ Add plan</button>
+      </div>
     </div>
     <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
       <div class="overflow-x-auto">
@@ -470,7 +473,7 @@
           <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
             <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Asset</th>
             <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Task</th>
-            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Every</th>
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Schedule</th>
             <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Last done</th>
             <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Next due</th>
             <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Meter now</th>
@@ -482,7 +485,7 @@
               <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50" :class="!p.active && 'opacity-50'">
                 <td class="px-3 py-2 mono font-semibold" :title="p.asset_description" x-text="p.asset_code"></td>
                 <td class="px-3 py-2 text-metfraa-ink" x-text="p.task"></td>
-                <td class="px-3 py-2 text-metfraa-gray-600 mono text-xs" x-text="[p.interval_days ? p.interval_days+'d' : null, p.interval_meter!=null ? p.interval_meter+' mtr' : null].filter(Boolean).join(' / ')"></td>
+                <td class="px-3 py-2 text-metfraa-gray-600 text-xs" x-text="p.schedule_label"></td>
                 <td class="px-3 py-2 text-metfraa-gray-600 text-xs">
                   <span x-text="p.last_done_date || '—'"></span><span x-show="p.last_done_meter!=null" class="text-metfraa-gray-400" x-text="' @'+p.last_done_meter"></span>
                 </td>
@@ -524,15 +527,50 @@
             </select>
           </div>
           <div><label class="lbl-f">Task *</label><input type="text" x-model="pmForm.task" class="inp" placeholder="e.g. Oil + filter change" /></div>
-          <div class="grid grid-cols-2 gap-3">
-            <div><label class="lbl-f">Every (days)</label><input type="number" x-model.number="pmForm.interval_days" class="inp" placeholder="90" /></div>
-            <div><label class="lbl-f">Every (meter)</label><input type="number" step="any" x-model.number="pmForm.interval_meter" class="inp" placeholder="500" /></div>
+          <div>
+            <label class="lbl-f">Frequency *</label>
+            <div class="grid grid-cols-4 gap-2">
+              <template x-for="f in ['daily','weekly','monthly','quarterly']" :key="f">
+                <button type="button" @click="pmForm.frequency=f"
+                  :class="pmForm.frequency===f ? 'bg-metfraa-black text-white border-metfraa-black' : 'bg-white text-metfraa-gray-700 border-metfraa-gray-200 hover:border-metfraa-blue'"
+                  class="border-2 rounded-lg px-2 py-2 text-xs font-semibold capitalize" x-text="f"></button>
+              </template>
+            </div>
           </div>
-          <p class="text-[11px] text-metfraa-gray-500 -mt-2">Set days, meter, or both. Due when either threshold is reached.</p>
-          <div class="grid grid-cols-2 gap-3">
-            <div><label class="lbl-f">Last done (date)</label><input type="date" x-model="pmForm.last_done_date" class="inp" /></div>
-            <div><label class="lbl-f">Last done (meter)</label><input type="number" step="any" x-model.number="pmForm.last_done_meter" class="inp" /></div>
+          <div x-show="pmForm.frequency==='weekly'">
+            <label class="lbl-f">Days of week *</label>
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="(d,i) in ['Mon','Tue','Wed','Thu','Fri','Sat']" :key="i">
+                <button type="button" @click="toggleWeekday(i)"
+                  :class="(pmForm.weekdays||[]).includes(i) ? 'bg-metfraa-blue text-white border-metfraa-blue' : 'bg-white text-metfraa-gray-600 border-metfraa-gray-200'"
+                  class="border rounded-lg px-3 py-1.5 text-xs font-semibold" x-text="d"></button>
+              </template>
+            </div>
           </div>
+          <div x-show="pmForm.frequency==='monthly'">
+            <label class="lbl-f">Day of month *</label>
+            <input type="number" min="1" max="31" x-model.number="pmForm.day_of_month" class="inp" placeholder="15" />
+            <p class="text-[11px] text-metfraa-gray-500 mt-1">If it lands on a Sunday or holiday, it rolls to the next working day.</p>
+          </div>
+          <div x-show="pmForm.frequency==='quarterly'">
+            <label class="lbl-f">Quarter months *</label>
+            <div class="space-y-1.5">
+              <template x-for="g in quarterGroups" :key="g.key">
+                <label class="flex items-center gap-2 text-sm text-metfraa-gray-700 cursor-pointer">
+                  <input type="radio" name="qgroup" @change="pmForm.quarter_months=[...g.months]"
+                    :checked="JSON.stringify(pmForm.quarter_months||[])===JSON.stringify(g.months)"
+                    class="text-metfraa-blue focus:ring-metfraa-blue" />
+                  <span x-text="g.label"></span>
+                </label>
+              </template>
+            </div>
+            <p class="text-[11px] text-metfraa-gray-500 mt-1">The day comes from the Start date; it rolls off Sundays/holidays to the next working day.</p>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl-f">Start date *</label><input type="date" x-model="pmForm.start_date" class="inp" /></div>
+            <div><label class="lbl-f">End date <span class="text-metfraa-gray-400 normal-case">(optional)</span></label><input type="date" x-model="pmForm.end_date" class="inp" /></div>
+          </div>
+          <div><label class="lbl-f">Also due at meter + <span class="text-metfraa-gray-400 normal-case">(optional)</span></label><input type="number" step="any" x-model.number="pmForm.interval_meter" class="inp" placeholder="e.g. 500 hrs" /></div>
           <label class="flex items-center gap-2 text-sm text-metfraa-gray-700"><input type="checkbox" x-model="pmForm.active" class="rounded border-metfraa-gray-300 text-metfraa-blue focus:ring-metfraa-blue" /> Active</label>
         </div>
         <div class="p-5 border-t border-metfraa-gray-200 flex justify-end gap-2">
@@ -541,6 +579,32 @@
             <span x-show="!pmSaving">Save</span><span x-show="pmSaving">Saving…</span>
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== HOLIDAYS ===================== -->
+  <div x-show="holidaysModal" x-cloak @click.self="holidaysModal=false" class="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full my-8">
+      <div class="p-5 border-b border-metfraa-gray-200 flex items-center justify-between">
+        <div><h3 class="display font-bold text-metfraa-ink text-xl">Holidays</h3><p class="text-xs text-metfraa-gray-500 mt-1">PM dates landing on a Sunday or these dates roll to the next working day.</p></div>
+        <button @click="holidaysModal=false" class="text-metfraa-gray-400 hover:text-metfraa-ink text-2xl leading-none">&times;</button>
+      </div>
+      <div class="p-5">
+        <div class="flex items-end gap-2 mb-4">
+          <div class="flex-1"><label class="lbl-f">Date</label><input type="date" x-model="hForm.holiday_date" class="inp" /></div>
+          <div class="flex-1"><label class="lbl-f">Name</label><input type="text" x-model="hForm.name" class="inp" placeholder="e.g. Diwali" /></div>
+          <button @click="addHoliday()" class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-3 py-2 rounded-lg">Add</button>
+        </div>
+        <ul class="divide-y divide-metfraa-gray-100 max-h-72 overflow-y-auto">
+          <template x-for="h in holidays" :key="h.id">
+            <li class="py-2 flex items-center justify-between">
+              <span class="text-sm"><span class="mono font-semibold" x-text="h.holiday_date"></span> <span class="text-metfraa-gray-500" x-text="h.name||''"></span></span>
+              <button @click="deleteHoliday(h)" class="text-xs font-semibold text-red-600 hover:underline">Remove</button>
+            </li>
+          </template>
+          <li x-show="holidays.length===0" class="py-6 text-center text-sm text-metfraa-gray-500">No holidays added yet.</li>
+        </ul>
       </div>
     </div>
   </div>
@@ -702,6 +766,12 @@ function maintApp() {
     bStatus: '', bAsset: '',
     readings: [], rAssetId: '', rForm: {}, rSaving: false,
     pmPlans: [], pmForm: {}, pmModal: false, pmSaving: false, pmDueOnly: false,
+    holidays: [], holidaysModal: false, hForm: { holiday_date: '', name: '' },
+    quarterGroups: [
+      { key: 'jan', months: [1,4,7,10], label: 'Jan / Apr / Jul / Oct' },
+      { key: 'feb', months: [2,5,8,11], label: 'Feb / May / Aug / Nov' },
+      { key: 'mar', months: [3,6,9,12], label: 'Mar / Jun / Sep / Dec' },
+    ],
     dash: {},
     pdfUrl: '', pdfTitle: '', pdfUploadUrl: '', pdfUploading: false,
 
@@ -898,31 +968,63 @@ function maintApp() {
     // ----- PM plans -----
     get pmFiltered() { return this.pmDueOnly ? this.pmPlans.filter(p => p.due || p.never_done) : this.pmPlans; },
     get pmDueCount() { return this.pmPlans.filter(p => p.due).length; },
-    blankPlan() { return { id: null, asset_id: '', task: '', interval_days: null, interval_meter: null, last_done_date: '', last_done_meter: null, active: true }; },
+    blankPlan() { return { id: null, asset_id: '', task: '', frequency: 'monthly', weekdays: [], day_of_month: null, quarter_months: [], start_date: new Date().toISOString().slice(0,10), end_date: '', interval_meter: null, active: true }; },
     async loadPlans() { const r = await fetch('/maint/api/pm-plans'); if (r.ok) this.pmPlans = await r.json(); },
     openNewPlan() { this.pmForm = this.blankPlan(); this.pmModal = true; },
     editPlan(p) {
-      this.pmForm = { id: p.id, asset_id: p.asset_id, task: p.task, interval_days: p.interval_days,
-        interval_meter: p.interval_meter, last_done_date: p.last_done_date || '',
-        last_done_meter: p.last_done_meter, active: p.active };
+      this.pmForm = { id: p.id, asset_id: p.asset_id, task: p.task, frequency: p.frequency || 'monthly',
+        weekdays: p.weekdays ? [...p.weekdays] : [], day_of_month: p.day_of_month,
+        quarter_months: p.quarter_months ? [...p.quarter_months] : [],
+        start_date: p.start_date || '', end_date: p.end_date || '',
+        interval_meter: p.interval_meter, active: p.active };
       this.pmModal = true;
     },
+    toggleWeekday(i) {
+      if (!this.pmForm.weekdays) this.pmForm.weekdays = [];
+      const k = this.pmForm.weekdays.indexOf(i);
+      if (k >= 0) this.pmForm.weekdays.splice(k, 1); else this.pmForm.weekdays.push(i);
+    },
     async savePlan() {
-      if (!this.pmForm.asset_id) { toast('Select an asset', 'error'); return; }
-      if (!this.pmForm.task || !this.pmForm.task.trim()) { toast('Task is required', 'error'); return; }
-      if (!this.pmForm.interval_days && this.pmForm.interval_meter == null) { toast('Set an interval (days and/or meter)', 'error'); return; }
+      const f = this.pmForm;
+      if (!f.asset_id) { toast('Select an asset', 'error'); return; }
+      if (!f.task || !f.task.trim()) { toast('Task is required', 'error'); return; }
+      if (!f.frequency) { toast('Choose a frequency', 'error'); return; }
+      if (f.frequency === 'weekly' && !(f.weekdays || []).length) { toast('Select at least one weekday', 'error'); return; }
+      if (f.frequency === 'monthly' && !(f.day_of_month >= 1 && f.day_of_month <= 31)) { toast('Enter a day of month (1-31)', 'error'); return; }
+      if (f.frequency === 'quarterly' && !(f.quarter_months || []).length) { toast('Choose a quarter group', 'error'); return; }
+      if (!f.start_date) { toast('Start date is required', 'error'); return; }
       this.pmSaving = true;
       try {
-        const p = { ...this.pmForm };
-        if (!p.last_done_date) p.last_done_date = null;
-        const url = this.pmForm.id ? `/maint/api/pm-plans/${this.pmForm.id}` : '/maint/api/pm-plans';
-        const res = await fetch(url, { method: this.pmForm.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+        const p = { ...f };
+        if (!p.end_date) p.end_date = null;
+        const url = f.id ? `/maint/api/pm-plans/${f.id}` : '/maint/api/pm-plans';
+        const res = await fetch(url, { method: f.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Save failed');
-        toast(this.pmForm.id ? 'Plan updated' : 'Plan added', 'success');
+        toast(f.id ? 'Plan updated' : 'Plan added', 'success');
         this.pmModal = false;
         await this.loadPlans();
       } catch (e) { toast(e.message, 'error'); } finally { this.pmSaving = false; }
+    },
+    async openHolidays() { this.holidaysModal = true; await this.loadHolidays(); },
+    async loadHolidays() { const r = await fetch('/maint/api/holidays'); if (r.ok) this.holidays = await r.json(); },
+    async addHoliday() {
+      if (!this.hForm.holiday_date) { toast('Pick a date', 'error'); return; }
+      try {
+        const res = await fetch('/maint/api/holidays', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.hForm) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        this.hForm = { holiday_date: '', name: '' };
+        await this.loadHolidays(); await this.loadPlans();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+    async deleteHoliday(h) {
+      try {
+        const res = await fetch(`/maint/api/holidays/${h.id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        await this.loadHolidays(); await this.loadPlans();
+      } catch (e) { toast(e.message, 'error'); }
     },
     async deletePlan(p) {
       if (!confirm('Delete this plan?')) return;

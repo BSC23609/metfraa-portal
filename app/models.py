@@ -1194,6 +1194,12 @@ class MaintPMPlan(Base):
     task = Column(String(255), nullable=False)
     interval_days = Column(Integer, nullable=True)
     interval_meter = Column(Float, nullable=True)
+    frequency = Column(String(12), nullable=True)      # daily / weekly / monthly / quarterly
+    weekdays = Column(JSON, nullable=True)             # [0..6] for weekly (Mon=0)
+    day_of_month = Column(Integer, nullable=True)      # 1..31 for monthly
+    quarter_months = Column(JSON, nullable=True)       # e.g. [1,4,7,10]
+    start_date = Column(Date, nullable=True)
+    end_date = Column(Date, nullable=True)
     last_done_date = Column(Date, nullable=True)
     last_done_meter = Column(Float, nullable=True)
     active = Column(Boolean, default=True, nullable=False)
@@ -1233,3 +1239,14 @@ class MaintEvent(Base):
     asset = relationship("MaintAsset")
     attended_by = relationship("PlantLabour", foreign_keys=[attended_by_id])
     verified_by = relationship("PlantLabour", foreign_keys=[verified_by_id])
+
+
+class MaintHoliday(Base):
+    """Holiday calendar for PM scheduling. A scheduled date landing on a Sunday
+    or one of these dates rolls forward to the next working day."""
+    __tablename__ = "maint_holidays"
+
+    id = Column(Integer, primary_key=True)
+    holiday_date = Column(Date, nullable=False, unique=True)
+    name = Column(String(200), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

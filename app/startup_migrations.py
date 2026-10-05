@@ -80,6 +80,12 @@ EXPENSE_PARITY_MIGRATIONS += [
 MISC_MIGRATIONS = [
     "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS project_ops_admin BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS maint_admin BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE maint_pm_plans ADD COLUMN IF NOT EXISTS frequency VARCHAR(12)",
+    "ALTER TABLE maint_pm_plans ADD COLUMN IF NOT EXISTS weekdays JSON",
+    "ALTER TABLE maint_pm_plans ADD COLUMN IF NOT EXISTS day_of_month INTEGER",
+    "ALTER TABLE maint_pm_plans ADD COLUMN IF NOT EXISTS quarter_months JSON",
+    "ALTER TABLE maint_pm_plans ADD COLUMN IF NOT EXISTS start_date DATE",
+    "ALTER TABLE maint_pm_plans ADD COLUMN IF NOT EXISTS end_date DATE",
     "ALTER TABLE plant_contractors ADD COLUMN IF NOT EXISTS ot_rate_per_half_hour DOUBLE PRECISION NOT NULL DEFAULT 50",
     "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS working_hours DOUBLE PRECISION NOT NULL DEFAULT 8",
     "ALTER TABLE plant_labour ADD COLUMN IF NOT EXISTS ot_category VARCHAR(16) NOT NULL DEFAULT 'salary'",

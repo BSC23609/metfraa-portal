@@ -4,6 +4,7 @@ First screen: the asset master (the machines seeded from the equipment list).
 Breakdown/PM logging, readings, PM scheduling, reports and dashboard follow in
 later slices. Access is gated by the maint_admin flag (superadmin implies it).
 """
+import calendar
 import logging
 from datetime import date, datetime, timedelta
 
@@ -18,7 +19,7 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..services import onedrive as _od
 from ..models import (Employee, MaintAsset, MaintEvent, MaintMachineType,
-                      MaintPMPlan, MaintReading, PlantLabour)
+                      MaintHoliday, MaintPMPlan, MaintReading, PlantLabour)
 
 router = APIRouter(prefix="/maint", tags=["maint"])
 log = logging.getLogger("maint")
@@ -422,25 +423,117 @@ def _latest_meter(db: Session, asset_id: int):
     return None
 
 
-def _plan_json(db: Session, p: MaintPMPlan):
+_QUARTER_GROUPS = ([1, 4, 7, 10], [2, 5, 8, 11], [3, 6, 9, 12])
+_WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def _load_holidays(db: Session):
+    return {h.holiday_date for h in db.query(MaintHoliday).all()}
+
+
+def _is_off(d, holidays):
+    return d.weekday() == 6 or d in holidays   # Sunday = 6
+
+
+def _roll_forward(d, holidays):
+    guard = 0
+    while _is_off(d, holidays) and guard < 60:
+        d += timedelta(days=1)
+        guard += 1
+    return d
+
+
+def _clamp_dom(y, m, dom):
+    last = calendar.monthrange(y, m)[1]
+    return date(y, m, min(dom, last))
+
+
+def _add_month(y, m):
+    return (y + 1, 1) if m == 12 else (y, m + 1)
+
+
+def _next_occurrence(p, after, holidays):
+    """Next scheduled occurrence on/after `after`, rolled off Sundays & holidays.
+    None if past end_date or the schedule is incomplete."""
+    sd = p.start_date or date.today()
+    start = after if after > sd else sd
+    f = p.frequency
+    occ = None
+    if f == "daily":
+        occ = _roll_forward(start, holidays)
+    elif f == "weekly":
+        wds = set(p.weekdays or [])
+        if not wds:
+            return None
+        d = start
+        for _ in range(14):
+            if d.weekday() in wds:
+                occ = _roll_forward(d, holidays)
+                break
+            d += timedelta(days=1)
+    elif f == "monthly":
+        dom = p.day_of_month or 1
+        y, m = start.year, start.month
+        occ = _roll_forward(_clamp_dom(y, m, dom), holidays)
+        if occ < start:
+            y, m = _add_month(y, m)
+            occ = _roll_forward(_clamp_dom(y, m, dom), holidays)
+    elif f == "quarterly":
+        months = sorted(p.quarter_months or [])
+        if not months:
+            return None
+        dom = (p.start_date or date.today()).day
+        cands = []
+        for yy in (start.year, start.year + 1):
+            for mm in months:
+                c = _roll_forward(_clamp_dom(yy, mm, dom), holidays)
+                if c >= start:
+                    cands.append(c)
+        occ = min(cands) if cands else None
+    if occ and p.end_date and occ > p.end_date:
+        return None
+    return occ
+
+
+def _schedule_label(p):
+    f = p.frequency
+    if f == "daily":
+        return "Daily (working days)"
+    if f == "weekly":
+        return "Weekly (" + ", ".join(_WD[w] for w in sorted(p.weekdays or [])) + ")"
+    if f == "monthly":
+        return f"Monthly (day {p.day_of_month})"
+    if f == "quarterly":
+        months = sorted(p.quarter_months or [])
+        dom = p.start_date.day if p.start_date else "?"
+        return "Quarterly (" + "/".join(calendar.month_abbr[m] for m in months) + f", day {dom})"
+    return f or "—"
+
+
+def _plan_json(db: Session, p: MaintPMPlan, holidays=None):
+    if holidays is None:
+        holidays = _load_holidays(db)
     today = date.today()
+    after = (p.last_done_date + timedelta(days=1)) if p.last_done_date else (p.start_date or today)
+    nxt = _next_occurrence(p, after, holidays)
     cur = _latest_meter(db, p.asset_id)
-    ndd = (p.last_done_date + timedelta(days=p.interval_days)) if (p.last_done_date and p.interval_days) else None
-    ndm = (p.last_done_meter + p.interval_meter) if (p.last_done_meter is not None and p.interval_meter is not None) else None
-    due_date = bool(ndd and today >= ndd)
+    ndm = (p.last_done_meter + p.interval_meter) if (p.last_done_meter is not None and p.interval_meter) else None
+    due_date = bool(nxt and today >= nxt)
     due_meter = bool(ndm is not None and cur is not None and cur >= ndm)
-    never_done = p.last_done_date is None and p.last_done_meter is None
     a = db.get(MaintAsset, p.asset_id)
     return {
         "id": p.id, "asset_id": p.asset_id,
         "asset_code": a.asset_code if a else None,
         "asset_description": a.description if a else None,
-        "task": p.task, "interval_days": p.interval_days, "interval_meter": p.interval_meter,
+        "task": p.task, "frequency": p.frequency, "weekdays": p.weekdays,
+        "day_of_month": p.day_of_month, "quarter_months": p.quarter_months,
+        "start_date": _iso(p.start_date), "end_date": _iso(p.end_date),
+        "schedule_label": _schedule_label(p), "interval_meter": p.interval_meter,
         "last_done_date": _iso(p.last_done_date), "last_done_meter": p.last_done_meter,
-        "next_due_date": _iso(ndd), "next_due_meter": ndm, "current_meter": cur,
-        "due_date": due_date, "due_meter": due_meter, "due": (due_date or due_meter),
-        "never_done": never_done,
-        "days_overdue": (today - ndd).days if (ndd and today >= ndd) else None,
+        "next_due_date": _iso(nxt), "next_due_meter": ndm, "current_meter": cur,
+        "due": bool(due_date or due_meter), "due_date": due_date, "due_meter": due_meter,
+        "never_done": p.last_done_date is None,
+        "days_overdue": (today - nxt).days if (nxt and today >= nxt) else None,
         "meter_remaining": round(ndm - cur, 2) if (ndm is not None and cur is not None) else None,
         "active": p.active,
     }
@@ -449,10 +542,13 @@ def _plan_json(db: Session, p: MaintPMPlan):
 class PMPlanIn(BaseModel):
     asset_id: int
     task: str
-    interval_days: int | None = None
+    frequency: str
+    weekdays: list[int] | None = None
+    day_of_month: int | None = None
+    quarter_months: list[int] | None = None
+    start_date: str | None = None
+    end_date: str | None = None
     interval_meter: float | None = None
-    last_done_date: str | None = None
-    last_done_meter: float | None = None
     active: bool = True
 
 
@@ -463,13 +559,32 @@ class PMDoneIn(BaseModel):
     remarks: str | None = None
 
 
+def _validate_plan(payload: PMPlanIn):
+    if not (payload.task or "").strip():
+        raise HTTPException(400, "Task is required")
+    if payload.frequency not in ("daily", "weekly", "monthly", "quarterly"):
+        raise HTTPException(400, "Choose a frequency")
+    if not _pdate(payload.start_date):
+        raise HTTPException(400, "Start date is required")
+    if payload.frequency == "weekly" and not payload.weekdays:
+        raise HTTPException(400, "Select at least one weekday")
+    if payload.frequency == "monthly" and not (payload.day_of_month and 1 <= payload.day_of_month <= 31):
+        raise HTTPException(400, "Enter a day of month (1-31)")
+    if payload.frequency == "quarterly" and sorted(payload.quarter_months or []) not in [list(g) for g in _QUARTER_GROUPS]:
+        raise HTTPException(400, "Choose a valid quarter group")
+
+
 def _apply_plan(p: MaintPMPlan, payload: PMPlanIn):
     p.asset_id = payload.asset_id
     p.task = (payload.task or "").strip()
-    p.interval_days = payload.interval_days
+    p.frequency = payload.frequency
+    p.weekdays = payload.weekdays or None
+    p.day_of_month = payload.day_of_month
+    p.quarter_months = payload.quarter_months or None
+    p.start_date = _pdate(payload.start_date) or date.today()
+    p.end_date = _pdate(payload.end_date)
     p.interval_meter = payload.interval_meter
-    p.last_done_date = _pdate(payload.last_done_date)
-    p.last_done_meter = payload.last_done_meter
+    p.interval_days = None
     p.active = payload.active
 
 
@@ -491,10 +606,7 @@ def api_create_plan(payload: PMPlanIn, user: Employee = Depends(get_current_user
     _guard(db, user)
     if not db.get(MaintAsset, payload.asset_id):
         raise HTTPException(400, "Unknown asset")
-    if not (payload.task or "").strip():
-        raise HTTPException(400, "Task is required")
-    if not payload.interval_days and payload.interval_meter is None:
-        raise HTTPException(400, "Set an interval (days and/or meter)")
+    _validate_plan(payload)
     p = MaintPMPlan(asset_id=payload.asset_id)
     _apply_plan(p, payload)
     db.add(p); db.commit(); db.refresh(p)
@@ -509,10 +621,7 @@ def api_update_plan(plan_id: int, payload: PMPlanIn,
     p = db.get(MaintPMPlan, plan_id)
     if not p:
         raise HTTPException(404, "Plan not found")
-    if not (payload.task or "").strip():
-        raise HTTPException(400, "Task is required")
-    if not payload.interval_days and payload.interval_meter is None:
-        raise HTTPException(400, "Set an interval (days and/or meter)")
+    _validate_plan(payload)
     _apply_plan(p, payload)
     db.commit(); db.refresh(p)
     return _plan_json(db, p)
@@ -548,6 +657,45 @@ def api_plan_done(plan_id: int, payload: PMDoneIn,
     p.last_done_meter = cur
     db.commit(); db.refresh(p)
     return _plan_json(db, p)
+
+
+# ------------------------------------------------------------------ holidays
+
+class HolidayIn(BaseModel):
+    holiday_date: str
+    name: str | None = None
+
+
+@router.get("/api/holidays")
+def api_holidays(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    rows = db.query(MaintHoliday).order_by(MaintHoliday.holiday_date).all()
+    return [{"id": h.id, "holiday_date": _iso(h.holiday_date), "name": h.name} for h in rows]
+
+
+@router.post("/api/holidays")
+def api_create_holiday(payload: HolidayIn, user: Employee = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    _guard(db, user)
+    d = _pdate(payload.holiday_date)
+    if not d:
+        raise HTTPException(400, "Date is required")
+    if db.query(MaintHoliday).filter_by(holiday_date=d).first():
+        raise HTTPException(400, "That date is already a holiday")
+    h = MaintHoliday(holiday_date=d, name=(payload.name or None))
+    db.add(h); db.commit(); db.refresh(h)
+    return {"id": h.id, "holiday_date": _iso(h.holiday_date), "name": h.name}
+
+
+@router.delete("/api/holidays/{holiday_id}")
+def api_delete_holiday(holiday_id: int, user: Employee = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    _guard(db, user)
+    h = db.get(MaintHoliday, holiday_id)
+    if not h:
+        raise HTTPException(404, "Holiday not found")
+    db.delete(h); db.commit()
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ dashboard
@@ -617,8 +765,9 @@ def api_dashboard(user: Employee = Depends(get_current_user), db: Session = Depe
 
     plans = db.query(MaintPMPlan).filter(MaintPMPlan.active.is_(True)).all()
     due = overdue = 0
+    _hols = _load_holidays(db)
     for p in plans:
-        pj = _plan_json(db, p)
+        pj = _plan_json(db, p, _hols)
         if pj["due"]:
             due += 1
         if pj["days_overdue"] and pj["days_overdue"] > 0:
