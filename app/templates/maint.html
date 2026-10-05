@@ -248,19 +248,24 @@
             <label class="lbl-f">Category *</label>
             <div class="grid grid-cols-3 gap-2">
               <template x-for="c in ['Scheduled PM','Unscheduled PM','Breakdown']" :key="c">
-                <button type="button" @click="eForm.category=c"
+                <button type="button" @click="eForm.category=c; eForm.status=(c==='Breakdown'?'Open':'Completed')"
                   :class="eForm.category===c ? 'bg-metfraa-black text-white border-metfraa-black' : 'bg-white text-metfraa-gray-700 border-metfraa-gray-200 hover:border-metfraa-blue'"
                   class="border-2 rounded-lg px-2 py-2 text-xs font-semibold" x-text="c"></button>
               </template>
             </div>
           </div>
           <div><label class="lbl-f">Date *</label><input type="date" x-model="eForm.event_date" class="inp" /></div>
+          <div>
+            <label class="lbl-f">Status</label>
+            <select x-show="eForm.category==='Breakdown'" x-model="eForm.status" class="inp">
+              <option>Open</option><option>Under repair</option><option>Closed</option>
+            </select>
+            <select x-show="eForm.category!=='Breakdown'" x-model="eForm.status" class="inp">
+              <option>Pending</option><option>Completed</option>
+            </select>
+          </div>
           <template x-if="eForm.category==='Breakdown'">
             <div class="space-y-3 p-3 rounded-lg bg-red-50/60 border border-red-100">
-              <div>
-                <label class="lbl-f">Status</label>
-                <select x-model="eForm.status" class="inp"><option>Open</option><option>Under repair</option><option>Closed</option></select>
-              </div>
               <div class="grid grid-cols-2 gap-2">
                 <div><label class="lbl-f">Reported at</label><input type="datetime-local" x-model="eForm.reported_at" class="inp" /></div>
                 <div><label class="lbl-f">Restored at</label><input type="datetime-local" x-model="eForm.restored_at" class="inp" /></div>
@@ -875,7 +880,7 @@ function maintApp() {
     },
     blankEvent() {
       return { id: null, asset_id: '', event_date: new Date().toISOString().slice(0,10),
-        category: 'Scheduled PM', status: 'Open', reported_at: '', restored_at: '',
+        category: 'Scheduled PM', status: 'Completed', reported_at: '', restored_at: '',
         complaint: '', cause: '', action: '', parts: '', cost: null, meter_at_event: null,
         attended_by_id: null, verified_by_id: null, remarks: '' };
     },
@@ -883,7 +888,7 @@ function maintApp() {
     async loadEvents() { const r = await fetch('/maint/api/events'); if (r.ok) this.events = await r.json(); },
     editEvent(e) {
       this.eForm = { id: e.id, asset_id: e.asset_id, event_date: e.event_date, category: e.category,
-        status: e.status || 'Open', reported_at: e.reported_at || '', restored_at: e.restored_at || '',
+        status: e.status || (e.category === 'Breakdown' ? 'Open' : 'Completed'), reported_at: e.reported_at || '', restored_at: e.restored_at || '',
         complaint: e.complaint || '', cause: e.cause || '', action: e.action || '', parts: e.parts || '',
         cost: e.cost, meter_at_event: e.meter_at_event, attended_by_id: e.attended_by_id,
         verified_by_id: e.verified_by_id, remarks: e.remarks || '' };

@@ -241,7 +241,7 @@ def _apply_event(e: MaintEvent, p: EventIn):
         else:
             e.downtime_hrs = None
     else:
-        e.status = None
+        e.status = p.status   # Pending / Completed for PM work orders
         e.reported_at = None
         e.restored_at = None
         e.downtime_hrs = None
@@ -302,6 +302,12 @@ def api_update_event(event_id: int, payload: EventIn,
     if not _pdate(payload.event_date):
         raise HTTPException(400, "Event date is required (YYYY-MM-DD)")
     _apply_event(e, payload)
+    if (e.category in ("Scheduled PM", "Unscheduled PM") and e.pm_plan_id
+            and e.status == "Completed"):
+        _plan = db.get(MaintPMPlan, e.pm_plan_id)
+        if _plan:
+            _plan.last_done_date = e.event_date or _ist_today()
+            _plan.last_done_meter = _latest_meter(db, _plan.asset_id)
     db.commit(); db.refresh(e)
     return _event_json(e)
 
@@ -614,6 +620,7 @@ def api_create_plan(payload: PMPlanIn, user: Employee = Depends(get_current_user
     p = MaintPMPlan(asset_id=payload.asset_id)
     _apply_plan(p, payload)
     db.add(p); db.commit(); db.refresh(p)
+    materialize_due_pm(db)
     return _plan_json(db, p)
 
 
@@ -628,6 +635,7 @@ def api_update_plan(plan_id: int, payload: PMPlanIn,
     _validate_plan(payload)
     _apply_plan(p, payload)
     db.commit(); db.refresh(p)
+    materialize_due_pm(db)
     return _plan_json(db, p)
 
 
@@ -650,13 +658,27 @@ def api_plan_done(plan_id: int, payload: PMDoneIn,
     p = db.get(MaintPMPlan, plan_id)
     if not p:
         raise HTTPException(404, "Plan not found")
-    dd = _pdate(payload.done_date) or date.today()
+    dd = _pdate(payload.done_date) or _ist_today()
     cur = _latest_meter(db, p.asset_id)
-    e = MaintEvent(asset_id=p.asset_id, event_date=dd, category="Scheduled PM",
-                   complaint=p.task, action="PM completed", meter_at_event=cur,
-                   attended_by_id=payload.attended_by_id, verified_by_id=payload.verified_by_id,
-                   remarks=payload.remarks, pm_plan_id=p.id)
-    db.add(e)
+    e = (db.query(MaintEvent)
+         .filter(MaintEvent.pm_plan_id == p.id, MaintEvent.category == "Scheduled PM",
+                 MaintEvent.status == "Pending").first())
+    if e:
+        e.status = "Completed"; e.event_date = dd; e.meter_at_event = cur
+        if not e.action:
+            e.action = "PM completed"
+        if payload.attended_by_id:
+            e.attended_by_id = payload.attended_by_id
+        if payload.verified_by_id:
+            e.verified_by_id = payload.verified_by_id
+        if payload.remarks:
+            e.remarks = payload.remarks
+    else:
+        db.add(MaintEvent(asset_id=p.asset_id, event_date=dd, category="Scheduled PM",
+                          status="Completed", complaint=p.task, action="PM completed",
+                          meter_at_event=cur, attended_by_id=payload.attended_by_id,
+                          verified_by_id=payload.verified_by_id, remarks=payload.remarks,
+                          pm_plan_id=p.id))
     p.last_done_date = dd
     p.last_done_meter = cur
     db.commit(); db.refresh(p)
@@ -945,6 +967,7 @@ def run_pm_reminder(db: Session):
     holidays = _load_holidays(db)
     if today.weekday() == 6 or today in holidays:
         return {"skipped": "sunday_or_holiday", "date": today.isoformat()}
+    materialize_due_pm(db, today)
     if db.query(MaintReminderLog).filter_by(sent_date=today).first():
         return {"skipped": "already_sent", "date": today.isoformat()}
 
@@ -995,3 +1018,34 @@ def run_pm_reminder(db: Session):
     db.commit()
     return {"date": today.isoformat(), "pm_due": len(due), "breakdowns_open": len(obd),
             "sent": True, "email": email_ok, "whatsapp": wa_ok}
+
+
+def materialize_due_pm(db: Session, today=None):
+    """Auto-create a PENDING Scheduled-PM work order for every active plan whose
+    next occurrence has arrived and that has no open work order yet. Idempotent —
+    safe to call on every plan change and on the daily cron."""
+    today = today or _ist_today()
+    holidays = _load_holidays(db)
+    created = 0
+    for p in db.query(MaintPMPlan).filter(MaintPMPlan.active.is_(True)).all():
+        if not p.frequency:
+            continue
+        after = (p.last_done_date + timedelta(days=1)) if p.last_done_date else (p.start_date or today)
+        occ = _next_occurrence(p, after, holidays)
+        if not occ or occ > today:
+            continue
+        if db.query(MaintEvent).filter(MaintEvent.pm_plan_id == p.id,
+                                       MaintEvent.category == "Scheduled PM",
+                                       MaintEvent.status == "Pending").first():
+            continue
+        if db.query(MaintEvent).filter(MaintEvent.pm_plan_id == p.id,
+                                       MaintEvent.status == "Completed",
+                                       MaintEvent.event_date >= occ).first():
+            continue
+        db.add(MaintEvent(asset_id=p.asset_id, event_date=occ, category="Scheduled PM",
+                          status="Pending", complaint=p.task, pm_plan_id=p.id,
+                          meter_at_event=_latest_meter(db, p.asset_id)))
+        created += 1
+    if created:
+        db.commit()
+    return created
