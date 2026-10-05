@@ -39,6 +39,10 @@
 
   <!-- ===================== DASHBOARD ===================== -->
   <div x-show="tab==='dashboard'" x-cloak>
+    <div class="flex justify-end gap-2 mb-3">
+      <a href="/maint/api/log-excel" class="text-xs font-semibold px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-metfraa-ink hover:bg-metfraa-gray-50">Download Excel log</a>
+      <button @click="saveLogToOneDrive()" :disabled="logSaving" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-metfraa-blue text-white hover:bg-metfraa-blue-dark disabled:opacity-50"><span x-show="!logSaving">Save log to OneDrive</span><span x-show="logSaving">Saving…</span></button>
+    </div>
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
       <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
         <div class="lbl-f">Open breakdowns</div>
@@ -778,6 +782,7 @@ function maintApp() {
       { key: 'mar', months: [3,6,9,12], label: 'Mar / Jun / Sep / Dec' },
     ],
     dash: {},
+    logSaving: false,
     pdfUrl: '', pdfTitle: '', pdfUploadUrl: '', pdfUploading: false,
 
     async init() {
@@ -1054,6 +1059,16 @@ function maintApp() {
 
     // ----- dashboard -----
     async loadDashboard() { const r = await fetch('/maint/api/dashboard'); if (r.ok) this.dash = await r.json(); },
+    async saveLogToOneDrive() {
+      this.logSaving = true;
+      try {
+        const res = await fetch('/maint/api/log-excel/upload', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        toast('Excel log saved to OneDrive', 'success');
+        if (data.url) window.open(data.url, '_blank');
+      } catch (e) { toast(e.message, 'error'); } finally { this.logSaving = false; }
+    },
     dtPct(h) { const arr = (this.dash.downtime_by_machine || []).map(m => m.hours); const max = Math.max(1, ...arr); return Math.round(h / max * 100); },
 
     // ----- PDFs -----

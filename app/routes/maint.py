@@ -968,6 +968,10 @@ def run_pm_reminder(db: Session):
     if today.weekday() == 6 or today in holidays:
         return {"skipped": "sunday_or_holiday", "date": today.isoformat()}
     materialize_due_pm(db, today)
+    try:
+        build_and_upload_log(db)
+    except Exception as ex:
+        log.error("[maint-reminder] excel log refresh failed: %s", ex)
     if db.query(MaintReminderLog).filter_by(sent_date=today).first():
         return {"skipped": "already_sent", "date": today.isoformat()}
 
@@ -1049,3 +1053,31 @@ def materialize_due_pm(db: Session, today=None):
     if created:
         db.commit()
     return created
+
+
+# ------------------------------------------------------------------ excel log
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def build_and_upload_log(db: Session):
+    """Build the Metfraa maintenance Excel log and upload it to OneDrive."""
+    from ..services.maint_excel import build_maintenance_log_xlsx
+    data = build_maintenance_log_xlsx(db)
+    info = _od.upload_to_path(data, "Maintenance/Metfraa Maintenance Log.xlsx", _XLSX_MIME)
+    return (info or {}).get("webUrl")
+
+
+@router.get("/api/log-excel")
+def api_log_excel(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    from ..services.maint_excel import build_maintenance_log_xlsx
+    data = build_maintenance_log_xlsx(db)
+    return Response(content=data, media_type=_XLSX_MIME,
+                    headers={"Content-Disposition": 'attachment; filename="Metfraa Maintenance Log.xlsx"'})
+
+
+@router.post("/api/log-excel/upload")
+def api_log_excel_upload(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    return {"ok": True, "url": build_and_upload_log(db)}
