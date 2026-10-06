@@ -5,7 +5,7 @@ M003,EOT CRANE- 03,Machinery,breakdown_only,4460,AMSAK,Metfraa-factory,,1026600,
 M004,CNC PLASMA,Machinery,cnc_plasma,9300093,MESSER,Metfraa-factory,,4991400,30,kW,2026,true
 M005,UPS- 01,Machinery,breakdown_only,25K0M0R0P100010032,MICROTEK,Metfraa-factory,,194700,7.5,kW,2026,true
 M006,AIR COMPRESSOR- 01,Machinery,screw_air_compressor,BZKC370742,ELGI,Metfraa-factory,,149200,8.5,Bar,2026,true
-M007,PTW,Machinery,breakdown_only,PTW/00057-10,PRIMO,Metfraa-factory,,7198000,125,kW,2026,true
+M007,PTW,Machinery,ptw_welder,PTW/00057-10,PRIMO,Metfraa-factory,,7198000,125,kW,2026,true
 M008,MIG WELDING- 01,Machinery,breakdown_only,1250703758,RILON,Metfraa-factory,,75520,13.8,kW,2025,true
 M009,MIG WELDING- 02,Machinery,breakdown_only,1250703799,RILON,Metfraa-factory,,75520,13.8,kW,2025,true
 M010,MIG WELDING- 03,Machinery,breakdown_only,1250909707,RILON,Metfraa-factory,,75520,13.8,kW,2025,true

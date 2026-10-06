@@ -37,6 +37,12 @@ TYPES = [
         {"code": "diesel_used", "label": "Diesel used", "unit": "L"},
         {"code": "kwh_start", "label": "kWh (start)", "unit": "kWh"},
         {"code": "kwh_end", "label": "kWh (end)", "unit": "kWh"}]},
+    {"key": "ptw_welder", "name": "PTW welder (weld length)", "meter_param": None,
+     "reading_params": [
+        {"code": "lh_mtr", "label": "LH weld length", "unit": "m"},
+        {"code": "rh_mtr", "label": "RH weld length", "unit": "m"},
+        {"code": "lh_time", "label": "LH weld time", "unit": "min"},
+        {"code": "rh_time", "label": "RH weld time", "unit": "min"}]},
     {"key": "cnc_plasma", "name": "CNC plasma (event-only)", "reading_params": [], "meter_param": None},
 ]
 

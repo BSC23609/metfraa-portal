@@ -23,7 +23,7 @@ from ..services import email_service as _email
 from ..services import wati as _wati
 from ..models import (Employee, MaintAsset, MaintEvent, MaintMachineType,
                       MaintHoliday, MaintPMPlan, MaintReading,
-                      MaintReminderLog, PlantLabour)
+                      MaintEbReading, MaintReminderLog, PlantLabour)
 
 router = APIRouter(prefix="/maint", tags=["maint"])
 log = logging.getLogger("maint")
@@ -1081,3 +1081,141 @@ def api_log_excel(user: Employee = Depends(get_current_user), db: Session = Depe
 def api_log_excel_upload(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     _guard(db, user)
     return {"ok": True, "url": build_and_upload_log(db)}
+
+
+# ------------------------------------------------------------------ EB / power
+
+DEFAULT_EB_RATE = 9.0
+
+
+class EbReadingIn(BaseModel):
+    reading_date: str
+    reading_time: str | None = None
+    active_mwh: float | None = None
+    apparent_mvah: float | None = None
+    rate_per_unit: float | None = None
+    md_kw: float | None = None
+    md_kva: float | None = None
+    freq_hz: float | None = None
+    v_ry: float | None = None
+    v_yb: float | None = None
+    v_br: float | None = None
+    v_rn: float | None = None
+    v_yn: float | None = None
+    v_bn: float | None = None
+    remarks: str | None = None
+
+
+def _eb_compute(db: Session):
+    """Return all EB readings (date asc) with daily consumption, cost, cumulative
+    cost and power factor computed from the running meter."""
+    rows = db.query(MaintEbReading).order_by(MaintEbReading.reading_date).all()
+    prev_a = prev_ap = None
+    cum = 0.0
+    out = []
+    for r in rows:
+        dk = round((r.active_mwh - prev_a) * 1000, 2) if (r.active_mwh is not None and prev_a is not None) else None
+        dkv = round((r.apparent_mvah - prev_ap) * 1000, 2) if (r.apparent_mvah is not None and prev_ap is not None) else None
+        cost = round(dk * (r.rate_per_unit or 0), 2) if dk is not None else None
+        pf = round(dk / dkv, 3) if (dk and dkv) else None
+        if cost:
+            cum += cost
+        out.append({
+            "id": r.id, "reading_date": _iso(r.reading_date), "reading_time": r.reading_time,
+            "active_mwh": r.active_mwh, "apparent_mvah": r.apparent_mvah,
+            "rate_per_unit": r.rate_per_unit, "md_kw": r.md_kw, "md_kva": r.md_kva,
+            "freq_hz": r.freq_hz, "v_ry": r.v_ry, "v_yb": r.v_yb, "v_br": r.v_br,
+            "v_rn": r.v_rn, "v_yn": r.v_yn, "v_bn": r.v_bn, "remarks": r.remarks,
+            "daily_kwh": dk, "daily_kvah": dkv, "daily_cost": cost,
+            "cumulative_cost": round(cum, 2), "power_factor": pf,
+        })
+        if r.active_mwh is not None:
+            prev_a = r.active_mwh
+        if r.apparent_mvah is not None:
+            prev_ap = r.apparent_mvah
+    return out
+
+
+def _apply_eb(r: MaintEbReading, p: EbReadingIn):
+    r.reading_date = _pdate(p.reading_date)
+    r.reading_time = p.reading_time or None
+    r.active_mwh = p.active_mwh
+    r.apparent_mvah = p.apparent_mvah
+    r.rate_per_unit = p.rate_per_unit if p.rate_per_unit is not None else DEFAULT_EB_RATE
+    r.md_kw = p.md_kw
+    r.md_kva = p.md_kva
+    r.freq_hz = p.freq_hz
+    r.v_ry = p.v_ry; r.v_yb = p.v_yb; r.v_br = p.v_br
+    r.v_rn = p.v_rn; r.v_yn = p.v_yn; r.v_bn = p.v_bn
+    r.remarks = p.remarks
+
+
+@router.get("/api/eb-readings")
+def api_eb_readings(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    return list(reversed(_eb_compute(db)))   # newest first for display
+
+
+@router.get("/api/eb-monthly")
+def api_eb_monthly(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    from collections import OrderedDict
+    m = OrderedDict()
+    for r in _eb_compute(db):
+        key = (r["reading_date"] or "")[:7]
+        if not key:
+            continue
+        g = m.setdefault(key, dict(kwh=0.0, kvah=0.0, cost=0.0, days=0, md_kw=0.0, md_kva=0.0))
+        if r["daily_kwh"]:
+            g["kwh"] += r["daily_kwh"]
+        if r["daily_kvah"]:
+            g["kvah"] += r["daily_kvah"]
+        if r["daily_cost"]:
+            g["cost"] += r["daily_cost"]
+        g["days"] += 1
+        g["md_kw"] = max(g["md_kw"], r["md_kw"] or 0)
+        g["md_kva"] = max(g["md_kva"], r["md_kva"] or 0)
+    return [{"month": k, "kwh": round(v["kwh"], 1), "kvah": round(v["kvah"], 1),
+             "cost": round(v["cost"], 0), "days": v["days"],
+             "md_kw": v["md_kw"], "md_kva": v["md_kva"]} for k, v in reversed(list(m.items()))]
+
+
+@router.post("/api/eb-readings")
+def api_eb_create(payload: EbReadingIn, user: Employee = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    _guard(db, user)
+    d = _pdate(payload.reading_date)
+    if not d:
+        raise HTTPException(400, "Reading date is required")
+    if db.query(MaintEbReading).filter_by(reading_date=d).first():
+        raise HTTPException(400, f"A reading for {d.isoformat()} already exists")
+    r = MaintEbReading(entered_by=getattr(user, "name", None))
+    _apply_eb(r, payload)
+    db.add(r); db.commit()
+    return {"ok": True}
+
+
+@router.put("/api/eb-readings/{reading_id}")
+def api_eb_update(reading_id: int, payload: EbReadingIn,
+                  user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    r = db.get(MaintEbReading, reading_id)
+    if not r:
+        raise HTTPException(404, "Reading not found")
+    d = _pdate(payload.reading_date)
+    if d and d != r.reading_date and db.query(MaintEbReading).filter_by(reading_date=d).first():
+        raise HTTPException(400, f"A reading for {d.isoformat()} already exists")
+    _apply_eb(r, payload)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/eb-readings/{reading_id}")
+def api_eb_delete(reading_id: int, user: Employee = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    _guard(db, user)
+    r = db.get(MaintEbReading, reading_id)
+    if not r:
+        raise HTTPException(404, "Reading not found")
+    db.delete(r); db.commit()
+    return {"ok": True}

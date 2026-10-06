@@ -1264,3 +1264,29 @@ class MaintHoliday(Base):
     holiday_date = Column(Date, nullable=False, unique=True)
     name = Column(String(200), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MaintEbReading(Base):
+    """Daily EB (electricity) demand-controller reading. Cumulative active/apparent
+    energy drive daily consumption; cost = daily kWh x rate_per_unit."""
+    __tablename__ = "maint_eb_readings"
+
+    id = Column(Integer, primary_key=True)
+    reading_date = Column(Date, nullable=False, unique=True)
+    reading_time = Column(String(8), nullable=True)
+    active_mwh = Column(Float, nullable=True)      # cumulative active energy (MWh)
+    apparent_mvah = Column(Float, nullable=True)   # cumulative apparent energy (MVAH)
+    rate_per_unit = Column(Float, nullable=False, default=9.0)   # Rs per kWh
+    md_kw = Column(Float, nullable=True)           # max demand kW
+    md_kva = Column(Float, nullable=True)          # max demand kVA
+    freq_hz = Column(Float, nullable=True)
+    v_ry = Column(Float, nullable=True)
+    v_yb = Column(Float, nullable=True)
+    v_br = Column(Float, nullable=True)
+    v_rn = Column(Float, nullable=True)
+    v_yn = Column(Float, nullable=True)
+    v_bn = Column(Float, nullable=True)
+    remarks = Column(Text, nullable=True)
+    entered_by = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -34,6 +34,9 @@
       <button @click="tab='pm'; loadPlans()"
               :class="tab==='pm' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">PM Due</button>
+      <button @click="tab='eb'; loadEb()"
+              :class="tab==='eb' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">EB / Power</button>
     </nav>
   </div>
 
@@ -592,6 +595,118 @@
     </div>
   </div>
 
+  <!-- ===================== EB / POWER ===================== -->
+  <div x-show="tab==='eb'" x-cloak>
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-5">
+      <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="display font-bold text-metfraa-ink" x-text="ebForm.id ? 'Edit EB reading' : 'New EB reading'"></h3>
+          <button x-show="ebForm.id" @click="newEb()" class="text-xs font-semibold text-metfraa-blue hover:underline">+ New</button>
+        </div>
+        <div class="space-y-3">
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="lbl-f">Date *</label><input type="date" x-model="ebForm.reading_date" class="inp" /></div>
+            <div><label class="lbl-f">Time</label><input type="time" x-model="ebForm.reading_time" class="inp" /></div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="lbl-f">Active energy (MWh)</label><input type="number" step="any" x-model.number="ebForm.active_mwh" class="inp" /></div>
+            <div><label class="lbl-f">Apparent energy (MVAH)</label><input type="number" step="any" x-model.number="ebForm.apparent_mvah" class="inp" /></div>
+          </div>
+          <div><label class="lbl-f">Rate (₹ / unit)</label><input type="number" step="any" x-model.number="ebForm.rate_per_unit" class="inp" placeholder="9" /></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="lbl-f">Max demand (kW)</label><input type="number" step="any" x-model.number="ebForm.md_kw" class="inp" /></div>
+            <div><label class="lbl-f">Max demand (kVA)</label><input type="number" step="any" x-model.number="ebForm.md_kva" class="inp" /></div>
+          </div>
+          <div><label class="lbl-f">Frequency (Hz)</label><input type="number" step="any" x-model.number="ebForm.freq_hz" class="inp" /></div>
+          <div>
+            <label class="lbl-f">Line voltage (R-Y / Y-B / B-R)</label>
+            <div class="grid grid-cols-3 gap-2">
+              <input type="number" step="any" x-model.number="ebForm.v_ry" class="inp" placeholder="R-Y" />
+              <input type="number" step="any" x-model.number="ebForm.v_yb" class="inp" placeholder="Y-B" />
+              <input type="number" step="any" x-model.number="ebForm.v_br" class="inp" placeholder="B-R" />
+            </div>
+          </div>
+          <div>
+            <label class="lbl-f">Phase voltage (R-N / Y-N / B-N)</label>
+            <div class="grid grid-cols-3 gap-2">
+              <input type="number" step="any" x-model.number="ebForm.v_rn" class="inp" placeholder="R-N" />
+              <input type="number" step="any" x-model.number="ebForm.v_yn" class="inp" placeholder="Y-N" />
+              <input type="number" step="any" x-model.number="ebForm.v_bn" class="inp" placeholder="B-N" />
+            </div>
+          </div>
+          <div><label class="lbl-f">Remarks</label><input type="text" x-model="ebForm.remarks" class="inp" /></div>
+          <button @click="saveEb()" :disabled="ebSaving" class="w-full bg-metfraa-blue hover:bg-metfraa-blue-dark text-white font-semibold px-4 py-2.5 rounded-lg disabled:opacity-50">
+            <span x-show="!ebSaving" x-text="ebForm.id ? 'Update reading' : 'Save reading'"></span><span x-show="ebSaving">Saving…</span>
+          </button>
+          <p class="text-[11px] text-metfraa-gray-500">Daily consumption, cost (units × rate), cumulative cost and power factor are computed automatically.</p>
+        </div>
+      </div>
+      <div class="lg:col-span-3 space-y-5">
+        <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+          <div class="px-5 py-3 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Monthly totals</h3></div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
+                <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Month</th>
+                <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Days</th>
+                <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Units (kWh)</th>
+                <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">kVAh</th>
+                <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Max kW</th>
+                <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Cost ₹</th>
+              </tr></thead>
+              <tbody>
+                <template x-for="m in ebMonthly" :key="m.month">
+                  <tr class="border-b border-metfraa-gray-100">
+                    <td class="px-3 py-2 mono font-semibold" x-text="m.month"></td>
+                    <td class="px-3 py-2 text-right mono" x-text="m.days"></td>
+                    <td class="px-3 py-2 text-right mono" x-text="m.kwh.toLocaleString('en-IN')"></td>
+                    <td class="px-3 py-2 text-right mono text-metfraa-gray-500" x-text="m.kvah.toLocaleString('en-IN')"></td>
+                    <td class="px-3 py-2 text-right mono text-metfraa-gray-500" x-text="m.md_kw||'—'"></td>
+                    <td class="px-3 py-2 text-right mono font-semibold">₹<span x-text="m.cost.toLocaleString('en-IN')"></span></td>
+                  </tr>
+                </template>
+                <tr x-show="ebMonthly.length===0"><td colspan="6" class="px-3 py-6 text-center text-metfraa-gray-500 text-sm">No readings yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+          <div class="px-5 py-3 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Daily readings</h3></div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
+                <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Date</th>
+                <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Active MWh</th>
+                <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Units (kWh)</th>
+                <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">PF</th>
+                <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Cost ₹</th>
+                <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Cum ₹</th>
+                <th class="px-3 py-2"></th>
+              </tr></thead>
+              <tbody>
+                <template x-for="e in ebReadings" :key="e.id">
+                  <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
+                    <td class="px-3 py-2 mono" x-text="e.reading_date"></td>
+                    <td class="px-3 py-2 text-right mono" x-text="e.active_mwh!=null ? e.active_mwh : '—'"></td>
+                    <td class="px-3 py-2 text-right mono font-semibold" x-text="e.daily_kwh!=null ? e.daily_kwh.toLocaleString('en-IN') : '—'"></td>
+                    <td class="px-3 py-2 text-right mono text-metfraa-gray-500" x-text="e.power_factor!=null ? e.power_factor : '—'"></td>
+                    <td class="px-3 py-2 text-right mono" x-text="e.daily_cost!=null ? '₹'+e.daily_cost.toLocaleString('en-IN') : '—'"></td>
+                    <td class="px-3 py-2 text-right mono text-metfraa-gray-500">₹<span x-text="(e.cumulative_cost||0).toLocaleString('en-IN')"></span></td>
+                    <td class="px-3 py-2 text-right whitespace-nowrap">
+                      <button @click="editEb(e)" class="text-xs font-semibold text-metfraa-blue hover:underline">Edit</button>
+                      <button @click="deleteEb(e)" class="text-xs font-semibold text-red-600 hover:underline ml-3">Delete</button>
+                    </td>
+                  </tr>
+                </template>
+                <tr x-show="ebReadings.length===0"><td colspan="7" class="px-3 py-8 text-center text-metfraa-gray-500 text-sm">No EB readings yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== HOLIDAYS ===================== -->
   <div x-show="holidaysModal" x-cloak @click.self="holidaysModal=false" class="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto">
     <div class="bg-white rounded-xl shadow-2xl max-w-md w-full my-8">
@@ -783,6 +898,7 @@ function maintApp() {
     ],
     dash: {},
     logSaving: false,
+    ebReadings: [], ebMonthly: [], ebForm: {}, ebSaving: false,
     pdfUrl: '', pdfTitle: '', pdfUploadUrl: '', pdfUploading: false,
 
     async init() {
@@ -790,6 +906,7 @@ function maintApp() {
       this.rForm = this.blankReading();
       await this.loadPlans();
       await this.loadDashboard();
+      this.ebForm = this.blankEb();
       await this.loadMeta();
       await this.loadAssets();
       await this.loadEvents();
@@ -1068,6 +1185,46 @@ function maintApp() {
         toast('Excel log saved to OneDrive', 'success');
         if (data.url) window.open(data.url, '_blank');
       } catch (e) { toast(e.message, 'error'); } finally { this.logSaving = false; }
+    },
+
+    // ----- EB / power -----
+    blankEb() { return { id: null, reading_date: new Date().toISOString().slice(0,10), reading_time: '', active_mwh: null, apparent_mvah: null, rate_per_unit: 9, md_kw: null, md_kva: null, freq_hz: null, v_ry: null, v_yb: null, v_br: null, v_rn: null, v_yn: null, v_bn: null, remarks: '' }; },
+    newEb() { this.ebForm = this.blankEb(); },
+    async loadEb() {
+      if (!this.ebForm.reading_date) this.ebForm = this.blankEb();
+      const [a, b] = await Promise.all([fetch('/maint/api/eb-readings'), fetch('/maint/api/eb-monthly')]);
+      if (a.ok) this.ebReadings = await a.json();
+      if (b.ok) this.ebMonthly = await b.json();
+    },
+    editEb(e) {
+      this.ebForm = { id: e.id, reading_date: e.reading_date, reading_time: e.reading_time || '',
+        active_mwh: e.active_mwh, apparent_mvah: e.apparent_mvah, rate_per_unit: e.rate_per_unit,
+        md_kw: e.md_kw, md_kva: e.md_kva, freq_hz: e.freq_hz, v_ry: e.v_ry, v_yb: e.v_yb, v_br: e.v_br,
+        v_rn: e.v_rn, v_yn: e.v_yn, v_bn: e.v_bn, remarks: e.remarks || '' };
+    },
+    async saveEb() {
+      if (!this.ebForm.reading_date) { toast('Date is required', 'error'); return; }
+      this.ebSaving = true;
+      try {
+        const p = { ...this.ebForm };
+        if (!p.reading_time) p.reading_time = null;
+        const url = this.ebForm.id ? `/maint/api/eb-readings/${this.ebForm.id}` : '/maint/api/eb-readings';
+        const res = await fetch(url, { method: this.ebForm.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Save failed');
+        toast(this.ebForm.id ? 'Reading updated' : 'Reading added', 'success');
+        this.newEb();
+        await this.loadEb();
+      } catch (e) { toast(e.message, 'error'); } finally { this.ebSaving = false; }
+    },
+    async deleteEb(e) {
+      if (!confirm('Delete this reading?')) return;
+      try {
+        const res = await fetch(`/maint/api/eb-readings/${e.id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        await this.loadEb();
+      } catch (e) { toast(e.message, 'error'); }
     },
     dtPct(h) { const arr = (this.dash.downtime_by_machine || []).map(m => m.hours); const max = Math.max(1, ...arr); return Math.round(h / max * 100); },
 
