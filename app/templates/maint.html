@@ -443,7 +443,7 @@
             <div><label class="lbl-f">Start</label><input type="time" x-model="rForm.start_time" class="inp" /></div>
             <div><label class="lbl-f">End</label><input type="time" x-model="rForm.end_time" class="inp" /></div>
           </div>
-          <template x-for="p in rParams" :key="p.code">
+          <template x-for="p in rInputParams" :key="p.code">
             <div>
               <label class="lbl-f"><span x-text="p.label"></span>
                 <span class="text-metfraa-gray-400 normal-case" x-show="p.unit" x-text="'(' + p.unit + ')'"></span>
@@ -1076,6 +1076,7 @@ function maintApp() {
     get rAsset() { return this.assets.find(a => String(a.id) === String(this.rAssetId)); },
     get rParams() { const a = this.rAsset; if (!a) return []; const t = this.typeById(a.type_id); return (t && t.reading_params) || []; },
     get rMonthlyParams() { return (this.rParams || []).filter(p => p.cumulative || p.agg === 'sum' || p.agg === 'avg' || (p.derived && p.avg_of)); },
+    get rInputParams() { return (this.rParams || []).filter(p => !p.derived); },
     get rMeter() { const a = this.rAsset; const t = a && this.typeById(a.type_id); return t && t.meter_param; },
     get meteredAssets() { return this.assets.filter(a => { const t = this.typeById(a.type_id); return t && t.reading_params && t.reading_params.length; }); },
     blankReading() { return { id: null, reading_date: new Date().toISOString().slice(0,10), start_time: '', end_time: '', values: {}, remarks: '' }; },

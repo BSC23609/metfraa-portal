@@ -27,7 +27,7 @@ TYPES = [
     {"key": "airless_spray", "name": "Airless spray", "meter_param": "meter_gallons",
      "reading_params": [
         {"code": "meter_gallons", "label": "Meter (gallons)", "unit": "gal", "cumulative": True},
-        {"code": "ltr", "label": "Litres", "unit": "L", "agg": "sum"},
+        {"code": "ltr", "label": "Litres (from gallons)", "unit": "L", "derived": True, "scale_of": "meter_gallons", "factor": 3.785412, "agg": "sum"},
         {"code": "working_pressure", "label": "Working pressure", "unit": "psi"}]},
     {"key": "dg_set", "name": "DG set", "meter_param": "engine_hrs_end",
      "reading_params": [
@@ -44,7 +44,8 @@ TYPES = [
         {"code": "rh_mtr", "label": "RH weld length", "unit": "m", "cumulative": True},
         {"code": "lh_time", "label": "LH weld time", "unit": "min", "cumulative": True},
         {"code": "rh_time", "label": "RH weld time", "unit": "min", "cumulative": True},
-        {"code": "avg_length", "label": "Avg weld length", "unit": "m", "derived": True, "avg_of": ["lh_mtr", "rh_mtr"]}]},
+        {"code": "avg_length", "label": "Avg weld length", "unit": "m", "derived": True, "avg_of": ["lh_mtr", "rh_mtr"]},
+        {"code": "avg_time", "label": "Avg weld time", "unit": "min", "derived": True, "avg_of": ["lh_time", "rh_time"]}]},
     {"key": "cnc_plasma", "name": "CNC plasma (event-only)", "reading_params": [], "meter_param": None},
 ]
 

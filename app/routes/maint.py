@@ -394,6 +394,9 @@ def _reading_compute(db: Session, asset_id: int):
                 hi, lo = p["diff_of"][0], p["diff_of"][1]
                 day[c] = (round(raw.get(hi) - raw.get(lo), 2)
                           if (raw.get(hi) is not None and raw.get(lo) is not None) else None)
+            elif p.get("scale_of"):
+                base = day.get(p["scale_of"])
+                day[c] = round(base * (p.get("factor") or 1), 2) if base is not None else None
             else:
                 day[c] = None
         for p in params:
