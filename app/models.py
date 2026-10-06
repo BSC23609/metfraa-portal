@@ -914,6 +914,17 @@ class PlantContractorAttendance(Base):
                                        name="uq_plant_contractor_day"),)
 
 
+class PlantDay(Base):
+    """Per-date flag: work | weekoff | holiday. On weekoff/holiday only OT is
+    paid (regular pay is zero) and that day's labour are stored with status 'O'."""
+    __tablename__ = "plant_day"
+
+    id = Column(Integer, primary_key=True)
+    att_date = Column(Date, nullable=False, unique=True, index=True)
+    day_type = Column(String(10), nullable=False, default="work")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 
 class PlantJob(Base):
     """Job master — a job the plant works on. Referenced by work-log lines so

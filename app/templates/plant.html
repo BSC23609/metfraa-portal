@@ -44,6 +44,16 @@
       </div>
     </div>
 
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4 mb-5 flex items-center gap-2 flex-wrap">
+      <span class="lbl mr-1">Day type</span>
+      <template x-for="opt in [['work','Working day'],['weekoff','Week off'],['holiday','Holiday']]" :key="opt[0]">
+        <button @click="dayType = opt[0]"
+          :class="dayType === opt[0] ? 'bg-metfraa-blue text-white' : 'bg-white ring-1 ring-metfraa-gray-300 text-metfraa-gray-600'"
+          class="px-4 py-2 rounded-lg text-sm font-bold" x-text="opt[1]"></button>
+      </template>
+      <span x-show="otOnly" class="text-xs text-amber-700 font-semibold ml-2">Only OT is paid on this day — enter OT hours / OT persons only; no regular pay.</span>
+    </div>
+
     <!-- Metfraa Team -->
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
       <div class="flex items-center justify-between mb-3">
@@ -71,7 +81,7 @@
                 <label class="flex items-center gap-1.5 text-xs text-metfraa-gray-500">
                   <input type="checkbox" x-model="l.ot" class="rounded border-metfraa-gray-300"> OT
                 </label>
-                <div class="flex gap-1">
+                <div class="flex gap-1" x-show="!otOnly">
                   <template x-for="opt in ['P','H','A']" :key="opt">
                     <button @click="l.status = opt"
                       :class="l.status === opt ? statusClass(opt) : 'bg-white ring-1 ring-metfraa-gray-300 text-metfraa-gray-500'"
@@ -120,11 +130,11 @@
           <div class="border-b border-metfraa-gray-50 pb-3">
             <div class="grid gap-2 items-center" style="grid-template-columns:repeat(24,minmax(0,1fr))">
               <div class="col-span-24 md:col-span-6 font-semibold" x-text="c.name"></div>
-              <div class="col-span-8 md:col-span-3 flex flex-col items-center">
+              <div class="col-span-8 md:col-span-3 flex flex-col items-center" x-show="!otOnly">
                 <span class="lbl md:hidden mb-1">Full day present · Sk</span>
                 <input type="number" min="0" x-model.number="c.skilled" class="w-20 rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
               </div>
-              <div class="col-span-8 md:col-span-3 flex flex-col items-center">
+              <div class="col-span-8 md:col-span-3 flex flex-col items-center" x-show="!otOnly">
                 <span class="lbl md:hidden mb-1">Full day present · Hp</span>
                 <input type="number" min="0" x-model.number="c.helper" class="w-20 rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
               </div>
@@ -909,7 +919,7 @@
 <script>
 function plantApp() {
   return {
-    tab: 'day', day: new Date().toISOString().slice(0, 10),
+    tab: 'day', day: new Date().toISOString().slice(0, 10), dayType: 'work',
     labour: [], contractors: [], saved: false, saving: false, submitting: false,
     labourWork: [], contractorWork: [], jobs: [], jobsAll: [], showInactiveJobs: false,
     dbStart: new Date(Date.now()-29*864e5).toISOString().slice(0,10),
@@ -935,8 +945,9 @@ function plantApp() {
     addLabourWork() { this.labourWork.push({ job_id:null, nature_of_work:'', skilled:0, helper:0, qty_nos:'', weight_kg:'', remarks:'' }); },
     addContractorWork() { this.contractorWork.push({ contractor_id:null, job_id:null, nature_of_work:'', workers:0, qty_nos:'', weight_kg:'', remarks:'' }); },
 
+    get otOnly() { return this.dayType !== 'work'; },
     labRegular(l) {
-      // full day = full salary; half = 0.5; absent = 0
+      if (this.otOnly) return 0;
       const sal = +l.per_day_salary || 0;
       if (l.status === 'P') return sal;
       if (l.status === 'H') return sal * 0.5;
@@ -951,7 +962,7 @@ function plantApp() {
     conRate(c) { const wh = +c.working_hours || 8; return (+c.per_day_rate || 0) / wh; },
     conOtAmt(c) { return c.ot ? (+c.ot_persons || 0) * this.conRate(c) * (+c.ot_hours || 0) : 0; },
     conRegular(c) {
-      // man-days = full-day present + 0.5*(half-day counts); absent excluded
+      if (this.otOnly) return 0;
       const present = (+c.skilled||0)+(+c.helper||0);
       const half = (+c.half1_skilled||0)+(+c.half1_helper||0)+(+c.half2_skilled||0)+(+c.half2_helper||0);
       const md = present + 0.5*half;
@@ -962,7 +973,7 @@ function plantApp() {
 
     statusClass(o) {
       return { P: 'bg-green-600 text-white', H: 'bg-amber-500 text-white',
-               A: 'bg-red-500 text-white' }[o];
+               A: 'bg-red-500 text-white', O: 'bg-blue-600 text-white' }[o];
     },
 
     init() { this.loadDay(); },
@@ -984,12 +995,13 @@ function plantApp() {
       if (!r.ok) return;
       const d = await r.json();
       this.labour = d.labour; this.contractors = d.contractors; this.saved = d.saved;
+      this.dayType = d.day_type || 'work';
       this.jobs = d.jobs || [];
       this.labourWork = d.labour_worklog || [];
       this.contractorWork = d.contractor_worklog || [];
     },
     _dayBody() {
-      return { date: this.day,
+      return { date: this.day, day_type: this.dayType,
         labour: this.labour.map(l => ({ id: l.id, status: l.status,
           half_part: l.status === 'H' ? (l.half_part || null) : null,
           ot: !!l.ot, ot_hours: +l.ot_hours || 0 })),
@@ -1021,7 +1033,7 @@ function plantApp() {
       try {
         const r = await fetch('/plant/api/day', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ date: this.day,
+          body: JSON.stringify({ date: this.day, day_type: this.dayType,
             labour: this.labour.map(l => ({ id: l.id, status: l.status,
               half_part: l.status === 'H' ? (l.half_part || null) : null,
               ot: !!l.ot, ot_hours: +l.ot_hours || 0 })),

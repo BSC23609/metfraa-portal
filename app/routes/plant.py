@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from ..access import get_access
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import (Employee, PlantContractor, PlantContractorAttendance,
+from ..models import (Employee, PlantContractor, PlantContractorAttendance, PlantDay,
                       PlantContractorWorkLog, PlantJob, PlantLabour, PlantLabourAttendance,
                       PlantLabourWorkLog)
 from ..services import onedrive as _od
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/plant", tags=["plant"])
 log = logging.getLogger("plant")
 templates = Jinja2Templates(directory="app/templates")
 
-VALID = {"P", "A", "H"}
+VALID = {"P", "A", "H", "O"}   # O = off-day OT (weekoff/holiday)
 
 
 def _ot_hours(v):
@@ -94,6 +94,7 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
     lwh = {l.id: l.working_hours for l in labour}
     return {
         "date": d.isoformat(),
+        "day_type": _day_type(db, d),
         "labour": [{"id": l.id, "name": l.name, "designation": l.designation or "",
                     "status": lmarks.get(l.id, "P"),
                     "half_part": (lrec[l.id].half_part if l.id in lrec else None),
@@ -151,9 +152,24 @@ async def api_save_day(request: Request, user: Employee = Depends(get_current_us
     return _save_day(db, b, user)
 
 
+def _day_type(db: Session, d) -> str:
+    pd = db.query(PlantDay).filter(PlantDay.att_date == d).first()
+    return pd.day_type if pd else "work"
+
+
 def _save_day(db: Session, b: dict, user: Employee) -> dict:
     d = _parse_date(b.get("date"))
     now = datetime.utcnow()
+
+    day_type = (b.get("day_type") or "work").lower()
+    if day_type not in ("work", "weekoff", "holiday"):
+        day_type = "work"
+    ot_only = day_type in ("weekoff", "holiday")   # only OT paid, no regular
+    _pd = db.query(PlantDay).filter(PlantDay.att_date == d).first()
+    if _pd:
+        _pd.day_type = day_type
+    else:
+        db.add(PlantDay(att_date=d, day_type=day_type))
 
     valid_labour = {row[0] for row in db.query(PlantLabour.id).all()}
     valid_contr = {row[0] for row in db.query(PlantContractor.id).all()}
@@ -162,7 +178,7 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
     lmap = {l.id: l for l in db.query(PlantLabour).all()}
     for row in (b.get("labour") or []):
         lid = row.get("id")
-        st = (row.get("status") or "P").upper()
+        st = "O" if ot_only else (row.get("status") or "P").upper()
         if lid not in valid_labour:
             continue
         if st not in VALID:
@@ -208,6 +224,8 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
         ab_sk, ab_hp = _int(row.get("absent_skilled")), _int(row.get("absent_helper"))
         h1_sk, h1_hp = _int(row.get("half1_skilled")), _int(row.get("half1_helper"))
         h2_sk, h2_hp = _int(row.get("half2_skilled")), _int(row.get("half2_helper"))
+        if ot_only:
+            sk = hp = ab_sk = ab_hp = h1_sk = h1_hp = h2_sk = h2_hp = 0
         ab_rem = (row.get("absent_remarks") or "").strip() or None
         h1_rem = (row.get("half1_remarks") or "").strip() or None
         h2_rem = (row.get("half2_remarks") or "").strip() or None
