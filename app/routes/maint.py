@@ -360,13 +360,108 @@ def _recompute_readings(db: Session, asset_id: int, meter_param):
             prev = m
 
 
+def _reading_compute(db: Session, asset_id: int):
+    """Enrich readings with a per-param PER-DAY value: diff-from-previous for
+    cumulative params, within-row difference for derived diff_of params, mean of
+    per-day values for derived avg_of params, and the raw value otherwise."""
+    a = db.get(MaintAsset, asset_id)
+    params = ((a.machine_type.reading_params if (a and a.machine_type) else []) or [])
+    rows = db.query(MaintReading).filter(MaintReading.asset_id == asset_id).all()
+    rows.sort(key=lambda r: (r.reading_date, r.start_time or "", r.id))
+    prev = {}
+    out = []
+    for r in rows:
+        raw = {k: _num(v) for k, v in (r.values or {}).items()}
+        day = {}
+        for p in params:                      # non-derived first
+            if p.get("derived"):
+                continue
+            c = p["code"]
+            v = raw.get(c)
+            if p.get("cumulative"):
+                pv = prev.get(c)
+                day[c] = round(v - pv, 2) if (v is not None and pv is not None) else None
+            else:
+                day[c] = v
+        for p in params:                      # derived after
+            if not p.get("derived"):
+                continue
+            c = p["code"]
+            if p.get("avg_of"):
+                vv = [day.get(x) for x in p["avg_of"] if day.get(x) is not None]
+                day[c] = round(sum(vv) / len(vv), 2) if vv else None
+            elif p.get("diff_of"):
+                hi, lo = p["diff_of"][0], p["diff_of"][1]
+                day[c] = (round(raw.get(hi) - raw.get(lo), 2)
+                          if (raw.get(hi) is not None and raw.get(lo) is not None) else None)
+            else:
+                day[c] = None
+        for p in params:
+            if p.get("cumulative") and raw.get(p["code"]) is not None:
+                prev[p["code"]] = raw[p["code"]]
+        out.append({"id": r.id, "asset_id": r.asset_id,
+                    "reading_date": _iso(r.reading_date), "start_time": r.start_time,
+                    "end_time": r.end_time, "values": r.values or {}, "day": day,
+                    "remarks": r.remarks, "entered_by": r.entered_by})
+    return out, params
+
+
+def _agg_mode(p):
+    if p.get("cumulative"):
+        return "sum"
+    if p.get("agg") in ("sum", "avg"):
+        return p["agg"]
+    if p.get("derived") and p.get("avg_of"):
+        return "avg_of"
+    return None
+
+
 @router.get("/api/readings")
 def api_readings(asset_id: int, user: Employee = Depends(get_current_user),
                  db: Session = Depends(get_db)):
     _guard(db, user)
-    rows = db.query(MaintReading).filter(MaintReading.asset_id == asset_id).all()
-    rows.sort(key=lambda r: (r.reading_date, r.start_time or "", r.id), reverse=True)
-    return [_reading_json(r) for r in rows]
+    out, _ = _reading_compute(db, asset_id)
+    return list(reversed(out))
+
+
+@router.get("/api/readings/monthly")
+def api_readings_monthly(asset_id: int, user: Employee = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    _guard(db, user)
+    from collections import OrderedDict
+    out, params = _reading_compute(db, asset_id)
+    months = OrderedDict()
+    for r in out:
+        key = (r["reading_date"] or "")[:7]
+        if not key:
+            continue
+        g = months.setdefault(key, {"days": 0, "sum": {}, "n": {}})
+        g["days"] += 1
+        for p in params:
+            if _agg_mode(p) in (None, "avg_of"):
+                continue
+            c = p["code"]
+            dv = r["day"].get(c)
+            if dv is None:
+                continue
+            g["sum"][c] = g["sum"].get(c, 0.0) + dv
+            g["n"][c] = g["n"].get(c, 0) + 1
+    result = []
+    for k, g in reversed(list(months.items())):
+        vals = {}
+        for p in params:
+            mode = _agg_mode(p)
+            c = p["code"]
+            if mode == "sum" and c in g["sum"]:
+                vals[c] = round(g["sum"][c], 2)
+            elif mode == "avg" and g["n"].get(c):
+                vals[c] = round(g["sum"][c] / g["n"][c], 2)
+            elif mode == "avg_of":
+                comps = [g["sum"].get(x) for x in p["avg_of"] if x in g["sum"]]
+                if comps:
+                    vals[c] = round(sum(comps) / len(comps), 2)
+        result.append({"month": k, "days": g["days"], "values": vals})
+    return result
 
 
 @router.post("/api/readings")

@@ -409,6 +409,28 @@
       <p x-show="rAssetId && rParams.length===0" class="text-sm text-metfraa-gray-500 mt-2">This machine type has no reading fields.</p>
     </div>
 
+    <div x-show="rAssetId && rMonthlyParams.length && rMonthly.length" class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden mb-5">
+      <div class="px-5 py-3 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Monthly totals</h3></div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Month</th>
+            <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Days</th>
+            <template x-for="p in rMonthlyParams" :key="p.code"><th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500" x-text="p.label"></th></template>
+          </tr></thead>
+          <tbody>
+            <template x-for="m in rMonthly" :key="m.month">
+              <tr class="border-b border-metfraa-gray-100">
+                <td class="px-3 py-2 mono font-semibold" x-text="m.month"></td>
+                <td class="px-3 py-2 text-right mono" x-text="m.days"></td>
+                <template x-for="p in rMonthlyParams" :key="p.code"><td class="px-3 py-2 text-right mono" x-text="(m.values && m.values[p.code]!=null) ? m.values[p.code].toLocaleString('en-IN') : '—'"></td></template>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <div x-show="rAssetId && rParams.length" class="grid grid-cols-1 lg:grid-cols-5 gap-5">
       <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-5">
         <div class="flex items-center justify-between mb-4">
@@ -442,8 +464,7 @@
             <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
               <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Date</th>
               <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Time</th>
-              <template x-for="p in rParams" :key="p.code"><th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500" x-text="p.label"></th></template>
-              <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Diff</th>
+              <template x-for="p in rParams" :key="p.code"><th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500" x-text="p.label + (p.cumulative ? ' /day' : '')"></th></template>
               <th class="px-3 py-2"></th>
             </tr></thead>
             <tbody>
@@ -451,15 +472,14 @@
                 <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
                   <td class="px-3 py-2 mono" x-text="rd.reading_date"></td>
                   <td class="px-3 py-2 mono text-metfraa-gray-500" x-text="(rd.start_time||'') + (rd.end_time ? '–'+rd.end_time : '')"></td>
-                  <template x-for="p in rParams" :key="p.code"><td class="px-3 py-2 text-right mono" x-text="(rd.values && rd.values[p.code]!=null) ? rd.values[p.code] : '—'"></td></template>
-                  <td class="px-3 py-2 text-right mono font-semibold" x-text="rd.diff!=null ? rd.diff : '—'"></td>
+                  <template x-for="p in rParams" :key="p.code"><td class="px-3 py-2 text-right mono" :class="p.cumulative||p.derived ? 'font-semibold' : 'text-metfraa-gray-500'" x-text="(rd.day && rd.day[p.code]!=null) ? rd.day[p.code].toLocaleString('en-IN') : '—'"></td></template>
                   <td class="px-3 py-2 text-right whitespace-nowrap">
                     <button @click="editReading(rd)" class="text-xs font-semibold text-metfraa-blue hover:underline">Edit</button>
                     <button @click="deleteReading(rd)" class="text-xs font-semibold text-red-600 hover:underline ml-3">Delete</button>
                   </td>
                 </tr>
               </template>
-              <tr x-show="readings.length===0"><td :colspan="rParams.length+4" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No readings yet for this machine.</td></tr>
+              <tr x-show="readings.length===0"><td :colspan="rParams.length+3" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No readings yet for this machine.</td></tr>
             </tbody>
           </table>
         </div>
@@ -888,7 +908,7 @@ function maintApp() {
     form: {},
     events: [], eForm: {}, eSaving: false,
     bStatus: '', bAsset: '',
-    readings: [], rAssetId: '', rForm: {}, rSaving: false,
+    readings: [], rMonthly: [], rAssetId: '', rForm: {}, rSaving: false,
     pmPlans: [], pmForm: {}, pmModal: false, pmSaving: false, pmDueOnly: false,
     holidays: [], holidaysModal: false, hForm: { holiday_date: '', name: '' },
     quarterGroups: [
@@ -1055,11 +1075,18 @@ function maintApp() {
     typeById(id) { return this.meta.types.find(t => String(t.id) === String(id)); },
     get rAsset() { return this.assets.find(a => String(a.id) === String(this.rAssetId)); },
     get rParams() { const a = this.rAsset; if (!a) return []; const t = this.typeById(a.type_id); return (t && t.reading_params) || []; },
+    get rMonthlyParams() { return (this.rParams || []).filter(p => p.cumulative || p.agg === 'sum' || p.agg === 'avg' || (p.derived && p.avg_of)); },
     get rMeter() { const a = this.rAsset; const t = a && this.typeById(a.type_id); return t && t.meter_param; },
     get meteredAssets() { return this.assets.filter(a => { const t = this.typeById(a.type_id); return t && t.reading_params && t.reading_params.length; }); },
     blankReading() { return { id: null, reading_date: new Date().toISOString().slice(0,10), start_time: '', end_time: '', values: {}, remarks: '' }; },
-    async onPickAsset() { this.rForm = this.blankReading(); this.readings = []; if (this.rAssetId) await this.loadReadings(); },
-    async loadReadings() { const r = await fetch(`/maint/api/readings?asset_id=${this.rAssetId}`); if (r.ok) this.readings = await r.json(); },
+    async onPickAsset() { this.rForm = this.blankReading(); this.readings = []; this.rMonthly = []; if (this.rAssetId) await this.loadReadings(); },
+    async loadReadings() {
+      const [a, b] = await Promise.all([
+        fetch(`/maint/api/readings?asset_id=${this.rAssetId}`),
+        fetch(`/maint/api/readings/monthly?asset_id=${this.rAssetId}`)]);
+      if (a.ok) this.readings = await a.json();
+      if (b.ok) this.rMonthly = await b.json();
+    },
     newReading() { this.rForm = this.blankReading(); },
     editReading(rd) {
       this.rForm = { id: rd.id, reading_date: rd.reading_date, start_time: rd.start_time || '',
