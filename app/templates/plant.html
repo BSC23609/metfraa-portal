@@ -919,7 +919,7 @@
 <script>
 function plantApp() {
   return {
-    tab: 'day', day: new Date().toISOString().slice(0, 10), dayType: 'work',
+    tab: 'day', day: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })(), dayType: 'work',
     labour: [], contractors: [], saved: false, saving: false, submitting: false,
     labourWork: [], contractorWork: [], jobs: [], jobsAll: [], showInactiveJobs: false,
     dbStart: new Date(Date.now()-29*864e5).toISOString().slice(0,10),
@@ -1015,7 +1015,19 @@ function plantApp() {
         labour_worklog: this.labourWork,
         contractor_worklog: this.contractorWork };
     },
+    _confirmDate(isLock) {
+      const dt = new Date(this.day + 'T00:00:00');
+      const label = dt.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      const dtypes = { work: 'Working day', weekoff: 'Week off', holiday: 'Holiday' };
+      const msg = (isLock ? '⚠ SUBMIT & LOCK this entry for:' : 'Save this entry for:')
+        + '\n\n        ' + label + '\n        (' + (dtypes[this.dayType] || this.dayType) + ')\n\n'
+        + (isLock ? 'The date CANNOT be changed after locking.\n\n' : '')
+        + 'Is this the correct date?';
+      return confirm(msg);
+    },
+
     async submitDay() {
+      if (!this._confirmDate(true)) return;
       this.submitting = true;
       try {
         const r = await fetch('/plant/api/day/submit', {
@@ -1029,6 +1041,7 @@ function plantApp() {
       } finally { this.submitting = false; }
     },
     async saveDay() {
+      if (!this._confirmDate(false)) return;
       this.saving = true;
       try {
         const r = await fetch('/plant/api/day', {
