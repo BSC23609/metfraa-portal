@@ -360,6 +360,21 @@ def _recompute_readings(db: Session, asset_id: int, meter_param):
             prev = m
 
 
+def _clock_minutes(start, end):
+    """Minutes between two HH:MM clock strings (crosses midnight if end < start)."""
+    def _m(s):
+        try:
+            h, mi = str(s).split(":")[:2]
+            return int(h) * 60 + int(mi)
+        except Exception:
+            return None
+    a, b = _m(start), _m(end)
+    if a is None or b is None:
+        return None
+    d = b - a
+    return d + 1440 if d < 0 else d
+
+
 def _reading_compute(db: Session, asset_id: int):
     """Enrich readings with a per-param PER-DAY value: diff-from-previous for
     cumulative params, within-row difference for derived diff_of params, mean of
@@ -397,6 +412,8 @@ def _reading_compute(db: Session, asset_id: int):
             elif p.get("scale_of"):
                 base = day.get(p["scale_of"])
                 day[c] = round(base * (p.get("factor") or 1), 2) if base is not None else None
+            elif p.get("duration"):
+                day[c] = _clock_minutes(r.start_time, r.end_time)
             else:
                 day[c] = None
         for p in params:

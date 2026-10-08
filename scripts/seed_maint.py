@@ -33,7 +33,7 @@ TYPES = [
      "reading_params": [
         {"code": "engine_hrs_start", "label": "Engine hrs (start)", "unit": "hrs"},
         {"code": "engine_hrs_end", "label": "Engine hrs (end)", "unit": "hrs"},
-        {"code": "run_time", "label": "Run time", "unit": "h", "derived": True, "diff_of": ["engine_hrs_end", "engine_hrs_start"], "agg": "sum", "format": "hhmm"},
+        {"code": "run_time", "label": "Run time", "unit": "min", "derived": True, "duration": True, "agg": "sum", "format": "minutes"},
         {"code": "diesel_used", "label": "Diesel used", "unit": "L", "agg": "sum"},
         {"code": "kwh_start", "label": "kWh (start)", "unit": "kWh"},
         {"code": "kwh_end", "label": "kWh (end)", "unit": "kWh"},
