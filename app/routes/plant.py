@@ -224,8 +224,6 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
         ab_sk, ab_hp = _int(row.get("absent_skilled")), _int(row.get("absent_helper"))
         h1_sk, h1_hp = _int(row.get("half1_skilled")), _int(row.get("half1_helper"))
         h2_sk, h2_hp = _int(row.get("half2_skilled")), _int(row.get("half2_helper"))
-        if ot_only:
-            sk = hp = ab_sk = ab_hp = h1_sk = h1_hp = h2_sk = h2_hp = 0
         ab_rem = (row.get("absent_remarks") or "").strip() or None
         h1_rem = (row.get("half1_remarks") or "").strip() or None
         h2_rem = (row.get("half2_remarks") or "").strip() or None

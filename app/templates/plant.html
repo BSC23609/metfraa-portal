@@ -51,7 +51,7 @@
           :class="dayType === opt[0] ? 'bg-metfraa-blue text-white' : 'bg-white ring-1 ring-metfraa-gray-300 text-metfraa-gray-600'"
           class="px-4 py-2 rounded-lg text-sm font-bold" x-text="opt[1]"></button>
       </template>
-      <span x-show="otOnly" class="text-xs text-amber-700 font-semibold ml-2">Only OT is paid on this day — enter OT hours / OT persons only; no regular pay.</span>
+      <span x-show="otOnly" class="text-xs text-amber-700 font-semibold ml-2">Week-off / holiday: the Metfraa Team is paid OT only (no regular). Contractor man-days are still counted as regular.</span>
     </div>
 
     <!-- Metfraa Team -->
@@ -133,14 +133,12 @@
 
               <div class="flex md:block items-center justify-between mb-2 md:mb-0">
                 <span class="lbl md:hidden">Present · Sk</span>
-                <input x-show="!otOnly" type="number" min="0" x-model.number="c.skilled" class="w-20 md:w-full rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
-                <span x-show="otOnly" class="hidden md:block text-center text-metfraa-gray-300">—</span>
+                <input type="number" min="0" x-model.number="c.skilled" class="w-20 md:w-full rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
               </div>
 
               <div class="flex md:block items-center justify-between mb-2 md:mb-0">
                 <span class="lbl md:hidden">Present · Hp</span>
-                <input x-show="!otOnly" type="number" min="0" x-model.number="c.helper" class="w-20 md:w-full rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
-                <span x-show="otOnly" class="hidden md:block text-center text-metfraa-gray-300">—</span>
+                <input type="number" min="0" x-model.number="c.helper" class="w-20 md:w-full rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
               </div>
 
               <div class="flex md:block items-center justify-between mb-2 md:mb-0 md:text-center">
@@ -972,7 +970,6 @@ function plantApp() {
     conRate(c) { const wh = +c.working_hours || 8; return (+c.per_day_rate || 0) / wh; },
     conOtAmt(c) { return c.ot ? (+c.ot_persons || 0) * this.conRate(c) * (+c.ot_hours || 0) : 0; },
     conRegular(c) {
-      if (this.otOnly) return 0;
       const present = (+c.skilled||0)+(+c.helper||0);
       const half = (+c.half1_skilled||0)+(+c.half1_helper||0)+(+c.half2_skilled||0)+(+c.half2_helper||0);
       const md = present + 0.5*half;
