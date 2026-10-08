@@ -1083,7 +1083,10 @@ function maintApp() {
         const neg = v < 0;
         const total = p.format === 'minutes' ? Math.round(Math.abs(v)) : Math.round(Math.abs(v) * 60);
         const h = Math.floor(total / 60), m = total % 60;
-        return (neg ? '-' : '') + h + ':' + String(m).padStart(2, '0');
+        const s = p.format === 'minutes'
+          ? (h ? (m ? h + 'h ' + m + 'm' : h + 'h') : m + 'm')
+          : (h + ':' + String(m).padStart(2, '0'));
+        return (neg ? '-' : '') + s;
       }
       return v.toLocaleString('en-IN');
     },
