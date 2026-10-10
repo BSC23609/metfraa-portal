@@ -906,6 +906,7 @@ class PlantContractorAttendance(Base):
     ot_persons = Column(Integer, nullable=False, default=0)
     ot_hours = Column(Float, nullable=False, default=0)
     ot_amount = Column(Float, nullable=False, default=0)
+    ot_sessions = Column(JSON, nullable=True)   # [{persons, from, to, hours, amount}] clock-time OT sessions
     marked_by = Column(String(255), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

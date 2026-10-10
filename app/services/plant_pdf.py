@@ -453,3 +453,233 @@ def build_monthly_pdf(year: int, month: int, company, contractors,
     c.showPage()
     c.save()
     return buf.getvalue()
+
+
+# ============================================================================
+#  SPLIT MONTHLY REPORTS  —  Metfraa Team (26-25 cycle) and Contractors
+#  (calendar month, new Regular | Over Time | Totals layout)
+# ============================================================================
+
+def _team_cycle(year, month):
+    from datetime import date as _d, timedelta as _td
+    end = _d(year, month, 25)
+    py, pm = (year - 1, 12) if month == 1 else (year, month - 1)
+    start = _d(py, pm, 26)
+    days = []
+    cur = start
+    while cur <= end:
+        days.append(cur); cur += _td(days=1)
+    if start.year == end.year:
+        lab = f"{start.strftime('%d %b')} – {end.strftime('%d %b %Y')}"
+    else:
+        lab = f"{start.strftime('%d %b %Y')} – {end.strftime('%d %b %Y')}"
+    return start, end, days, lab
+
+
+def build_team_monthly_pdf(year, month, company, work_summary, total_weight) -> bytes:
+    """Metfraa Team only: 26th-prev .. 25th attendance grid + work summary."""
+    _ensure()
+    buf = io.BytesIO()
+    c = _canvas.Canvas(buf, pagesize=A4)
+    _start, _end, cycle_days, mlabel = _team_cycle(year, month)
+    ndays = len(cycle_days)
+    foot = "Metfraa · Plant Operations · Metfraa Team Report · " + mlabel
+    pg = [0]
+
+    def page_no():
+        pg[0] += 1
+        return str(pg[0])
+
+    y = _header(c, "Metfraa / Plant Operations", "Monthly — Metfraa Team Attendance", mlabel)
+    c.setFont(_f(), 9); c.setFillColor(_hx(MUTED))
+    c.drawString(L, y, "P = Present · H = Half · A = Absent · Sundays shaded (worked Sundays still "
+                       "count & pay). H counts as 0.5 day.")
+    y -= 20
+    nameW = 72
+    cw = (R - L - nameW - 168) / ndays
+    x0 = L + nameW
+    grid_end = x0 + ndays * cw
+    c_days = grid_end + 6; c_amt = grid_end + 32; c_oth = grid_end + 78; c_ota = grid_end + 100; c_tot = grid_end + 132
+
+    def grid_header():
+        c.setFont(_f(True), 6); c.setFillColor(_hx(INK))
+        c.drawString(L, y, "NAME")
+        for i, dt in enumerate(cycle_days):
+            c.drawCentredString(x0 + i * cw + cw / 2, y, str(dt.day))
+        c.setFont(_f(True), 6.5)
+        c.drawString(c_days, y, "Days"); c.drawString(c_amt, y, "Salary")
+        c.drawString(c_oth, y, "OT hr"); c.drawString(c_ota, y, "OT ₹"); c.drawString(c_tot, y, "Total")
+
+    grid_header()
+    y -= 4; c.setStrokeColor(_hx(LINE)); c.line(L, y, R, y); y -= 12
+    for r in company["rows"]:
+        if y < 60:
+            _footer(c, foot, page_no()); c.showPage()
+            y = _header(c, "Metfraa / Plant Operations", "Monthly — Metfraa Team Attendance", mlabel)
+            y -= 8; grid_header(); y -= 16
+        c.setFont(_f(), 7.5); c.setFillColor(_hx(INK))
+        c.drawString(L, y, _clip(c, r["name"], _f(), 7.5, nameW - 4))
+        for i, dt in enumerate(cycle_days):
+            wd = dt.weekday(); cx = x0 + i * cw
+            st = r["grid"].get(dt.isoformat())
+            if wd == 6:
+                c.setFillColor(_hx("#eef2f7")); c.rect(cx, y - 3, cw, 11, fill=1, stroke=0)
+            mark = st if st else "—"
+            col = STATUS_COL.get(st, MUTED)
+            c.setFont(_f(True), 6.5); c.setFillColor(_hx(col))
+            c.drawCentredString(cx + cw / 2, y, mark)
+        c.setFont(_f(True), 7.5); c.setFillColor(_hx(INK))
+        c.drawString(c_days, y, _fmt(r["days"], 1).rstrip("0").rstrip("."))
+        c.drawString(c_amt, y, _fmt(r["amount"], 0))
+        c.setFillColor(_hx(BLUE) if r["ot_hours"] else _hx(MUTED))
+        c.drawString(c_oth, y, _fmt(r["ot_hours"], 1).rstrip("0").rstrip(".") if r["ot_hours"] else "—")
+        c.drawString(c_ota, y, _fmt(r["ot_amount"], 0) if r["ot_amount"] else "—")
+        c.setFillColor(_hx(INK)); c.drawString(c_tot, y, _fmt(r["amount"] + r["ot_amount"], 0))
+        y -= 14
+    y -= 10
+    t = company["totals"]
+    if y < 90:
+        _footer(c, foot, page_no()); c.showPage()
+        y = _header(c, "Metfraa / Plant Operations", "Monthly — Metfraa Team Attendance", mlabel)
+    c.setFillColor(_hx(BLUE)); c.rect(L, y - 32, R - L, 36, fill=1, stroke=0)
+    c.setFont(_f(True), 9); c.setFillColor(_hx(WHITE))
+    c.drawString(L + 14, y - 13, "METFRAA TEAM TOTAL — SALARY + OT")
+    c.setFont(_f(True), 8)
+    c.drawString(L + 14, y - 25, f"{t['workers']} workers · {_fmt(t['present_days'],1).rstrip('0').rstrip('.')} "
+                                 f"present-days · OT {_fmt(t['ot_hours'],1).rstrip('0').rstrip('.')} hrs · OT ₹{_fmt(t['ot_amount'],0)}")
+    c.setFont(_f(True), 18); c.drawRightString(R - 14, y - 21, "₹ " + _fmt(t["grand"], 0))
+    _footer(c, foot, page_no())
+    c.showPage()
+
+    # work summary
+    y = _header(c, "Metfraa / Plant Operations", "Monthly — Work Summary (Team-wise)", mlabel)
+    y = _thead(c, y, [("Team", 0), ("Work lines", 200), ("Qty (Nos)", 300), ("Weight (Kg)", 410)])
+    c.setFont(_f(), 9)
+    for i, w in enumerate(work_summary):
+        rh = 18
+        if i % 2 == 0:
+            c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
+        c.setFillColor(_hx(INK)); c.setFont(_f(True), 9)
+        c.drawString(L + 8, y - 13, _clip(c, w["team"], _f(True), 9, 190))
+        c.setFont(_f(), 9)
+        c.drawString(L + 208, y - 13, str(w["work_lines"]))
+        c.drawString(L + 308, y - 13, _fmt(w["qty"]))
+        c.drawString(L + 418, y - 13, _fmt(w["weight"]))
+        y -= rh
+    if not work_summary:
+        c.setFillColor(_hx(MUTED)); c.setFont(_f(), 9); c.drawString(L + 8, y - 13, "No work logged."); y -= 18
+    y -= 10
+    c.setFillColor(_hx(BLUE)); c.rect(L, y - 24, R - L, 28, fill=1, stroke=0)
+    c.setFont(_f(True), 9); c.setFillColor(_hx(WHITE))
+    c.drawString(L + 14, y - 16, "TOTAL WEIGHT PRODUCED")
+    c.drawRightString(R - 14, y - 16, _fmt(total_weight) + " Kg")
+    _footer(c, foot, page_no())
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def build_contractor_monthly_pdf(year, month, contractors, mlabel) -> bytes:
+    """Contractors only (calendar month). One page per contractor in the
+    Regular | Over Time | Totals layout, with multiple OT sessions per date."""
+    _ensure()
+    buf = io.BytesIO()
+    c = _canvas.Canvas(buf, pagesize=A4)
+    foot = "Metfraa · Plant Operations · Contractor Report · " + mlabel
+    pg = [0]
+
+    def page_no():
+        pg[0] += 1
+        return str(pg[0])
+
+    # column x-offsets (from L)
+    X = {"date": 0, "pres": 70, "abs": 108, "half": 146, "rhrs": 188,
+         "otp": 250, "from": 298, "to": 342, "othr": 388, "thrs": 438, "amt": R - L}
+
+    def col_headers(y):
+        # group bands
+        c.setFont(_f(True), 6.5); c.setFillColor(_hx(MUTED))
+        c.drawCentredString(L + (X["pres"] + X["rhrs"] + 30) / 2, y + 20, "REGULAR")
+        c.drawCentredString(L + (X["otp"] + X["othr"] + 30) / 2, y + 20, "OVER TIME")
+        c.setFillColor(_hx(INK)); c.rect(L, y - 4, R - L, 18, fill=1, stroke=0)
+        c.setFont(_f(True), 6.5); c.setFillColor(_hx(WHITE))
+        hs = [("Date", "date"), ("Present", "pres"), ("Absent", "abs"), ("Half", "half"),
+              ("Reg Hrs", "rhrs"), ("OT ppl", "otp"), ("From", "from"), ("To", "to"),
+              ("OT Hrs", "othr")]
+        for label, key in hs:
+            c.drawString(L + 4 + X[key], y + 2, label)
+        c.drawRightString(L + X["thrs"] + 34, y + 2, "Tot Hrs")
+        c.drawRightString(R - 6, y + 2, "Amount")
+        return y - 4
+
+    def hm(hours):
+        total = int(round((hours or 0) * 60))
+        h, m = divmod(total, 60)
+        return (f"{h}h {m}m" if m else f"{h}h") if h else f"{m}m"
+
+    for ct in contractors:
+        y = _header(c, "Metfraa / Plant Operations", "Monthly — " + ct["name"], mlabel)
+        y = _section(c, y, "Daily headcount & overtime")
+        y -= 22          # room for the Regular / Over Time group band
+        y = col_headers(y); y -= 2
+        c.setStrokeColor(_hx(LINE)); c.line(L, y, R, y); y -= 2
+        ri = 0
+        for row in ct["rows"]:
+            sessions = row.get("ot_sessions") or []
+            nlines = max(1, len(sessions))
+            rh = 13 * nlines + 4
+            if y - rh < 80:
+                _footer(c, foot, page_no()); c.showPage()
+                y = _header(c, "Metfraa / Plant Operations", "Monthly — " + ct["name"] + " (cont.)", mlabel)
+                y = col_headers(y); y -= 4
+            if ri % 2 == 0:
+                c.setFillColor(_hx(SOFT)); c.rect(L, y - rh + 2, R - L, rh, fill=1, stroke=0)
+            ri += 1
+            top = y - 10
+            c.setFont(_f(), 8); c.setFillColor(_hx(INK))
+            c.drawString(L + 4 + X["date"], top, row["date"])
+            c.drawString(L + 4 + X["pres"], top, str(row["total"]))
+            c.drawString(L + 4 + X["abs"], top, str(row.get("absent", 0) or 0))
+            c.drawString(L + 4 + X["half"], top, str(row.get("half", 0) or 0))
+            c.drawString(L + 4 + X["rhrs"], top, hm(row.get("reg_hours", 0)))
+            if sessions:
+                for si, se in enumerate(sessions):
+                    ly = top - si * 13
+                    c.setFont(_f(), 8); c.setFillColor(_hx(INK))
+                    c.drawString(L + 4 + X["otp"], ly, str(se.get("persons") or 0))
+                    c.drawString(L + 4 + X["from"], ly, se.get("from") or "—")
+                    c.drawString(L + 4 + X["to"], ly, se.get("to") or "—")
+                    c.drawString(L + 4 + X["othr"], ly, hm(se.get("hours") or 0))
+            else:
+                c.setFillColor(_hx(MUTED)); c.setFont(_f(), 8)
+                c.drawString(L + 4 + X["otp"], top, "—")
+                c.drawString(L + 4 + X["from"], top, "—")
+                c.drawString(L + 4 + X["to"], top, "—")
+                c.drawString(L + 4 + X["othr"], top, "—")
+            c.setFont(_f(True), 8); c.setFillColor(_hx(INK))
+            c.drawRightString(L + X["thrs"] + 34, top, hm(row.get("day_hours", 0)))
+            c.drawRightString(R - 6, top, "₹" + _fmt(row.get("day_amount", 0), 0))
+            y -= rh
+        y -= 8
+        tt = ct["totals"]
+        if y < 80:
+            _footer(c, foot, page_no()); c.showPage()
+            y = _header(c, "Metfraa / Plant Operations", "Monthly — " + ct["name"], mlabel)
+        c.setFillColor(_hx(BLUE)); c.rect(L, y - 32, R - L, 36, fill=1, stroke=0)
+        c.setFont(_f(True), 9); c.setFillColor(_hx(WHITE))
+        c.drawString(L + 14, y - 13, ct["name"].upper() + " — CONTRACTOR TOTAL")
+        c.setFont(_f(True), 8)
+        c.drawString(L + 14, y - 25, f"{_fmt(tt['mandays'],1).rstrip('0').rstrip('.')} man-days · "
+                                     f"base ₹{_fmt(tt['base'],0)} · OT ₹{_fmt(tt['ot_amount'],0)}")
+        c.setFont(_f(True), 18); c.drawRightString(R - 14, y - 21, "₹ " + _fmt(tt["grand"], 0))
+        _footer(c, foot, page_no())
+        c.showPage()
+
+    if not contractors:
+        y = _header(c, "Metfraa / Plant Operations", "Monthly — Contractors", mlabel)
+        c.setFont(_f(), 10); c.setFillColor(_hx(MUTED))
+        c.drawString(L, y, "No contractor activity recorded for this month.")
+        _footer(c, foot, page_no()); c.showPage()
+
+    c.save()
+    return buf.getvalue()

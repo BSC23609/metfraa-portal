@@ -116,52 +116,42 @@
       <template x-if="!contractors.length">
         <div class="text-sm text-metfraa-gray-400 py-4">No contractors. Add them under Contractor Master.</div>
       </template>
-      <div x-show="contractors.length" class="space-y-2">
-        <div class="hidden md:grid gap-3 items-end lbl border-b border-metfraa-gray-100 pb-2" style="grid-template-columns:minmax(140px,1.8fr) 6rem 6rem 3.5rem 6rem 6rem minmax(7rem,1.2fr)">
-          <div>Team</div>
-          <div class="text-center">Present · Sk</div>
-          <div class="text-center">Present · Hp</div>
-          <div class="text-center">OT</div>
-          <div class="text-center">OT persons</div>
-          <div class="text-center">OT hours</div>
-          <div class="text-right">Amount</div>
-        </div>
+      <div x-show="contractors.length" class="space-y-3">
         <template x-for="c in contractors" :key="c.id">
-          <div class="border-b border-metfraa-gray-50 pb-3">
-            <div class="md:grid md:gap-3 md:items-center" style="grid-template-columns:minmax(140px,1.8fr) 6rem 6rem 3.5rem 6rem 6rem minmax(7rem,1.2fr)">
-              <div class="font-semibold text-metfraa-ink mb-2 md:mb-0" x-text="c.name"></div>
-
-              <div class="flex md:block items-center justify-between mb-2 md:mb-0">
-                <span class="lbl md:hidden">Present · Sk</span>
-                <input type="number" min="0" x-model.number="c.skilled" class="w-20 md:w-full rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
-              </div>
-
-              <div class="flex md:block items-center justify-between mb-2 md:mb-0">
-                <span class="lbl md:hidden">Present · Hp</span>
-                <input type="number" min="0" x-model.number="c.helper" class="w-20 md:w-full rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
-              </div>
-
-              <div class="flex md:block items-center justify-between mb-2 md:mb-0 md:text-center">
-                <span class="lbl md:hidden">OT</span>
-                <input type="checkbox" x-model="c.ot" class="rounded border-metfraa-gray-300 w-5 h-5 align-middle">
-              </div>
-
-              <div class="flex md:block items-center justify-between mb-2 md:mb-0">
-                <span class="lbl md:hidden">OT persons</span>
-                <input x-show="c.ot" type="number" min="0" x-model.number="c.ot_persons" class="w-20 md:w-full rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
-                <span x-show="!c.ot" class="hidden md:block text-center text-metfraa-gray-300">—</span>
-              </div>
-
-              <div class="flex md:block items-center justify-between mb-2 md:mb-0">
-                <span class="lbl md:hidden">OT hours</span>
-                <input x-show="c.ot" type="number" min="0" step="0.5" x-model.number="c.ot_hours" class="w-20 md:w-full rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5">
-                <span x-show="!c.ot" class="hidden md:block text-center text-metfraa-gray-300">—</span>
-              </div>
-
-              <div class="mt-2 md:mt-0 md:text-right">
+          <div class="border border-metfraa-gray-200 rounded-lg p-3">
+            <!-- header: name + present (Sk/Hp) + amount -->
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div class="font-semibold text-metfraa-ink flex-1 min-w-[140px]" x-text="c.name"></div>
+              <label class="flex items-center gap-1.5"><span class="lbl">Present · Sk</span>
+                <input type="number" min="0" x-model.number="c.skilled" class="w-16 rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5"></label>
+              <label class="flex items-center gap-1.5"><span class="lbl">Hp</span>
+                <input type="number" min="0" x-model.number="c.helper" class="w-16 rounded border-metfraa-gray-300 text-sm text-center px-2 py-1.5"></label>
+              <div class="text-right ml-auto">
                 <div class="font-semibold text-metfraa-blue" x-text="'₹ ' + conTotal(c).toLocaleString('en-IN',{maximumFractionDigits:0})"></div>
-                <div class="text-xs text-metfraa-gray-500" x-text="'Reg ₹' + conRegular(c).toLocaleString('en-IN',{maximumFractionDigits:0}) + (conOtAmt(c) ? (' + OT ₹' + conOtAmt(c).toLocaleString('en-IN',{maximumFractionDigits:0})) : '')"></div>
+                <div class="text-xs text-metfraa-gray-500" x-text="'Reg ₹' + conRegular(c).toLocaleString('en-IN',{maximumFractionDigits:0}) + (conOtAmt(c) ? (' + OT ₹' + Math.round(conOtAmt(c)).toLocaleString('en-IN')) : '')"></div>
               </div>
+            </div>
+            <!-- OT sessions (clock-time, multiple per day) -->
+            <div class="mt-2.5 bg-metfraa-gray-50 rounded-lg p-2.5">
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="lbl text-metfraa-ink">Overtime sessions</span>
+                <button type="button" @click="addConOt(c)" class="text-xs font-semibold text-metfraa-blue hover:underline">+ Add OT session</button>
+              </div>
+              <template x-if="!(c.ot_sessions && c.ot_sessions.length)">
+                <div class="text-xs text-metfraa-gray-400 pb-1">No overtime. Add a session (From–To) if they worked OT.</div>
+              </template>
+              <template x-for="(s, si) in (c.ot_sessions || [])" :key="si">
+                <div class="flex flex-wrap items-center gap-2 mb-1.5">
+                  <label class="flex items-center gap-1"><span class="lbl">Persons</span>
+                    <input type="number" min="0" x-model.number="s.persons" class="w-14 rounded border-metfraa-gray-300 text-sm text-center px-1.5 py-1"></label>
+                  <label class="flex items-center gap-1"><span class="lbl">From</span>
+                    <input type="time" x-model="s.from" class="rounded border-metfraa-gray-300 text-sm px-1.5 py-1"></label>
+                  <label class="flex items-center gap-1"><span class="lbl">To</span>
+                    <input type="time" x-model="s.to" class="rounded border-metfraa-gray-300 text-sm px-1.5 py-1"></label>
+                  <span class="text-xs font-semibold text-metfraa-gray-600" x-text="otSessLabel(c, s)"></span>
+                  <button type="button" @click="c.ot_sessions.splice(si, 1)" class="text-xs font-semibold text-red-600 hover:underline ml-auto">Remove</button>
+                </div>
+              </template>
             </div>
             <div class="mt-2">
               <button @click="c._exp = !c._exp" class="text-xs font-semibold text-metfraa-gray-500 hover:text-metfraa-blue"
@@ -709,29 +699,62 @@
   <div x-show="tab === 'monthly'">
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
       <div class="flex items-center gap-3 flex-wrap">
-        <div class="lbl">Cycle (month ending 25th)</div>
+        <div class="lbl">Report month</div>
         <input type="month" x-model="mPeriod" @change="loadMonthly()" class="rounded-lg border-metfraa-gray-300 text-sm">
-        <span x-show="m && m.cycle_label" class="text-sm font-semibold text-metfraa-ink" x-text="m ? m.cycle_label : ''"></span>
-        <div class="ml-auto flex gap-2">
-          <button @click="viewPdf('/plant/api/monthly/pdf' + (mPeriod ? ('?period=' + mPeriod) : ''), (m && m.cycle_label ? m.cycle_label : 'Monthly') + ' — report')"
-            :disabled="!m || !m.has_data"
-            class="px-5 py-2.5 rounded-lg ring-1 ring-metfraa-gray-300 text-metfraa-ink text-sm font-bold disabled:opacity-50">View PDF</button>
-          <button @click="submitMonthly()" :disabled="mSubmitting || mSending || !m || !m.has_data"
-            class="px-5 py-2.5 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold disabled:opacity-50">
-            <span x-text="mSubmitting ? 'Generating…' : 'Generate & Submit to OneDrive'"></span>
-          </button>
-          <button @click="sendMonthlyHR()" :disabled="mSubmitting || mSending || !m || !m.has_data"
-            class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
-            <span x-text="mSending ? 'Sending…' : 'Send to HR'"></span>
-          </button>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-4">
+        <!-- Metfraa Team — 26th to 25th cycle -->
+        <div class="rounded-lg ring-1 ring-metfraa-gray-200 p-4">
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <div class="font-bold text-metfraa-ink">Metfraa Team</div>
+              <div class="text-xs text-metfraa-gray-500" x-text="m && m.cycle_label ? ('Pay cycle · ' + m.cycle_label) : '26th – 25th cycle'"></div>
+            </div>
+            <div class="text-right">
+              <div class="font-bold text-metfraa-blue" x-text="m ? '₹ '+(m.company_total||0).toLocaleString('en-IN') : ''"></div>
+              <div class="text-xs text-metfraa-gray-500" x-text="m ? (m.company_workers+' workers') : ''"></div>
+            </div>
+          </div>
+          <div class="flex gap-2 mt-3 flex-wrap">
+            <button @click="viewReport('team')" :disabled="!m || !m.team_has_data"
+              class="px-3 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-metfraa-ink text-xs font-bold disabled:opacity-50">View PDF</button>
+            <button @click="reportAction('team','submit')" :disabled="mBusy || !m || !m.team_has_data"
+              class="px-3 py-2 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-xs font-bold disabled:opacity-50">
+              <span x-text="mBusy==='team-submit' ? 'Generating…' : 'Submit to OneDrive'"></span></button>
+            <button @click="reportAction('team','send')" :disabled="mBusy || !m || !m.team_has_data"
+              class="px-3 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold disabled:opacity-50">
+              <span x-text="mBusy==='team-send' ? 'Sending…' : 'Send to HR'"></span></button>
+          </div>
+        </div>
+        <!-- Contractors — calendar month -->
+        <div class="rounded-lg ring-1 ring-metfraa-gray-200 p-4">
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <div class="font-bold text-metfraa-ink">Contractors</div>
+              <div class="text-xs text-metfraa-gray-500" x-text="m && m.contractor_label ? ('Calendar month · ' + m.contractor_label) : '1st – month end'"></div>
+            </div>
+            <div class="text-right">
+              <div class="font-bold text-metfraa-blue" x-text="m ? '₹ '+(m.contractor_total||0).toLocaleString('en-IN') : ''"></div>
+              <div class="text-xs text-metfraa-gray-500" x-text="m ? (m.contractor_count+' contractors') : ''"></div>
+            </div>
+          </div>
+          <div class="flex gap-2 mt-3 flex-wrap">
+            <button @click="viewReport('contractor')" :disabled="!m || !m.contractor_has_data"
+              class="px-3 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-metfraa-ink text-xs font-bold disabled:opacity-50">View PDF</button>
+            <button @click="reportAction('contractor','submit')" :disabled="mBusy || !m || !m.contractor_has_data"
+              class="px-3 py-2 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-xs font-bold disabled:opacity-50">
+              <span x-text="mBusy==='contractor-submit' ? 'Generating…' : 'Submit to OneDrive'"></span></button>
+            <button @click="reportAction('contractor','send')" :disabled="mBusy || !m || !m.contractor_has_data"
+              class="px-3 py-2 rounded-lg bg-metfraa-blue text-white text-xs font-bold disabled:opacity-50">
+              <span x-text="mBusy==='contractor-send' ? 'Sending…' : 'Send to HR'"></span></button>
+          </div>
         </div>
       </div>
-      <p class="text-xs text-metfraa-gray-500 mt-2">
-        Pay cycle runs 26th to 25th. Pick the month whose 25th ends the cycle
-        (e.g. October → 26 Sep–25 Oct). Opens on the most recently completed
-        cycle. The report has a Company attendance sheet, one sheet per
-        contractor, and a team-wise work summary — uploaded to
-        Plant Operation / Attendance and Work Log / MONTHLY REPORT.
+      <p class="text-xs text-metfraa-gray-500 mt-3">
+        Two separate reports. The <b>Metfraa Team</b> runs the 26th–25th pay cycle; <b>Contractors</b>
+        run the calendar month (1st to month-end). Each is viewed, submitted to OneDrive and emailed
+        to HR independently. Uploaded to Plant Operation / Attendance and Work Log / MONTHLY REPORT.
       </p>
     </div>
 
@@ -761,6 +784,86 @@
         <div class="display text-2xl font-bold text-green-700 mt-1" x-text="m ? '₹ '+((m.company_total||0)+(m.contractor_total||0)).toLocaleString('en-IN') : ''"></div>
       </div>
     </div>
+
+    <!-- Contractors — monthly (new Regular | Over Time | Totals layout) -->
+    <template x-if="m && m.contractors && m.contractors.length">
+      <div class="mt-5 space-y-5">
+        <template x-for="c in m.contractors" :key="c.name">
+          <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div class="lbl" x-text="c.name"></div>
+              <div class="text-sm font-bold text-metfraa-blue" x-text="'₹ ' + (c.totals.grand||0).toLocaleString('en-IN',{maximumFractionDigits:0})"></div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm border-collapse">
+                <thead>
+                  <tr class="text-xs lbl text-metfraa-gray-500">
+                    <th class="px-2 py-1"></th>
+                    <th class="px-2 py-1 text-center border-l border-metfraa-gray-200" colspan="4">Regular</th>
+                    <th class="px-2 py-1 text-center border-l border-metfraa-gray-200" colspan="4">Over Time</th>
+                    <th class="px-2 py-1 border-l border-metfraa-gray-200" colspan="2"></th>
+                  </tr>
+                  <tr class="text-left lbl border-b border-metfraa-gray-200 bg-metfraa-gray-50">
+                    <th class="px-2 py-2">Date</th>
+                    <th class="px-2 py-2 text-center border-l border-metfraa-gray-200">Present</th>
+                    <th class="px-2 py-2 text-center">Absent</th>
+                    <th class="px-2 py-2 text-center">Half</th>
+                    <th class="px-2 py-2 text-center">Reg Hrs</th>
+                    <th class="px-2 py-2 text-center border-l border-metfraa-gray-200">OT ppl</th>
+                    <th class="px-2 py-2 text-center">From</th>
+                    <th class="px-2 py-2 text-center">To</th>
+                    <th class="px-2 py-2 text-center">OT Hrs</th>
+                    <th class="px-2 py-2 text-right border-l border-metfraa-gray-200">Tot Hrs</th>
+                    <th class="px-2 py-2 text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(dr, di) in conDisplayRows(c)" :key="di">
+                    <tr class="align-top" :class="dr.last ? 'border-b border-metfraa-gray-100' : ''">
+                      <template x-if="dr.first">
+                        <td class="px-2 py-1.5 mono whitespace-nowrap" :rowspan="dr.span" x-text="dr.row.date"></td>
+                      </template>
+                      <template x-if="dr.first">
+                        <td class="px-2 py-1.5 text-center border-l border-metfraa-gray-100" :rowspan="dr.span" x-text="dr.row.total"></td>
+                      </template>
+                      <template x-if="dr.first">
+                        <td class="px-2 py-1.5 text-center" :rowspan="dr.span" x-text="dr.row.absent||0"></td>
+                      </template>
+                      <template x-if="dr.first">
+                        <td class="px-2 py-1.5 text-center" :rowspan="dr.span" x-text="dr.row.half||0"></td>
+                      </template>
+                      <template x-if="dr.first">
+                        <td class="px-2 py-1.5 text-center" :rowspan="dr.span" x-text="hhm(dr.row.reg_hours)"></td>
+                      </template>
+                      <td class="px-2 py-1.5 text-center border-l border-metfraa-gray-100" x-text="dr.sess ? (dr.sess.persons||0) : '—'"></td>
+                      <td class="px-2 py-1.5 text-center mono" x-text="dr.sess && dr.sess.from ? dr.sess.from : '—'"></td>
+                      <td class="px-2 py-1.5 text-center mono" x-text="dr.sess && dr.sess.to ? dr.sess.to : '—'"></td>
+                      <td class="px-2 py-1.5 text-center" x-text="dr.sess ? hhm(dr.sess.hours) : '—'"></td>
+                      <template x-if="dr.first">
+                        <td class="px-2 py-1.5 text-right font-semibold border-l border-metfraa-gray-100" :rowspan="dr.span" x-text="hhm(dr.row.day_hours)"></td>
+                      </template>
+                      <template x-if="dr.first">
+                        <td class="px-2 py-1.5 text-right font-semibold" :rowspan="dr.span" x-text="'₹' + (dr.row.day_amount||0).toLocaleString('en-IN',{maximumFractionDigits:0})"></td>
+                      </template>
+                    </tr>
+                  </template>
+                </tbody>
+                <tfoot>
+                  <tr class="border-t-2 border-metfraa-gray-300 font-bold">
+                    <td class="px-2 py-2" colspan="4">Total · <span x-text="(c.totals.mandays||0)"></span> man-days</td>
+                    <td class="px-2 py-2 text-center" x-text="hhm(c.totals.reg_hours)"></td>
+                    <td class="px-2 py-2" colspan="3"></td>
+                    <td class="px-2 py-2 text-center" x-text="hhm(c.totals.ot_hours)"></td>
+                    <td class="px-2 py-2 text-right" x-text="hhm((c.totals.reg_hours||0)+(c.totals.ot_hours||0))"></td>
+                    <td class="px-2 py-2 text-right text-metfraa-blue" x-text="'₹' + (c.totals.grand||0).toLocaleString('en-IN',{maximumFractionDigits:0})"></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
 
     <!-- Metfraa Team — day-wise spend -->
     <template x-if="m && m.has_data && m.labour_daily && m.labour_daily.length">
@@ -846,6 +949,75 @@
         </table></div>
       </div>
     </template>
+  </div>
+
+  <!-- Contractor OT backlog -->
+  <div x-show="tab === 'otbacklog'">
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mb-5">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="lbl">Contractor OT — month</div>
+        <input type="month" x-model="blMonth" @change="loadBacklog()" class="rounded-lg border-metfraa-gray-300 text-sm">
+        <span x-show="bl && bl.label" class="text-sm font-semibold text-metfraa-ink" x-text="bl ? bl.label : ''"></span>
+      </div>
+      <p class="text-xs text-metfraa-gray-500 mt-2">
+        Fill in the From–To overtime sessions for past dates. A date can have several sessions
+        (morning, evening, short bursts). Contractors run the calendar month (1st to month-end).
+        Each date is saved on its own.
+      </p>
+    </div>
+
+    <template x-if="bl && (!bl.contractors || !bl.contractors.length)">
+      <div class="bg-amber-50 ring-1 ring-amber-200 rounded-lg p-4 text-sm text-amber-800">
+        No contractor attendance recorded for this month.
+      </div>
+    </template>
+
+    <div class="space-y-5">
+      <template x-for="c in (bl ? bl.contractors : [])" :key="c.contractor_id">
+        <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div class="lbl" x-text="c.name"></div>
+            <div class="flex items-center gap-2">
+              <input type="date" x-model="c._newDate" class="rounded border-metfraa-gray-300 text-sm px-2 py-1">
+              <button @click="addBacklogDate(c)" class="text-xs font-semibold text-metfraa-blue hover:underline">+ Add date</button>
+            </div>
+          </div>
+          <div class="space-y-3">
+            <template x-for="row in c.rows" :key="row.date">
+              <div class="border border-metfraa-gray-100 rounded-lg p-3">
+                <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <div class="text-sm font-semibold text-metfraa-ink">
+                    <span x-text="fmtDate(row.date)"></span>
+                    <span class="text-xs text-metfraa-gray-500 ml-2" x-text="'Present ' + (row.present||0)"></span>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <button @click="addBacklogSess(row)" class="text-xs font-semibold text-metfraa-blue hover:underline">+ Add OT session</button>
+                    <button @click="saveBacklog(c, row)" :disabled="blBusy===(c.contractor_id+row.date)"
+                      class="px-3 py-1.5 rounded-lg bg-metfraa-blue text-white text-xs font-bold disabled:opacity-50">
+                      <span x-text="blBusy===(c.contractor_id+row.date) ? 'Saving…' : 'Save'"></span></button>
+                  </div>
+                </div>
+                <template x-if="!(row.sessions && row.sessions.length)">
+                  <div class="text-xs text-metfraa-gray-400">No OT sessions. Add one.</div>
+                </template>
+                <template x-for="(s, si) in (row.sessions || [])" :key="si">
+                  <div class="flex flex-wrap items-center gap-2 mb-1.5">
+                    <label class="flex items-center gap-1"><span class="lbl">Persons</span>
+                      <input type="number" min="0" x-model.number="s.persons" class="w-14 rounded border-metfraa-gray-300 text-sm text-center px-1.5 py-1"></label>
+                    <label class="flex items-center gap-1"><span class="lbl">From</span>
+                      <input type="time" x-model="s.from" class="rounded border-metfraa-gray-300 text-sm px-1.5 py-1"></label>
+                    <label class="flex items-center gap-1"><span class="lbl">To</span>
+                      <input type="time" x-model="s.to" class="rounded border-metfraa-gray-300 text-sm px-1.5 py-1"></label>
+                    <span class="text-xs font-semibold text-metfraa-gray-600" x-text="otSessLabel(c, s)"></span>
+                    <button @click="row.sessions.splice(si,1)" class="text-xs font-semibold text-red-600 hover:underline ml-auto">Remove</button>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
   </div>
 
   <!-- edit drawer -->
@@ -938,11 +1110,13 @@ function plantApp() {
     rangeDays: [], brDay: null,
     labourAll: [], contractorsAll: [], showInactiveLabour: false, showInactiveContr: false,
     drawer: null, form: {},
+    m: null, mPeriod: '', mSubmitting: false, mSending: false,
+    mBusy: null, blMonth: '', bl: null, blBusy: null,
     pdfUrl: '', pdfTitle: '',
 
     tabs: [{ id: 'day', label: 'Attendance' }, { id: 'dashboard', label: 'Dashboard' },
            { id: 'browse', label: 'Browse' }, { id: 'monthly', label: 'Monthly Report' },
-           { id: 'master', label: 'Master' }],
+           { id: 'otbacklog', label: 'Contractor OT' }, { id: 'master', label: 'Master' }],
     masterTab: 'labour',
 
     get presentCount() { return this.labour.filter(l => l.status === 'P').length; },
@@ -968,7 +1142,14 @@ function plantApp() {
     },
     labOtAmt(l) { return l.ot ? this.labRate(l) * (+l.ot_hours || 0) : 0; },
     conRate(c) { const wh = +c.working_hours || 8; return (+c.per_day_rate || 0) / wh; },
-    conOtAmt(c) { return c.ot ? (+c.ot_persons || 0) * this.conRate(c) * (+c.ot_hours || 0) : 0; },
+    clockMins(a, b) {
+      const pm = t => { if (!t) return null; const [h, mi] = String(t).split(':'); const H = +h, M = +mi; return (isNaN(H) || isNaN(M)) ? null : H * 60 + M; };
+      const x = pm(a), y = pm(b); if (x == null || y == null) return null; let d = y - x; return d < 0 ? d + 1440 : d;
+    },
+    otSessHours(s) { const m = this.clockMins(s.from, s.to); return m == null ? 0 : Math.round(m / 60 * 100) / 100; },
+    otSessLabel(c, s) { const h = this.otSessHours(s); if (!h && !s.persons) return ''; const amt = Math.round((+s.persons || 0) * this.conRate(c) * h); return (h ? (h + 'h') : '0h') + ' · ₹' + amt.toLocaleString('en-IN'); },
+    addConOt(c) { if (!Array.isArray(c.ot_sessions)) c.ot_sessions = []; c.ot_sessions.push({ persons: 0, from: '', to: '' }); },
+    conOtAmt(c) { return (c.ot_sessions || []).reduce((t, s) => t + (+s.persons || 0) * this.conRate(c) * this.otSessHours(s), 0); },
     conRegular(c) {
       const present = (+c.skilled||0)+(+c.helper||0);
       const half = (+c.half1_skilled||0)+(+c.half1_helper||0)+(+c.half2_skilled||0)+(+c.half2_helper||0);
@@ -995,6 +1176,7 @@ function plantApp() {
       if (this.tab === 'browse') { this.loadRange(); }
       if (this.tab === 'dashboard') { this.loadDashboard(); }
       if (this.tab === 'monthly') { this.loadMonthly(); }
+      if (this.tab === 'otbacklog') { this.loadBacklog(); }
     },
 
     async loadDay() {
@@ -1065,7 +1247,7 @@ function plantApp() {
               half1_skilled: +c.half1_skilled || 0, half1_helper: +c.half1_helper || 0,
               half2_skilled: +c.half2_skilled || 0, half2_helper: +c.half2_helper || 0,
               absent_remarks: c.absent_remarks || '', half1_remarks: c.half1_remarks || '', half2_remarks: c.half2_remarks || '',
-              ot: !!c.ot, ot_persons: +c.ot_persons || 0, ot_hours: +c.ot_hours || 0 })) }),
+              ot_sessions: (c.ot_sessions || []).map(s => ({ persons: +s.persons || 0, from: s.from || '', to: s.to || '' })) })) }),
         });
         if (!r.ok) { alert('Save failed'); return; }
         this.saved = true;
@@ -1223,6 +1405,69 @@ function plantApp() {
       if (!r.ok) return;
       this.m = await r.json();
       if (!this.mPeriod) this.mPeriod = this.m.default_period;  // default to last month
+    },
+    hhm(hours) {
+      const total = Math.round((+hours || 0) * 60); const h = Math.floor(total / 60), mn = total % 60;
+      return h ? (mn ? (h + 'h ' + mn + 'm') : (h + 'h')) : (mn + 'm');
+    },
+    conDisplayRows(c) {
+      const out = [];
+      for (const row of (c.rows || [])) {
+        const ss = (row.ot_sessions && row.ot_sessions.length) ? row.ot_sessions : [null];
+        ss.forEach((sess, si) => out.push({ row, sess, first: si === 0, last: si === ss.length - 1, span: ss.length }));
+      }
+      return out;
+    },
+    viewReport(kind) {
+      const q = this.mPeriod ? ('?period=' + this.mPeriod) : '';
+      const lab = kind === 'team' ? (this.m && this.m.cycle_label ? this.m.cycle_label : 'Metfraa Team')
+                                  : (this.m && this.m.contractor_label ? this.m.contractor_label : 'Contractors');
+      const title = (kind === 'team' ? 'Metfraa Team' : 'Contractors') + ' — ' + lab;
+      this.viewPdf('/plant/api/monthly/' + kind + '/pdf' + q, title);
+    },
+    async reportAction(kind, action) {
+      const name = kind === 'team' ? 'Metfraa Team' : 'Contractor';
+      const verb = action === 'submit' ? 'upload to OneDrive' : 'email to HR (admin@metfraa.com, CC management)';
+      if (!confirm('Generate the ' + name + ' report and ' + verb + '?')) return;
+      this.mBusy = kind + '-' + action;
+      try {
+        const ep = action === 'submit' ? 'submit' : 'send-hr';
+        const r = await fetch('/plant/api/monthly/' + kind + '/' + ep, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ period: this.mPeriod }),
+        });
+        const d = await r.json();
+        if (!r.ok) { alert(d.detail || 'Failed'); return; }
+        alert(d.message || 'Done');
+      } finally { this.mBusy = null; }
+    },
+    async loadBacklog() {
+      if (!this.blMonth) { const d = new Date(); this.blMonth = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+      const r = await fetch('/plant/api/contractor-ot?month=' + this.blMonth);
+      if (r.ok) this.bl = await r.json();
+    },
+    addBacklogSess(row) { if (!Array.isArray(row.sessions)) row.sessions = []; row.sessions.push({ persons: 0, from: '', to: '' }); },
+    addBacklogDate(c) {
+      if (!c._newDate) { alert('Pick a date first'); return; }
+      if ((c.rows || []).some(r => r.date === c._newDate)) { alert('That date is already listed below'); return; }
+      if (!Array.isArray(c.rows)) c.rows = [];
+      c.rows.push({ date: c._newDate, present: 0, sessions: [{ persons: 0, from: '', to: '' }], ot_amount: 0 });
+      c.rows.sort((a, b) => a.date < b.date ? -1 : 1);
+      c._newDate = '';
+    },
+    async saveBacklog(c, row) {
+      this.blBusy = c.contractor_id + row.date;
+      try {
+        const r = await fetch('/plant/api/contractor-ot', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contractor_id: c.contractor_id, date: row.date,
+            sessions: (row.sessions || []).map(s => ({ persons: +s.persons || 0, from: s.from || '', to: s.to || '' })) }),
+        });
+        const d = await r.json();
+        if (!r.ok) { alert(d.detail || 'Save failed'); return; }
+        row.ot_amount = d.ot_amount;
+        alert('Saved — OT ₹' + Math.round(d.ot_amount).toLocaleString('en-IN'));
+      } finally { this.blBusy = null; }
     },
     async sendMonthlyHR() {
       if (!confirm('Email the ' + (this.m ? this.m.cycle_label : this.mPeriod) + ' report to HR (admin@metfraa.com) and CC management?')) return;

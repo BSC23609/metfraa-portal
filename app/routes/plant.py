@@ -44,6 +44,84 @@ def _ot_hours(v):
     return round(h * 2) / 2 if h > 0 else 0.0
 
 
+def _clock_minutes(start, end):
+    """Minutes between two HH:MM clock strings; crosses midnight if end < start."""
+    def _m(t):
+        try:
+            h, mi = str(t).split(":")[:2]
+            return int(h) * 60 + int(mi)
+        except Exception:
+            return None
+    a, b = _m(start), _m(end)
+    if a is None or b is None:
+        return None
+    diff = b - a
+    return diff + 1440 if diff < 0 else diff
+
+
+def _compute_sessions(raw_sessions, rate_per_hour):
+    """Normalise a list of OT sessions (clock-time based) into
+    [{persons, from, to, hours, amount}] plus the cache sums.
+    Each session's hours = (to - from) in hours; amount = persons * rate * hours.
+    A session with no from/to but an explicit 'hours' keeps that (legacy/manual)."""
+    out, t_persons, t_hours, t_amount = [], 0, 0.0, 0.0
+    for r in (raw_sessions or []):
+        try:
+            persons = max(0, int(r.get("persons") or 0))
+        except (TypeError, ValueError):
+            persons = 0
+        frm = (r.get("from") or r.get("from_time") or "").strip() or None
+        to = (r.get("to") or r.get("to_time") or "").strip() or None
+        mins = _clock_minutes(frm, to)
+        if mins is not None:
+            hours = round(mins / 60.0, 2)
+        else:
+            try:
+                hours = max(0.0, float(r.get("hours") or 0))
+            except (TypeError, ValueError):
+                hours = 0.0
+        if not (persons or hours or frm or to):
+            continue
+        amount = round(persons * (rate_per_hour or 0) * hours, 2)
+        out.append({"persons": persons, "from": frm, "to": to,
+                    "hours": hours, "amount": amount})
+        t_persons += persons
+        t_hours += hours
+        t_amount += amount
+    return out, t_persons, round(t_hours, 2), round(t_amount, 2)
+
+
+def _sessions_for(a):
+    """Read stored OT sessions for an attendance row; if none but a legacy OT
+    cache exists, synthesise a single session so old data still shows/totals."""
+    ss = a.ot_sessions if isinstance(a.ot_sessions, list) else None
+    if ss:
+        return ss
+    if a.ot and (a.ot_persons or a.ot_amount or a.ot_hours):
+        return [{"persons": a.ot_persons or 0, "from": None, "to": None,
+                 "hours": a.ot_hours or 0, "amount": a.ot_amount or 0}]
+    return []
+
+
+def _month_window(year: int, month: int):
+    """Calendar month window: 1st to last day of (year, month)."""
+    from datetime import date as _d, timedelta as _td
+    start = _d(year, month, 1)
+    ny, nm = (year + 1, 1) if month == 12 else (year, month + 1)
+    end = _d(ny, nm, 1) - _td(days=1)
+    return start, end
+
+
+def _month_label(year: int, month: int) -> str:
+    start, end = _month_window(year, month)
+    return f"{start.strftime('%d %b')} – {end.strftime('%d %b %Y')}"
+
+
+def _month_filename(year: int, month: int) -> str:
+    start, end = _month_window(year, month)
+    return f"{start.strftime('%d %b')}-{end.strftime('%d %b %Y')} Contractors.pdf"
+
+
 def _guard(db: Session, user: Employee):
     if not get_access(db, user).can_admin_plant:
         raise HTTPException(status_code=403, detail="Plant Operations access only")
@@ -118,7 +196,8 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
                          "half2_remarks": (cmarks[c.id].half2_remarks if c.id in cmarks else "") or "",
                          "ot": bool(cmarks[c.id].ot) if c.id in cmarks else False,
                          "ot_persons": cmarks[c.id].ot_persons if c.id in cmarks else 0,
-                         "ot_hours": (cmarks[c.id].ot_hours if c.id in cmarks else 0)}
+                         "ot_hours": (cmarks[c.id].ot_hours if c.id in cmarks else 0),
+                         "ot_sessions": (_sessions_for(cmarks[c.id]) if c.id in cmarks else [])}
                         for c in contractors],
         "jobs": [{"id": j.id, "code": j.job_code or "", "name": j.name}
                  for j in db.query(PlantJob).filter(PlantJob.active == True)  # noqa: E712
@@ -227,13 +306,19 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
         ab_rem = (row.get("absent_remarks") or "").strip() or None
         h1_rem = (row.get("half1_remarks") or "").strip() or None
         h2_rem = (row.get("half2_remarks") or "").strip() or None
-        ot = bool(row.get("ot"))
-        ot_persons = _int(row.get("ot_persons")) if ot else 0
-        oth = _ot_hours(row.get("ot_hours")) if ot else 0.0
         c_ = cmap.get(cid)
         wh = (c_.working_hours or 8) if c_ else 8
         rate = (c_.per_day_rate or 0) / wh if (c_ and wh) else 0
-        camt = round(ot_persons * rate * oth, 2)
+        if "ot_sessions" in row:
+            sessions_json, ot_persons, oth, camt = _compute_sessions(row.get("ot_sessions"), rate)
+            ot = bool(sessions_json)
+        else:   # legacy single-block payload
+            ot = bool(row.get("ot"))
+            ot_persons = _int(row.get("ot_persons")) if ot else 0
+            oth = _ot_hours(row.get("ot_hours")) if ot else 0.0
+            camt = round(ot_persons * rate * oth, 2)
+            sessions_json = ([{"persons": ot_persons, "from": None, "to": None,
+                               "hours": oth, "amount": camt}] if ot else [])
         any_count = (sk or hp or ab_sk or ab_hp or h1_sk or h1_hp or h2_sk or h2_hp or ot or ab_rem or h1_rem or h2_rem)
         rec = (db.query(PlantContractorAttendance)
                .filter(PlantContractorAttendance.contractor_id == cid,
@@ -244,6 +329,7 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
             rec.half1_skilled, rec.half1_helper, rec.half1_remarks = h1_sk, h1_hp, h1_rem
             rec.half2_skilled, rec.half2_helper, rec.half2_remarks = h2_sk, h2_hp, h2_rem
             rec.ot, rec.ot_persons, rec.ot_hours, rec.ot_amount = ot, ot_persons, oth, camt
+            rec.ot_sessions = sessions_json
             rec.marked_by = user.employee_code
             rec.updated_at = now
         elif any_count:
@@ -256,7 +342,8 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
                                              half2_skilled=h2_sk, half2_helper=h2_hp,
                                              half2_remarks=h2_rem,
                                              ot=ot, ot_persons=ot_persons, ot_hours=oth,
-                                             ot_amount=camt, marked_by=user.employee_code))
+                                             ot_amount=camt, ot_sessions=sessions_json,
+                                             marked_by=user.employee_code))
 
     # Work logs: full-replace for the day (the screen edits the whole day).
     def _fnum(v):
@@ -977,9 +1064,10 @@ def _build_monthly(db: Session, year: int, month: int):
 
     # --- contractors (one sheet each, skip those with no activity) ---
     cmap = {c.id: c for c in db.query(PlantContractor).all()}
+    c_start, c_end = _month_window(year, month)   # contractors run calendar-month
     ca = (db.query(PlantContractorAttendance)
-          .filter(PlantContractorAttendance.att_date >= start,
-                  PlantContractorAttendance.att_date <= end)
+          .filter(PlantContractorAttendance.att_date >= c_start,
+                  PlantContractorAttendance.att_date <= c_end)
           .order_by(PlantContractorAttendance.att_date).all())
     by_c = {}
     for a in ca:
@@ -990,6 +1078,8 @@ def _build_monthly(db: Session, year: int, month: int):
         if not c:
             continue
         crows, mandays, ot_amt = [], 0.0, 0.0
+        tot_reg_hours, tot_ot_hours = 0.0, 0.0
+        wh = c.working_hours or 8
         for a in sorted(recs, key=lambda r: r.att_date):
             present = a.skilled + a.helper
             half = (a.half1_skilled + a.half1_helper + a.half2_skilled + a.half2_helper)
@@ -999,16 +1089,27 @@ def _build_monthly(db: Session, year: int, month: int):
             mandays += day_md
             ot_amt += a.ot_amount
             day_reg = round(day_md * (c.per_day_rate or 0), 2)
+            reg_hours = round(day_md * wh, 2)
+            sessions = _sessions_for(a)
+            ot_hours = round(sum(float(x.get("hours") or 0) for x in sessions), 2)
+            tot_reg_hours += reg_hours
+            tot_ot_hours += ot_hours
             crows.append({"date": a.att_date.strftime("%d %b %Y"),
                           "skilled": a.skilled, "helper": a.helper, "total": present,
                           "half": half, "absent": absent, "mandays": day_md,
+                          "reg_hours": reg_hours,
+                          "ot_sessions": sessions,
                           "ot_persons": a.ot_persons if a.ot else 0,
+                          "ot_hours": ot_hours,
                           "ot_amount": a.ot_amount,
                           "reg_amount": day_reg,
+                          "day_hours": round(reg_hours + ot_hours, 2),
                           "day_amount": round(day_reg + a.ot_amount, 2)})
         base = round(mandays * (c.per_day_rate or 0), 2)
         contractors.append({"name": c.name, "rows": crows,
                             "totals": {"mandays": mandays, "base": base,
+                                       "reg_hours": round(tot_reg_hours, 2),
+                                       "ot_hours": round(tot_ot_hours, 2),
                                        "ot_amount": ot_amt, "grand": base + ot_amt}})
     contractors.sort(key=lambda x: x["name"])
 
@@ -1133,6 +1234,86 @@ def _monthly_screen_breakdown(db: Session, year: int, month: int):
     }
 
 
+@router.get("/api/contractor-ot")
+def api_contractor_ot(month: str | None = None,
+                      user: Employee = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    """Backlog view: for a calendar month (YYYY-MM), every contractor with any
+    attendance, each with its dated rows and OT sessions (synthesised from the
+    legacy cache when no sessions are stored yet)."""
+    _guard(db, user)
+    if month:
+        try:
+            year, mon = (int(x) for x in month.split("-"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="month must be YYYY-MM")
+    else:
+        from datetime import date as _d
+        t = _d.today(); year, mon = t.year, t.month
+    start, end = _month_window(year, mon)
+    cmap = {c.id: c for c in db.query(PlantContractor).all()}
+    ca = (db.query(PlantContractorAttendance)
+          .filter(PlantContractorAttendance.att_date >= start,
+                  PlantContractorAttendance.att_date <= end)
+          .order_by(PlantContractorAttendance.att_date).all())
+    by_c = {}
+    for a in ca:
+        by_c.setdefault(a.contractor_id, []).append(a)
+    out = []
+    for cid, recs in by_c.items():
+        c = cmap.get(cid)
+        if not c:
+            continue
+        rows = [{"date": a.att_date.isoformat(),
+                 "present": a.skilled + a.helper,
+                 "sessions": _sessions_for(a),
+                 "ot_amount": a.ot_amount} for a in sorted(recs, key=lambda r: r.att_date)]
+        out.append({"contractor_id": cid, "name": c.name,
+                    "per_day_rate": c.per_day_rate, "working_hours": c.working_hours,
+                    "rows": rows})
+    out.sort(key=lambda x: x["name"])
+    return {"month": f"{year:04d}-{mon:02d}",
+            "label": _month_label(year, mon), "contractors": out}
+
+
+@router.post("/api/contractor-ot")
+async def api_contractor_ot_save(request: Request,
+                                 user: Employee = Depends(get_current_user),
+                                 db: Session = Depends(get_db)):
+    """Upsert the OT sessions for one contractor on one date (used by the backlog
+    screen). Recomputes the OT cache; creates an OT-only attendance row if none."""
+    _guard(db, user)
+    b = await request.json()
+    try:
+        cid = int(b.get("contractor_id"))
+        d = datetime.strptime(b.get("date"), "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="contractor_id and date (YYYY-MM-DD) required")
+    c_ = db.get(PlantContractor, cid)
+    if not c_:
+        raise HTTPException(status_code=404, detail="Contractor not found")
+    wh = c_.working_hours or 8
+    rate = (c_.per_day_rate or 0) / wh if wh else 0
+    sessions_json, ot_persons, oth, camt = _compute_sessions(b.get("sessions"), rate)
+    ot = bool(sessions_json)
+    rec = (db.query(PlantContractorAttendance)
+           .filter(PlantContractorAttendance.contractor_id == cid,
+                   PlantContractorAttendance.att_date == d).first())
+    if rec:
+        rec.ot, rec.ot_persons, rec.ot_hours, rec.ot_amount = ot, ot_persons, oth, camt
+        rec.ot_sessions = sessions_json
+        rec.marked_by = user.employee_code
+        rec.updated_at = datetime.utcnow()
+    else:
+        db.add(PlantContractorAttendance(contractor_id=cid, att_date=d,
+                                         ot=ot, ot_persons=ot_persons, ot_hours=oth,
+                                         ot_amount=camt, ot_sessions=sessions_json,
+                                         marked_by=user.employee_code))
+    db.commit()
+    return {"ok": True, "ot_persons": ot_persons, "ot_hours": oth,
+            "ot_amount": camt, "sessions": sessions_json}
+
+
 @router.get("/api/monthly")
 def api_monthly_preview(period: str | None = None,
                         user: Employee = Depends(get_current_user),
@@ -1153,11 +1334,15 @@ def api_monthly_preview(period: str | None = None,
         "period": f"{year:04d}-{month:02d}",
         "default_period": f"{_current_cycle()[0]:04d}-{_current_cycle()[1]:02d}",
         "cycle_label": _cycle_label(year, month),
+        "contractor_label": _month_label(year, month),
         "has_data": has_data,
+        "team_has_data": bool(company["rows"]),
+        "contractor_has_data": bool(contractors),
         "company_total": company["totals"]["grand"],
         "company_workers": company["totals"]["workers"],
         "contractor_count": len(contractors),
         "contractor_total": sum(c["totals"]["grand"] for c in contractors),
+        "contractors": contractors,
         "total_weight": total_weight,
         **brk,
     }
@@ -1283,4 +1468,167 @@ async def api_monthly_send_hr(request: Request,
     except Exception as e:
         log.error("[plant] monthly HR mail failed: %s", e, exc_info=True)
         return {"ok": True, "sent": False, "message": f"Send failed: {e}"}
+
+
+# ------------------------------------------------------------------ split reports
+def _period_ym(period):
+    if period:
+        try:
+            y, m = (int(x) for x in period.split("-"))
+            return y, m
+        except ValueError:
+            raise HTTPException(status_code=400, detail="period must be YYYY-MM")
+    return _current_cycle()
+
+
+def _team_filename(year, month):
+    start, end = _cycle_window(year, month)
+    return f"{start.strftime('%d %b')}-{end.strftime('%d %b %Y')} Metfraa Team.pdf"
+
+
+@router.get("/api/monthly/team/pdf")
+def api_monthly_team_pdf(period: str | None = None,
+                         user: Employee = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    _guard(db, user)
+    year, month = _period_ym(period)
+    company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    if not company["rows"]:
+        raise HTTPException(status_code=404, detail="No Metfraa Team attendance for this cycle.")
+    from ..services.plant_pdf import build_team_monthly_pdf
+    pdf = build_team_monthly_pdf(year, month, company, work_summary, total_weight)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{_team_filename(year, month)}"'})
+
+
+@router.get("/api/monthly/contractor/pdf")
+def api_monthly_contractor_pdf(period: str | None = None,
+                               user: Employee = Depends(get_current_user),
+                               db: Session = Depends(get_db)):
+    _guard(db, user)
+    year, month = _period_ym(period)
+    company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    if not contractors:
+        raise HTTPException(status_code=404, detail="No contractor activity for this month.")
+    from ..services.plant_pdf import build_contractor_monthly_pdf
+    pdf = build_contractor_monthly_pdf(year, month, contractors, _month_label(year, month))
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{_month_filename(year, month)}"'})
+
+
+@router.post("/api/monthly/team/submit")
+async def api_monthly_team_submit(request: Request,
+                                  user: Employee = Depends(get_current_user),
+                                  db: Session = Depends(get_db)):
+    _guard(db, user)
+    b = await request.json()
+    year, month = _period_ym(b.get("period"))
+    company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    if not company["rows"]:
+        return {"ok": True, "uploaded": False, "message": "Nothing recorded for the Metfraa Team this cycle."}
+    try:
+        from ..services.plant_pdf import build_team_monthly_pdf
+        pdf = build_team_monthly_pdf(year, month, company, work_summary, total_weight)
+        info = _od.upload_to_path(pdf, f"{MONTHLY_DIR}/{_team_filename(year, month)}", "application/pdf")
+        return {"ok": True, "uploaded": True, "url": (info or {}).get("webUrl"),
+                "message": "Metfraa Team report submitted to OneDrive."}
+    except Exception as e:
+        log.error("[plant] team submit failed %s-%s: %s", year, month, e, exc_info=True)
+        return {"ok": True, "uploaded": False, "message": f"The OneDrive upload failed: {e}"}
+
+
+@router.post("/api/monthly/contractor/submit")
+async def api_monthly_contractor_submit(request: Request,
+                                        user: Employee = Depends(get_current_user),
+                                        db: Session = Depends(get_db)):
+    _guard(db, user)
+    b = await request.json()
+    year, month = _period_ym(b.get("period"))
+    company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    if not contractors:
+        return {"ok": True, "uploaded": False, "message": "No contractor activity this month."}
+    try:
+        from ..services.plant_pdf import build_contractor_monthly_pdf
+        pdf = build_contractor_monthly_pdf(year, month, contractors, _month_label(year, month))
+        info = _od.upload_to_path(pdf, f"{MONTHLY_DIR}/{_month_filename(year, month)}", "application/pdf")
+        return {"ok": True, "uploaded": True, "url": (info or {}).get("webUrl"),
+                "message": "Contractor report submitted to OneDrive."}
+    except Exception as e:
+        log.error("[plant] contractor submit failed %s-%s: %s", year, month, e, exc_info=True)
+        return {"ok": True, "uploaded": False, "message": f"The OneDrive upload failed: {e}"}
+
+
+def _hr_mail_html(title, label, lines):
+    rows = "".join(
+        f'<tr><td style="color:#6b7689;padding:3px 16px 3px 0">{k}</td>'
+        f'<td style="font-weight:700">{v}</td></tr>' for k, v in lines)
+    return f"""<div style="font-family:Arial,sans-serif;color:#0d1421;max-width:600px">
+      <div style="border-top:4px solid #1F7CCB;padding-top:14px">
+        <div style="font-family:monospace;font-size:11px;letter-spacing:.15em;color:#6b7689;text-transform:uppercase">Metfraa · Plant Operations</div>
+        <h2 style="margin:6px 0 0;font-size:20px">{title} — {label}</h2>
+      </div>
+      <p style="font-size:14px;line-height:1.6">The {title.lower()} for <b>{label}</b> is attached.</p>
+      <table style="font-size:13px;border-collapse:collapse;margin:16px 0">{rows}</table>
+      <p style="font-size:11px;color:#6b7689;font-family:monospace;letter-spacing:.05em;border-top:1px dashed #d6dde6;padding-top:12px">
+        METFRAA · PLANT OPERATIONS · AUTOMATED MESSAGE</p></div>"""
+
+
+async def _send_hr(fname, subject, html, pdf):
+    try:
+        from ..services.email_service import send_email_async
+        ok = await send_email_async(PLANT_HR_TO, subject, html, cc=PLANT_HR_CC,
+                                    attachments=[(fname, pdf, "application/pdf")])
+        if not ok:
+            return {"ok": True, "sent": False, "message": "Send failed — check SMTP configuration."}
+        return {"ok": True, "sent": True,
+                "message": f"Sent to {PLANT_HR_TO} (CC: {', '.join(PLANT_HR_CC)})."}
+    except Exception as e:
+        log.error("[plant] HR mail failed: %s", e, exc_info=True)
+        return {"ok": True, "sent": False, "message": f"Send failed: {e}"}
+
+
+@router.post("/api/monthly/team/send-hr")
+async def api_monthly_team_send_hr(request: Request,
+                                   user: Employee = Depends(get_current_user),
+                                   db: Session = Depends(get_db)):
+    _guard(db, user)
+    b = await request.json()
+    year, month = _period_ym(b.get("period"))
+    company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    if not company["rows"]:
+        return {"ok": True, "sent": False, "message": "Nothing recorded for the Metfraa Team this cycle."}
+    try:
+        from ..services.plant_pdf import build_team_monthly_pdf
+        pdf = build_team_monthly_pdf(year, month, company, work_summary, total_weight)
+    except Exception as e:
+        return {"ok": False, "sent": False, "message": f"Could not build the report: {e}"}
+    label = _cycle_label(year, month)
+    html = _hr_mail_html("Metfraa Team Report", label,
+                         [("Team payable", f"INR {company['totals']['grand']:,.0f}"),
+                          ("Total weight produced", f"{total_weight:,.2f} Kg")])
+    return await _send_hr(_team_filename(year, month),
+                          f"[Metfraa] Metfraa Team Report — {label}", html, pdf)
+
+
+@router.post("/api/monthly/contractor/send-hr")
+async def api_monthly_contractor_send_hr(request: Request,
+                                         user: Employee = Depends(get_current_user),
+                                         db: Session = Depends(get_db)):
+    _guard(db, user)
+    b = await request.json()
+    year, month = _period_ym(b.get("period"))
+    company, contractors, work_summary, total_weight, has_data = _build_monthly(db, year, month)
+    if not contractors:
+        return {"ok": True, "sent": False, "message": "No contractor activity this month."}
+    try:
+        from ..services.plant_pdf import build_contractor_monthly_pdf
+        pdf = build_contractor_monthly_pdf(year, month, contractors, _month_label(year, month))
+    except Exception as e:
+        return {"ok": False, "sent": False, "message": f"Could not build the report: {e}"}
+    label = _month_label(year, month)
+    html = _hr_mail_html("Contractor Report", label,
+                         [("Contractor payable",
+                           f"INR {sum(c['totals']['grand'] for c in contractors):,.0f}")])
+    return await _send_hr(_month_filename(year, month),
+                          f"[Metfraa] Contractor Report — {label}", html, pdf)
 
