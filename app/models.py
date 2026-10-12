@@ -1243,6 +1243,8 @@ class MaintEvent(Base):
     meter_at_event = Column(Float, nullable=True)
     attended_by_id = Column(Integer, ForeignKey("plant_labour.id"), nullable=True)
     verified_by_id = Column(Integer, ForeignKey("plant_labour.id"), nullable=True)
+    operator = Column(String(255), nullable=True)       # free-text operator name
+    repaired_by = Column(String(255), nullable=True)    # free-text repaired-by name
     pm_plan_id = Column(Integer, ForeignKey("maint_pm_plans.id"), nullable=True)
     remarks = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -206,6 +206,7 @@ def _event_json(e: MaintEvent):
         "attended_by_id": e.attended_by_id, "verified_by_id": e.verified_by_id,
         "attended_by_name": e.attended_by.name if e.attended_by else None,
         "verified_by_name": e.verified_by.name if e.verified_by else None,
+        "operator": e.operator, "repaired_by": e.repaired_by,
         "remarks": e.remarks,
     }
 
@@ -225,6 +226,8 @@ class EventIn(BaseModel):
     meter_at_event: float | None = None
     attended_by_id: int | None = None
     verified_by_id: int | None = None
+    operator: str | None = None
+    repaired_by: str | None = None
     remarks: str | None = None
 
 
@@ -253,6 +256,8 @@ def _apply_event(e: MaintEvent, p: EventIn):
     e.meter_at_event = p.meter_at_event
     e.attended_by_id = p.attended_by_id
     e.verified_by_id = p.verified_by_id
+    e.operator = (p.operator or "").strip() or None
+    e.repaired_by = (p.repaired_by or "").strip() or None
     e.remarks = p.remarks
 
 

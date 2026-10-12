@@ -293,13 +293,11 @@
           <div class="grid grid-cols-2 gap-2">
             <div>
               <label class="lbl-f">Operator</label>
-              <select x-model.number="eForm.attended_by_id" class="inp"><option :value="null">—</option>
-                <template x-for="p in meta.team" :key="p.id"><option :value="p.id" x-text="p.name"></option></template></select>
+              <input type="text" x-model="eForm.operator" class="inp" placeholder="Name" />
             </div>
             <div>
               <label class="lbl-f">Repaired by</label>
-              <select x-model.number="eForm.verified_by_id" class="inp"><option :value="null">—</option>
-                <template x-for="p in meta.team" :key="p.id"><option :value="p.id" x-text="p.name"></option></template></select>
+              <input type="text" x-model="eForm.repaired_by" class="inp" placeholder="Name" />
             </div>
           </div>
           <div><label class="lbl-f">Remarks</label><input type="text" x-model="eForm.remarks" class="inp" /></div>
@@ -1026,7 +1024,7 @@ function maintApp() {
       return { id: null, asset_id: '', event_date: new Date().toISOString().slice(0,10),
         category: 'Scheduled PM', status: 'Completed', reported_at: '', restored_at: '',
         complaint: '', cause: '', action: '', parts: '', cost: null, meter_at_event: null,
-        attended_by_id: null, verified_by_id: null, remarks: '' };
+        operator: '', repaired_by: '', remarks: '' };
     },
     newEvent() { this.eForm = this.blankEvent(); },
     async loadEvents() { const r = await fetch('/maint/api/events'); if (r.ok) this.events = await r.json(); },
@@ -1034,8 +1032,9 @@ function maintApp() {
       this.eForm = { id: e.id, asset_id: e.asset_id, event_date: e.event_date, category: e.category,
         status: e.status || (e.category === 'Breakdown' ? 'Open' : 'Completed'), reported_at: e.reported_at || '', restored_at: e.restored_at || '',
         complaint: e.complaint || '', cause: e.cause || '', action: e.action || '', parts: e.parts || '',
-        cost: e.cost, meter_at_event: e.meter_at_event, attended_by_id: e.attended_by_id,
-        verified_by_id: e.verified_by_id, remarks: e.remarks || '' };
+        cost: e.cost, meter_at_event: e.meter_at_event,
+        operator: e.operator || e.attended_by_name || '', repaired_by: e.repaired_by || e.verified_by_name || '',
+        remarks: e.remarks || '' };
       this.tab = 'log';
     },
     async saveEvent() {
@@ -1061,8 +1060,9 @@ function maintApp() {
         status: 'Closed', reported_at: e.reported_at || null,
         restored_at: e.restored_at || new Date().toISOString().slice(0,16),
         complaint: e.complaint, cause: e.cause, action: e.action, parts: e.parts, cost: e.cost,
-        meter_at_event: e.meter_at_event, attended_by_id: e.attended_by_id,
-        verified_by_id: e.verified_by_id, remarks: e.remarks };
+        meter_at_event: e.meter_at_event,
+        operator: e.operator || e.attended_by_name || '', repaired_by: e.repaired_by || e.verified_by_name || '',
+        remarks: e.remarks };
       try {
         const res = await fetch(`/maint/api/events/${e.id}`, { method: 'PUT',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });

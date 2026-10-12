@@ -115,6 +115,8 @@ MISC_MIGRATIONS = [
     "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_half_hours INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
     "ALTER TABLE plant_contractor_attendance ADD COLUMN IF NOT EXISTS ot_sessions JSON",
+    "ALTER TABLE maint_events ADD COLUMN IF NOT EXISTS operator VARCHAR(255)",
+    "ALTER TABLE maint_events ADD COLUMN IF NOT EXISTS repaired_by VARCHAR(255)",
     "ALTER TABLE employee_access ADD COLUMN IF NOT EXISTS plant_admin "
     "BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE expense_consolidated_reports ADD COLUMN IF NOT EXISTS "

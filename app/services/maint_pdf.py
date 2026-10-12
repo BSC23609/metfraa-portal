@@ -71,7 +71,7 @@ def build_history_card(asset: dict, events: list) -> bytes:
         c.drawString(L + 248, y - 11, _clip(c, e.get("action") or "", _f(), 8, 104))
         c.drawString(L + 356, y - 11, f'{e["downtime_hrs"]}h' if e.get("downtime_hrs") is not None else "\u2014")
         c.drawString(L + 412, y - 11, "\u20b9" + _fmt(e["cost"], 0) if e.get("cost") is not None else "\u2014")
-        c.drawString(L + 466, y - 11, _clip(c, e.get("attended_by_name") or "", _f(), 8, R - L - 472))
+        c.drawString(L + 466, y - 11, _clip(c, e.get("operator") or e.get("attended_by_name") or "", _f(), 8, R - L - 472))
         y -= rh
     if not events:
         c.setFillColor(_hx(MUTED)); c.setFont(_f(), 9)
