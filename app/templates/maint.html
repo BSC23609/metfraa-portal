@@ -292,12 +292,12 @@
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div>
-              <label class="lbl-f">Attended by</label>
+              <label class="lbl-f">Operator</label>
               <select x-model.number="eForm.attended_by_id" class="inp"><option :value="null">—</option>
                 <template x-for="p in meta.team" :key="p.id"><option :value="p.id" x-text="p.name"></option></template></select>
             </div>
             <div>
-              <label class="lbl-f">Verified by</label>
+              <label class="lbl-f">Repaired by</label>
               <select x-model.number="eForm.verified_by_id" class="inp"><option :value="null">—</option>
                 <template x-for="p in meta.team" :key="p.id"><option :value="p.id" x-text="p.name"></option></template></select>
             </div>
@@ -366,6 +366,7 @@
           <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
             <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Date</th>
             <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Asset</th>
+            <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Asset name</th>
             <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Complaint</th>
             <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Cause</th>
             <th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Downtime</th>
@@ -377,6 +378,7 @@
               <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
                 <td class="px-3 py-2 mono" x-text="e.event_date"></td>
                 <td class="px-3 py-2"><span class="mono font-semibold" x-text="e.asset_code"></span></td>
+                <td class="px-3 py-2 text-metfraa-gray-700 max-w-[200px] truncate" :title="e.asset_description" x-text="e.asset_description || '—'"></td>
                 <td class="px-3 py-2 text-metfraa-gray-700 max-w-[220px] truncate" :title="e.complaint" x-text="e.complaint || '—'"></td>
                 <td class="px-3 py-2 text-metfraa-gray-600 max-w-[180px] truncate" :title="e.cause" x-text="e.cause || '—'"></td>
                 <td class="px-3 py-2 text-right mono" x-text="e.downtime_hrs!=null ? e.downtime_hrs+'h' : '—'"></td>
@@ -391,7 +393,7 @@
                 </td>
               </tr>
             </template>
-            <tr x-show="breakdowns.length===0"><td colspan="7" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No breakdowns match the filters.</td></tr>
+            <tr x-show="breakdowns.length===0"><td colspan="8" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No breakdowns match the filters.</td></tr>
           </tbody>
         </table>
       </div>
