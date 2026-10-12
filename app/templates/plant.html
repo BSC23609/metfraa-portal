@@ -804,8 +804,8 @@
                     <th class="px-2 py-2 text-center">From</th>
                     <th class="px-2 py-2 text-center">To</th>
                     <th class="px-2 py-2 text-center">OT Hrs</th>
-                    <th class="px-2 py-2 text-right border-l border-metfraa-gray-200">Tot Hrs</th>
-                    <th class="px-2 py-2 text-right">Amount</th>
+                    <th class="px-2 py-2 pr-4 text-right border-l border-metfraa-gray-200 whitespace-nowrap">Tot Hrs</th>
+                    <th class="px-2 py-2 pl-6 text-right whitespace-nowrap">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -831,10 +831,10 @@
                       <td class="px-2 py-1.5 text-center mono" x-text="dr.sess && dr.sess.to ? dr.sess.to : '—'"></td>
                       <td class="px-2 py-1.5 text-center" x-text="dr.sess ? hhm(dr.sess.hours) : '—'"></td>
                       <template x-if="dr.first">
-                        <td class="px-2 py-1.5 text-right font-semibold border-l border-metfraa-gray-100" :rowspan="dr.span" x-text="hhm(dr.row.day_hours)"></td>
+                        <td class="px-2 py-1.5 pr-4 text-right font-semibold border-l border-metfraa-gray-100 whitespace-nowrap" :rowspan="dr.span" x-text="hhm(dr.row.day_hours)"></td>
                       </template>
                       <template x-if="dr.first">
-                        <td class="px-2 py-1.5 text-right font-semibold" :rowspan="dr.span" x-text="'₹' + (dr.row.day_amount||0).toLocaleString('en-IN',{maximumFractionDigits:0})"></td>
+                        <td class="px-2 py-1.5 pl-6 text-right font-semibold whitespace-nowrap" :rowspan="dr.span" x-text="'₹' + (dr.row.day_amount||0).toLocaleString('en-IN',{maximumFractionDigits:0})"></td>
                       </template>
                     </tr>
                   </template>
@@ -845,8 +845,8 @@
                     <td class="px-2 py-2 text-center" x-text="hhm(c.totals.reg_hours)"></td>
                     <td class="px-2 py-2" colspan="3"></td>
                     <td class="px-2 py-2 text-center" x-text="hhm(c.totals.ot_hours)"></td>
-                    <td class="px-2 py-2 text-right" x-text="hhm((c.totals.reg_hours||0)+(c.totals.ot_hours||0))"></td>
-                    <td class="px-2 py-2 text-right text-metfraa-blue" x-text="'₹' + (c.totals.grand||0).toLocaleString('en-IN',{maximumFractionDigits:0})"></td>
+                    <td class="px-2 py-2 pr-4 text-right whitespace-nowrap" x-text="hhm((c.totals.reg_hours||0)+(c.totals.ot_hours||0))"></td>
+                    <td class="px-2 py-2 pl-6 text-right text-metfraa-blue whitespace-nowrap" x-text="'₹' + (c.totals.grand||0).toLocaleString('en-IN',{maximumFractionDigits:0})"></td>
                   </tr>
                 </tfoot>
               </table>
