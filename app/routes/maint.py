@@ -106,6 +106,126 @@ def page(request: Request, user: Employee = Depends(get_current_user),
 
 # ------------------------------------------------------------------ meta
 
+OCR_MODEL = os.getenv("MAINT_OCR_MODEL", "claude-haiku-5-5")
+
+
+class OcrIn(BaseModel):
+    asset_id: int
+    mode: str = "reading"     # 'reading' | 'event'
+    image: str                # base64 (optionally a data: URL)
+
+
+def _ocr_fields_for(db: Session, asset_id: int, mode: str):
+    a = db.get(MaintAsset, asset_id)
+    if mode == "event":
+        return [
+            {"code": "event_date", "label": "Date", "type": "date"},
+            {"code": "category", "label": "Category (one of: Breakdown, Scheduled PM, Unscheduled PM)", "type": "text"},
+            {"code": "complaint", "label": "Complaint / problem", "type": "text"},
+            {"code": "cause", "label": "Cause of failure", "type": "text"},
+            {"code": "action", "label": "Action taken", "type": "text"},
+            {"code": "parts", "label": "Parts used", "type": "text"},
+            {"code": "cost", "label": "Cost (number only)", "type": "number"},
+            {"code": "meter_at_event", "label": "Meter reading (number)", "type": "number"},
+            {"code": "operator", "label": "Operator name", "type": "text"},
+            {"code": "repaired_by", "label": "Repaired by (name)", "type": "text"},
+        ]
+    params = ((a.machine_type.reading_params if (a and a.machine_type) else []) or [])
+    flds = [{"code": "reading_date", "label": "Date", "type": "date"},
+            {"code": "start_time", "label": "Start time", "type": "time"},
+            {"code": "end_time", "label": "End time", "type": "time"}]
+    for p in params:
+        if p.get("derived"):
+            continue
+        lbl = p.get("label", p["code"]) + ((" (" + p["unit"] + ")") if p.get("unit") else "")
+        flds.append({"code": p["code"], "label": lbl, "type": "number"})
+    return flds
+
+
+@router.post("/api/ocr/extract")
+async def api_ocr_extract(payload: OcrIn, user: Employee = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """Read a photo of a handwritten log or a machine/HMI screen and return the
+    values mapped to this asset's form fields (vision model). Nothing is saved;
+    the UI pre-fills the form for the user to verify."""
+    _guard(db, user)
+    import json as _json
+    import re as _re
+    import httpx
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        raise HTTPException(400, "Scan is not configured yet — set ANTHROPIC_API_KEY on the server.")
+    a = db.get(MaintAsset, payload.asset_id)
+    if not a:
+        raise HTTPException(400, "Unknown asset")
+    fields = _ocr_fields_for(db, payload.asset_id, payload.mode)
+
+    img = payload.image or ""
+    media = "image/jpeg"
+    if img.startswith("data:"):
+        head, _, b64 = img.partition(",")
+        if ";base64" in head:
+            media = head[5:head.index(";")]
+        img = b64
+    if not img:
+        raise HTTPException(400, "No image received")
+
+    field_lines = "\n".join(f'- {f["code"]}: {f["label"]} [{f["type"]}]' for f in fields)
+    prompt = (
+        f"You are reading a photo of a maintenance log sheet or a machine/HMI display screen "
+        f"for asset {a.asset_code} ({a.description or ''}). "
+        "Extract ONLY the values that are clearly visible in the image. "
+        "Return a single JSON object whose keys are the field codes listed below and whose "
+        "values are what you read. Omit any field you cannot read confidently — do NOT guess. "
+        "Dates as YYYY-MM-DD, times as HH:MM (24-hour), numbers as plain numbers without units.\n\n"
+        "Fields:\n" + field_lines + "\n\nReturn ONLY the JSON object, nothing else."
+    )
+    body = {
+        "model": OCR_MODEL, "max_tokens": 1024,
+        "messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": media, "data": img}},
+            {"type": "text", "text": prompt},
+        ]}],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60) as cx:
+            r = await cx.post("https://api.anthropic.com/v1/messages", json=body,
+                              headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                                       "content-type": "application/json"})
+    except Exception as e:
+        raise HTTPException(502, f"Scan service could not be reached: {e}")
+    if r.status_code != 200:
+        log.error("[maint] OCR API %s: %s", r.status_code, r.text[:300])
+        raise HTTPException(502, f"Scan service error ({r.status_code}). Check the model name / API key.")
+    try:
+        data = r.json()
+        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
+    except Exception:
+        raise HTTPException(502, "Scan service returned an unexpected response.")
+
+    parsed = {}
+    m = _re.search(r"\{.*\}", text, _re.S)
+    if m:
+        try:
+            parsed = _json.loads(m.group(0))
+        except Exception:
+            parsed = {}
+    codes = {f["code"]: f["type"] for f in fields}
+    out = {}
+    for k, v in (parsed.items() if isinstance(parsed, dict) else []):
+        if k not in codes or v in (None, "", []):
+            continue
+        if codes[k] == "number":
+            try:
+                fv = float(str(v).replace(",", "").strip())
+                out[k] = int(fv) if fv.is_integer() else fv
+            except Exception:
+                continue
+        else:
+            out[k] = str(v).strip()
+    return {"fields": out, "mode": payload.mode, "read": len(out)}
+
+
 @router.get("/api/meta")
 def api_meta(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     _guard(db, user)
