@@ -192,6 +192,7 @@
           <thead>
             <tr class="text-left lbl border-b border-metfraa-gray-100">
               <th class="py-2 min-w-[150px]">Job</th>
+              <th class="py-2 min-w-[130px]">Stage</th>
               <th class="py-2 min-w-[160px]">Nature of Work</th>
               <th class="py-2 w-28 text-center">Skilled</th>
               <th class="py-2 w-28 text-center">Helper</th>
@@ -212,6 +213,12 @@
                     </template>
                   </select>
                 </td>
+                <td class="py-2 pr-2">
+                  <select x-model="w.stage" class="w-full rounded border-metfraa-gray-300 text-sm">
+                    <option value="">— none —</option>
+                    <template x-for="s in stages" :key="s"><option :value="s" x-text="s"></option></template>
+                  </select>
+                </td>
                 <td class="py-2 pr-2"><input x-model="w.nature_of_work" class="w-full rounded border-metfraa-gray-300 text-sm"></td>
                 <td class="py-2"><div class="flex items-center justify-center gap-1">
                   <button @click="w.skilled = Math.max(0,(+w.skilled||0)-1)" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300 text-metfraa-gray-600">−</button>
@@ -230,7 +237,7 @@
               </tr>
             </template>
             <template x-if="!labourWork.length">
-              <tr><td colspan="7" class="py-4 text-center text-metfraa-gray-400 text-sm">No work lines. Click “Add row”.</td></tr>
+              <tr><td colspan="9" class="py-4 text-center text-metfraa-gray-400 text-sm">No work lines. Click “Add row”.</td></tr>
             </template>
           </tbody>
         </table>
@@ -250,6 +257,7 @@
             <tr class="text-left lbl border-b border-metfraa-gray-100">
               <th class="py-2 min-w-[150px]">Contractor</th>
               <th class="py-2 min-w-[150px]">Job</th>
+              <th class="py-2 min-w-[130px]">Stage</th>
               <th class="py-2 min-w-[160px]">Nature of Work</th>
               <th class="py-2 w-32 text-center">No. of workers</th>
               <th class="py-2 w-24">Qty (Nos)</th>
@@ -277,6 +285,12 @@
                     </template>
                   </select>
                 </td>
+                <td class="py-2 pr-2">
+                  <select x-model="w.stage" class="w-full rounded border-metfraa-gray-300 text-sm">
+                    <option value="">— none —</option>
+                    <template x-for="s in stages" :key="s"><option :value="s" x-text="s"></option></template>
+                  </select>
+                </td>
                 <td class="py-2 pr-2"><input x-model="w.nature_of_work" class="w-full rounded border-metfraa-gray-300 text-sm"></td>
                 <td class="py-2"><div class="flex items-center justify-center gap-1">
                   <button @click="w.workers = Math.max(0,(+w.workers||0)-1)" class="w-6 h-7 rounded ring-1 ring-metfraa-gray-300 text-metfraa-gray-600">−</button>
@@ -290,7 +304,7 @@
               </tr>
             </template>
             <template x-if="!contractorWork.length">
-              <tr><td colspan="7" class="py-4 text-center text-metfraa-gray-400 text-sm">No work lines. Click “Add row”.</td></tr>
+              <tr><td colspan="9" class="py-4 text-center text-metfraa-gray-400 text-sm">No work lines. Click “Add row”.</td></tr>
             </template>
           </tbody>
         </table>
@@ -646,11 +660,12 @@
           <div class="lbl mb-2">Metfraa Team work log</div>
           <div class="overflow-x-auto"><table class="w-full text-sm">
             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
-              <th class="py-1">Job</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Sk</th><th class="py-1 text-center">Hp</th>
+              <th class="py-1">Job</th><th class="py-1">Stage</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Sk</th><th class="py-1 text-center">Hp</th>
               <th class="py-1 text-right">Qty</th><th class="py-1 text-right">Weight</th><th class="py-1">Remarks</th></tr></thead>
             <tbody class="divide-y divide-metfraa-gray-100">
               <template x-for="(w,i) in brDay.labour_worklog" :key="i">
                 <tr><td class="py-1.5 text-metfraa-gray-500" x-text="w.job"></td>
+                  <td class="py-1.5 text-metfraa-gray-600" x-text="w.stage"></td>
                   <td class="py-1.5" x-text="w.nature_of_work"></td>
                   <td class="py-1.5 text-center" x-text="w.skilled"></td><td class="py-1.5 text-center" x-text="w.helper"></td>
                   <td class="py-1.5 text-right mono" x-text="w.qty_nos ?? '—'"></td>
@@ -667,12 +682,13 @@
           <div class="lbl mb-2">Contractor work log</div>
           <div class="overflow-x-auto"><table class="w-full text-sm">
             <thead><tr class="text-left lbl border-b border-metfraa-gray-100">
-              <th class="py-1">Contractor</th><th class="py-1">Job</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Workers</th>
+              <th class="py-1">Contractor</th><th class="py-1">Job</th><th class="py-1">Stage</th><th class="py-1">Nature of Work</th><th class="py-1 text-center">Workers</th>
               <th class="py-1 text-right">Qty</th><th class="py-1 text-right">Weight</th><th class="py-1">Remarks</th></tr></thead>
             <tbody class="divide-y divide-metfraa-gray-100">
               <template x-for="(w,i) in brDay.contractor_worklog" :key="i">
                 <tr><td class="py-1.5 font-semibold" x-text="w.contractor"></td>
                   <td class="py-1.5 text-metfraa-gray-500" x-text="w.job"></td>
+                  <td class="py-1.5 text-metfraa-gray-600" x-text="w.stage"></td>
                   <td class="py-1.5" x-text="w.nature_of_work"></td>
                   <td class="py-1.5 text-center" x-text="w.workers"></td>
                   <td class="py-1.5 text-right mono" x-text="w.qty_nos ?? '—'"></td>
@@ -1093,6 +1109,7 @@ function plantApp() {
     tab: 'day', day: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })(), dayType: 'work',
     labour: [], contractors: [], saved: false, saving: false, submitting: false,
     labourWork: [], contractorWork: [], jobs: [], jobsAll: [], showInactiveJobs: false,
+    stages: ['Cutting','H-Beam','Fitup','Welding','Finishing','Shotblasting','Painting'],
     dbStart: new Date(Date.now()-29*864e5).toISOString().slice(0,10),
     dbEnd: new Date().toISOString().slice(0,10),
     db: null, attChart: null, workChart: null, jobChart: null, jobMetric: 'weight',
@@ -1115,8 +1132,8 @@ function plantApp() {
     get absentCount() { return this.labour.filter(l => l.status === 'A').length; },
 
     numOnly(v) { return String(v==null?'':v).replace(/[^0-9.]/g,'').replace(/(\..*)\./g,'$1'); },
-    addLabourWork() { this.labourWork.push({ job_id:null, nature_of_work:'', skilled:0, helper:0, qty_nos:'', weight_kg:'', remarks:'' }); },
-    addContractorWork() { this.contractorWork.push({ contractor_id:null, job_id:null, nature_of_work:'', workers:0, qty_nos:'', weight_kg:'', remarks:'' }); },
+    addLabourWork() { this.labourWork.push({ job_id:null, nature_of_work:'', stage:'', skilled:0, helper:0, qty_nos:'', weight_kg:'', remarks:'' }); },
+    addContractorWork() { this.contractorWork.push({ contractor_id:null, job_id:null, nature_of_work:'', stage:'', workers:0, qty_nos:'', weight_kg:'', remarks:'' }); },
 
     get otOnly() { return this.dayType !== 'work'; },
     labRegular(l) {

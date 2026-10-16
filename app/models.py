@@ -949,6 +949,7 @@ class PlantLabourWorkLog(Base):
     log_date = Column(Date, nullable=False, index=True)
     job_id = Column(Integer, ForeignKey("plant_jobs.id", ondelete="SET NULL"), nullable=True)
     nature_of_work = Column(Text, nullable=True)
+    stage = Column(String(40), nullable=True)   # production stage: Cutting / H-Beam / Fitup / Welding / Finishing / Shotblasting / Painting
     skilled = Column(Integer, nullable=False, default=0)
     helper = Column(Integer, nullable=False, default=0)
     qty_nos = Column(Float, nullable=True)
@@ -970,6 +971,7 @@ class PlantContractorWorkLog(Base):
                            nullable=True, index=True)
     job_id = Column(Integer, ForeignKey("plant_jobs.id", ondelete="SET NULL"), nullable=True)
     nature_of_work = Column(Text, nullable=True)
+    stage = Column(String(40), nullable=True)   # production stage: Cutting / H-Beam / Fitup / Welding / Finishing / Shotblasting / Painting
     workers = Column(Integer, nullable=False, default=0)
     qty_nos = Column(Float, nullable=True)
     weight_kg = Column(Float, nullable=True)

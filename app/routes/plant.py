@@ -203,6 +203,7 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
                  for j in db.query(PlantJob).filter(PlantJob.active == True)  # noqa: E712
                  .order_by(PlantJob.id).all()],
         "labour_worklog": [{"job_id": w.job_id, "nature_of_work": w.nature_of_work or "",
+                            "stage": w.stage or "",
                             "skilled": w.skilled, "helper": w.helper,
                             "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
                             "remarks": w.remarks or ""}
@@ -211,6 +212,7 @@ def api_day(date: str | None = None, user: Employee = Depends(get_current_user),
                            .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()],
         "contractor_worklog": [{"contractor_id": w.contractor_id, "job_id": w.job_id,
                                 "nature_of_work": w.nature_of_work or "",
+                                "stage": w.stage or "",
                                 "workers": w.workers,
                                 "qty_nos": w.qty_nos, "weight_kg": w.weight_kg,
                                 "remarks": w.remarks or ""}
@@ -360,12 +362,13 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
             now_row = PlantLabourWorkLog(
                 log_date=d, job_id=(w.get("job_id") if w.get("job_id") in valid_jobs else None),
                 nature_of_work=(w.get("nature_of_work") or "").strip() or None,
+                stage=(w.get("stage") or "").strip() or None,
                 skilled=_int(w.get("skilled")), helper=_int(w.get("helper")),
                 qty_nos=_fnum(w.get("qty_nos")), weight_kg=_fnum(w.get("weight_kg")),
                 remarks=(w.get("remarks") or "").strip() or None, seq=i,
                 marked_by=user.employee_code)
             # skip wholly-empty rows
-            if (now_row.job_id or now_row.nature_of_work or now_row.skilled or now_row.helper
+            if (now_row.job_id or now_row.nature_of_work or now_row.stage or now_row.skilled or now_row.helper
                     or now_row.qty_nos or now_row.weight_kg or now_row.remarks):
                 db.add(now_row)
 
@@ -377,11 +380,12 @@ def _save_day(db: Session, b: dict, user: Employee) -> dict:
             row = PlantContractorWorkLog(
                 log_date=d, contractor_id=cid, job_id=(w.get("job_id") if w.get("job_id") in valid_jobs else None),
                 nature_of_work=(w.get("nature_of_work") or "").strip() or None,
+                stage=(w.get("stage") or "").strip() or None,
                 workers=_int(w.get("workers")),
                 qty_nos=_fnum(w.get("qty_nos")), weight_kg=_fnum(w.get("weight_kg")),
                 remarks=(w.get("remarks") or "").strip() or None, seq=i,
                 marked_by=user.employee_code)
-            if (row.contractor_id or row.job_id or row.nature_of_work or row.workers
+            if (row.contractor_id or row.job_id or row.nature_of_work or row.stage or row.workers
                     or row.qty_nos or row.weight_kg or row.remarks):
                 db.add(row)
 
@@ -423,6 +427,7 @@ def _gather_day(db: Session, d):
     jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
             for j in db.query(PlantJob).all()}
     lwl = [{"job": jmap.get(w.job_id, ""), "nature_of_work": w.nature_of_work or "",
+            "stage": w.stage or "",
             "skilled": w.skilled, "helper": w.helper, "qty_nos": w.qty_nos,
             "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
            for w in db.query(PlantLabourWorkLog)
@@ -430,7 +435,7 @@ def _gather_day(db: Session, d):
            .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()]
     cwl = [{"contractor": cmap[w.contractor_id].name if w.contractor_id in cmap else "—",
             "job": jmap.get(w.job_id, ""),
-            "nature_of_work": w.nature_of_work or "", "workers": w.workers,
+            "nature_of_work": w.nature_of_work or "", "stage": w.stage or "", "workers": w.workers,
             "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
            for w in db.query(PlantContractorWorkLog)
            .filter(PlantContractorWorkLog.log_date == d)
@@ -766,6 +771,7 @@ def api_browse_day(date: str | None = None,
     jmap = {j.id: (f"{j.job_code} · {j.name}" if j.job_code else j.name)
             for j in db.query(PlantJob).all()}
     lwl = [{"job": jmap.get(w.job_id, ""), "nature_of_work": w.nature_of_work or "",
+            "stage": w.stage or "",
             "skilled": w.skilled, "helper": w.helper, "qty_nos": w.qty_nos,
             "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
            for w in db.query(PlantLabourWorkLog)
@@ -773,7 +779,7 @@ def api_browse_day(date: str | None = None,
            .order_by(PlantLabourWorkLog.seq, PlantLabourWorkLog.id).all()]
     cwl = [{"contractor": cmap[w.contractor_id].name if w.contractor_id in cmap else "—",
             "job": jmap.get(w.job_id, ""),
-            "nature_of_work": w.nature_of_work or "", "workers": w.workers,
+            "nature_of_work": w.nature_of_work or "", "stage": w.stage or "", "workers": w.workers,
             "qty_nos": w.qty_nos, "weight_kg": w.weight_kg, "remarks": w.remarks or ""}
            for w in db.query(PlantContractorWorkLog)
            .filter(PlantContractorWorkLog.log_date == d)

@@ -50,6 +50,8 @@ EXPENSE_PARITY_MIGRATIONS = [
     "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_stage VARCHAR(24)",
     "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_hr_verified_by VARCHAR(200)",
     "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_hr_verified_at VARCHAR(32)",
+    "ALTER TABLE plant_labour_worklog ADD COLUMN IF NOT EXISTS stage VARCHAR(40)",
+    "ALTER TABLE plant_contractor_worklog ADD COLUMN IF NOT EXISTS stage VARCHAR(40)",
     "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_mgmt_approved_by VARCHAR(200)",
     "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_mgmt_approved_at VARCHAR(32)",
     "ALTER TABLE expense_submissions ADD COLUMN IF NOT EXISTS advance_paid_by VARCHAR(200)",
