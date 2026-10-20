@@ -4,6 +4,7 @@
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="maintApp()" x-init="init()" x-cloak>
   <input type="file" x-ref="ocrFile" accept="image/*" capture="environment" class="hidden" @change="onOcrFile($event)">
+  <input type="file" x-ref="ocrGallery" accept="image/*" class="hidden" @change="onOcrFile($event)">
 
   <div class="mb-8">
     <div class="lbl mb-2">Metfraa Portal</div>
@@ -302,9 +303,13 @@
             </div>
           </div>
           <div><label class="lbl-f">Remarks</label><input type="text" x-model="eForm.remarks" class="inp" /></div>
-          <button @click="ocrScan('event')" :disabled="ocrBusy || !eForm.asset_id" type="button"
-            class="w-full mb-2 ring-1 ring-metfraa-blue text-metfraa-blue font-semibold px-4 py-2.5 rounded-lg disabled:opacity-40"
-            x-text="ocrBusy ? 'Scanning…' : '📷 Scan photo to fill'"></button>
+          <div class="flex gap-2 mb-2">
+            <button @click="ocrScan('event')" :disabled="ocrBusy || !eForm.asset_id" type="button"
+              class="flex-1 ring-1 ring-metfraa-blue text-metfraa-blue font-semibold px-4 py-2.5 rounded-lg disabled:opacity-40"
+              x-text="ocrBusy ? 'Scanning…' : '📷 Scan photo'"></button>
+            <button @click="ocrUpload('event')" :disabled="ocrBusy || !eForm.asset_id" type="button"
+              class="flex-1 ring-1 ring-metfraa-blue text-metfraa-blue font-semibold px-4 py-2.5 rounded-lg disabled:opacity-40">🖼️ Upload photo</button>
+          </div>
           <button @click="saveEvent()" :disabled="eSaving"
             class="w-full bg-metfraa-blue hover:bg-metfraa-blue-dark text-white font-semibold px-4 py-2.5 rounded-lg disabled:opacity-50">
             <span x-show="!eSaving" x-text="eForm.id ? 'Update event' : 'Save event'"></span><span x-show="eSaving">Saving…</span>
@@ -440,7 +445,8 @@
         <div class="flex items-center justify-between mb-4">
           <h3 class="display font-bold text-metfraa-ink" x-text="rForm.id ? 'Edit reading' : 'New reading'"></h3>
           <div class="flex items-center gap-3">
-            <button @click="ocrScan('reading')" :disabled="ocrBusy || !rAssetId" class="text-xs font-semibold text-metfraa-blue hover:underline disabled:opacity-40" x-text="ocrBusy ? 'Scanning…' : '📷 Scan photo'"></button>
+            <button @click="ocrScan('reading')" :disabled="ocrBusy || !rAssetId" type="button" class="text-xs font-semibold text-metfraa-blue hover:underline disabled:opacity-40" x-text="ocrBusy ? 'Scanning…' : '📷 Scan'"></button>
+            <button @click="ocrUpload('reading')" :disabled="ocrBusy || !rAssetId" type="button" class="text-xs font-semibold text-metfraa-blue hover:underline disabled:opacity-40">🖼️ Upload</button>
             <button x-show="rForm.id" @click="newReading()" class="text-xs font-semibold text-metfraa-blue hover:underline">+ New</button>
           </div>
         </div>
@@ -1039,8 +1045,15 @@ function maintApp() {
       const assetId = mode === 'reading' ? this.rAssetId : this.eForm.asset_id;
       if (!assetId) { toast('Select a machine first', 'error'); return; }
       this.ocrMode = mode;
-      this.$refs.ocrFile.value = '';
+      this.$refs.ocrFile.value = '';   // reset so the same photo can be picked again
       this.$refs.ocrFile.click();
+    },
+    ocrUpload(mode) {
+      const assetId = mode === 'reading' ? this.rAssetId : this.eForm.asset_id;
+      if (!assetId) { toast('Select a machine first', 'error'); return; }
+      this.ocrMode = mode;
+      this.$refs.ocrGallery.value = '';   // gallery/file picker (no camera capture); reusable any number of times
+      this.$refs.ocrGallery.click();
     },
     async onOcrFile(ev) {
       const file = ev.target.files && ev.target.files[0];
