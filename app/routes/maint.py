@@ -112,7 +112,8 @@ OCR_MODEL = os.getenv("MAINT_OCR_MODEL", "claude-haiku-5-5")
 class OcrIn(BaseModel):
     asset_id: int
     mode: str = "reading"     # 'reading' | 'event'
-    image: str                # base64 (optionally a data: URL)
+    image: str | None = None            # single image (base64 / data: URL) — legacy
+    images: list[str] | None = None     # several photos of the SAME machine, read together
 
 
 def _ocr_fields_for(db: Session, asset_id: int, mode: str):
@@ -160,21 +161,27 @@ async def api_ocr_extract(payload: OcrIn, user: Employee = Depends(get_current_u
         raise HTTPException(400, "Unknown asset")
     fields = _ocr_fields_for(db, payload.asset_id, payload.mode)
 
-    img = payload.image or ""
-    media = "image/jpeg"
-    if img.startswith("data:"):
-        head, _, b64 = img.partition(",")
-        if ";base64" in head:
-            media = head[5:head.index(";")]
-        img = b64
-    if not img:
+    raw_imgs = payload.images if payload.images else ([payload.image] if payload.image else [])
+    raw_imgs = [x for x in raw_imgs if x][:6]   # cap to keep cost/latency sane
+    if not raw_imgs:
         raise HTTPException(400, "No image received")
+    image_blocks = []
+    for im in raw_imgs:
+        media = "image/jpeg"
+        if im.startswith("data:"):
+            head, _, b64 = im.partition(",")
+            if ";base64" in head:
+                media = head[5:head.index(";")]
+            im = b64
+        image_blocks.append({"type": "image",
+                             "source": {"type": "base64", "media_type": media, "data": im}})
 
     field_lines = "\n".join(f'- {f["code"]}: {f["label"]} [{f["type"]}]' for f in fields)
     prompt = (
-        f"You are reading a photo of a maintenance log sheet or a machine/HMI display screen "
+        f"You are reading one or more photos of a maintenance log sheet or machine/HMI display screens "
         f"for asset {a.asset_code} ({a.description or ''}). "
-        "Extract ONLY the values that are clearly visible in the image. "
+        "The photos are of the SAME machine; combine the values across all of them into one result. "
+        "Extract ONLY the values that are clearly visible. "
         "Return a single JSON object whose keys are the field codes listed below and whose "
         "values are what you read. Omit any field you cannot read confidently — do NOT guess. "
         "Dates as YYYY-MM-DD, times as HH:MM (24-hour), numbers as plain numbers without units.\n\n"
@@ -182,8 +189,7 @@ async def api_ocr_extract(payload: OcrIn, user: Employee = Depends(get_current_u
     )
     body = {
         "model": OCR_MODEL, "max_tokens": 1024,
-        "messages": [{"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": media, "data": img}},
+        "messages": [{"role": "user", "content": image_blocks + [
             {"type": "text", "text": prompt},
         ]}],
     }

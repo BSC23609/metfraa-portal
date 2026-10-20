@@ -4,7 +4,7 @@
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="maintApp()" x-init="init()" x-cloak>
   <input type="file" x-ref="ocrFile" accept="image/*" capture="environment" class="hidden" @change="onOcrFile($event)">
-  <input type="file" x-ref="ocrGallery" accept="image/*" class="hidden" @change="onOcrFile($event)">
+  <input type="file" x-ref="ocrGallery" accept="image/*" multiple class="hidden" @change="onOcrFile($event)">
 
   <div class="mb-8">
     <div class="lbl mb-2">Metfraa Portal</div>
@@ -306,9 +306,14 @@
           <div class="flex gap-2 mb-2">
             <button @click="ocrScan('event')" :disabled="ocrBusy || !eForm.asset_id" type="button"
               class="flex-1 ring-1 ring-metfraa-blue text-metfraa-blue font-semibold px-4 py-2.5 rounded-lg disabled:opacity-40"
-              x-text="ocrBusy ? 'Scanning…' : '📷 Scan photo'"></button>
+              x-text="ocrBusy ? 'Reading…' : '📷 Add scan'"></button>
             <button @click="ocrUpload('event')" :disabled="ocrBusy || !eForm.asset_id" type="button"
-              class="flex-1 ring-1 ring-metfraa-blue text-metfraa-blue font-semibold px-4 py-2.5 rounded-lg disabled:opacity-40">🖼️ Upload photo</button>
+              class="flex-1 ring-1 ring-metfraa-blue text-metfraa-blue font-semibold px-4 py-2.5 rounded-lg disabled:opacity-40">🖼️ Add photos</button>
+          </div>
+          <div x-show="ocrQueue.length && ocrMode==='event'" class="mb-2 flex items-center gap-3 bg-metfraa-blue/5 border border-metfraa-blue/30 rounded-lg px-3 py-2">
+            <span class="text-xs font-semibold text-metfraa-blue" x-text="ocrQueue.length + ' photo' + (ocrQueue.length>1?'s':'') + ' ready'"></span>
+            <button @click="extractOcr()" :disabled="ocrBusy" type="button" class="ml-auto text-xs font-semibold px-3 py-1.5 rounded-lg bg-metfraa-blue text-white disabled:opacity-40" x-text="ocrBusy ? 'Reading…' : 'Extract & fill'"></button>
+            <button @click="clearOcrQueue()" :disabled="ocrBusy" type="button" class="text-xs font-semibold text-metfraa-gray-500 hover:underline">Clear</button>
           </div>
           <button @click="saveEvent()" :disabled="eSaving"
             class="w-full bg-metfraa-blue hover:bg-metfraa-blue-dark text-white font-semibold px-4 py-2.5 rounded-lg disabled:opacity-50">
@@ -445,10 +450,15 @@
         <div class="flex items-center justify-between mb-4">
           <h3 class="display font-bold text-metfraa-ink" x-text="rForm.id ? 'Edit reading' : 'New reading'"></h3>
           <div class="flex items-center gap-3">
-            <button @click="ocrScan('reading')" :disabled="ocrBusy || !rAssetId" type="button" class="text-xs font-semibold text-metfraa-blue hover:underline disabled:opacity-40" x-text="ocrBusy ? 'Scanning…' : '📷 Scan'"></button>
-            <button @click="ocrUpload('reading')" :disabled="ocrBusy || !rAssetId" type="button" class="text-xs font-semibold text-metfraa-blue hover:underline disabled:opacity-40">🖼️ Upload</button>
+            <button @click="ocrScan('reading')" :disabled="ocrBusy || !rAssetId" type="button" class="text-xs font-semibold text-metfraa-blue hover:underline disabled:opacity-40" x-text="ocrBusy ? 'Reading…' : '📷 Add scan'"></button>
+            <button @click="ocrUpload('reading')" :disabled="ocrBusy || !rAssetId" type="button" class="text-xs font-semibold text-metfraa-blue hover:underline disabled:opacity-40">🖼️ Add photos</button>
             <button x-show="rForm.id" @click="newReading()" class="text-xs font-semibold text-metfraa-blue hover:underline">+ New</button>
           </div>
+        </div>
+        <div x-show="ocrQueue.length && ocrMode==='reading'" class="mb-4 flex items-center gap-3 bg-metfraa-blue/5 border border-metfraa-blue/30 rounded-lg px-3 py-2">
+          <span class="text-xs font-semibold text-metfraa-blue" x-text="ocrQueue.length + ' photo' + (ocrQueue.length>1?'s':'') + ' ready'"></span>
+          <button @click="extractOcr()" :disabled="ocrBusy" type="button" class="ml-auto text-xs font-semibold px-3 py-1.5 rounded-lg bg-metfraa-blue text-white disabled:opacity-40" x-text="ocrBusy ? 'Reading…' : 'Extract & fill'"></button>
+          <button @click="clearOcrQueue()" :disabled="ocrBusy" type="button" class="text-xs font-semibold text-metfraa-gray-500 hover:underline">Clear</button>
         </div>
         <div class="space-y-3">
           <div class="grid grid-cols-3 gap-2">
@@ -920,7 +930,7 @@ function maintApp() {
     modal: false, saving: false,
     form: {},
     events: [], eForm: {}, eSaving: false,
-    ocrBusy: false, ocrMode: 'reading',
+    ocrBusy: false, ocrMode: 'reading', ocrQueue: [],
     bStatus: '', bAsset: '',
     readings: [], rMonthly: [], rAssetId: '', rForm: {}, rSaving: false,
     pmPlans: [], pmForm: {}, pmModal: false, pmSaving: false, pmDueOnly: false,
@@ -1044,35 +1054,49 @@ function maintApp() {
     ocrScan(mode) {
       const assetId = mode === 'reading' ? this.rAssetId : this.eForm.asset_id;
       if (!assetId) { toast('Select a machine first', 'error'); return; }
+      if (mode !== this.ocrMode) this.ocrQueue = [];   // don't mix photos across forms
       this.ocrMode = mode;
-      this.$refs.ocrFile.value = '';   // reset so the same photo can be picked again
+      this.$refs.ocrFile.value = '';
       this.$refs.ocrFile.click();
     },
     ocrUpload(mode) {
       const assetId = mode === 'reading' ? this.rAssetId : this.eForm.asset_id;
       if (!assetId) { toast('Select a machine first', 'error'); return; }
+      if (mode !== this.ocrMode) this.ocrQueue = [];
       this.ocrMode = mode;
-      this.$refs.ocrGallery.value = '';   // gallery/file picker (no camera capture); reusable any number of times
+      this.$refs.ocrGallery.value = '';
       this.$refs.ocrGallery.click();
     },
+    // camera "Add scan" adds one; gallery "Add photos" can add several at once — all queue up
     async onOcrFile(ev) {
-      const file = ev.target.files && ev.target.files[0];
-      if (!file) return;
+      const files = ev.target.files ? Array.from(ev.target.files) : [];
+      if (!files.length) return;
+      let added = 0;
+      for (const f of files) {
+        try { this.ocrQueue.push(await this.downscaleImage(f, 1568)); added++; } catch (e) {}
+      }
+      if (added) toast(this.ocrQueue.length + ' photo' + (this.ocrQueue.length > 1 ? 's' : '') + ' ready — tap “Extract & fill”', 'success');
+    },
+    // send every queued photo together; the model combines them into one set of fields
+    async extractOcr() {
+      if (!this.ocrQueue.length) { toast('Add at least one photo first', 'error'); return; }
+      const assetId = this.ocrMode === 'reading' ? this.rAssetId : this.eForm.asset_id;
+      if (!assetId) { toast('Select a machine first', 'error'); return; }
       this.ocrBusy = true;
       try {
-        const image = await this.downscaleImage(file, 1568);
-        const assetId = this.ocrMode === 'reading' ? this.rAssetId : this.eForm.asset_id;
         const r = await fetch('/maint/api/ocr/extract', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ asset_id: +assetId, mode: this.ocrMode, image }),
+          body: JSON.stringify({ asset_id: +assetId, mode: this.ocrMode, images: this.ocrQueue }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.detail || 'Scan failed');
         this.applyOcr(d.fields || {}, this.ocrMode);
-        const n = Object.keys(d.fields || {}).length;
-        toast(n ? ('Filled ' + n + ' field' + (n > 1 ? 's' : '') + ' — please review and save') : 'Nothing could be read — enter manually', n ? 'success' : 'error');
+        const n = Object.keys(d.fields || {}).length, np = this.ocrQueue.length;
+        toast(n ? ('Filled ' + n + ' field' + (n > 1 ? 's' : '') + ' from ' + np + ' photo' + (np > 1 ? 's' : '') + ' — review & save') : 'Nothing could be read — enter manually', n ? 'success' : 'error');
+        this.ocrQueue = [];
       } catch (e) { toast(e.message, 'error'); } finally { this.ocrBusy = false; }
     },
+    clearOcrQueue() { this.ocrQueue = []; },
     downscaleImage(file, maxEdge) {
       return new Promise((resolve, reject) => {
         const url = URL.createObjectURL(file);
