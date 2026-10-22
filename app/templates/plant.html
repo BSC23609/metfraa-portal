@@ -518,6 +518,40 @@
         <div class="text-sm text-metfraa-gray-400 py-4 text-center">No job-tagged work in this range.</div>
       </template>
     </div>
+
+    <!-- production by stage -->
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
+      <div class="lbl mb-3">Production by stage</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left lbl border-b border-metfraa-gray-100">
+              <th class="py-2">Stage</th>
+              <th class="py-2 text-right">Qty (Nos)</th>
+              <th class="py-2 text-right">Weight (Kg)</th>
+              <th class="py-2 text-center">Work lines</th>
+              <th class="py-2 w-40"></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-metfraa-gray-100">
+            <template x-for="s in (db ? db.stage_breakdown : [])" :key="s.stage">
+              <tr>
+                <td class="py-2 font-semibold" x-text="s.stage"></td>
+                <td class="py-2 text-right mono" x-text="s.qty.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                <td class="py-2 text-right mono" x-text="s.weight.toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                <td class="py-2 text-center mono" x-text="s.lines"></td>
+                <td class="py-2"><div class="h-2 rounded-full bg-metfraa-gray-100 overflow-hidden">
+                  <div class="h-full bg-metfraa-blue rounded-full" :style="`width:${maxStageWeight ? (s.weight/maxStageWeight*100) : 0}%`"></div>
+                </div></td>
+              </tr>
+            </template>
+            <template x-if="db && (!db.stage_breakdown || !db.stage_breakdown.length)">
+              <tr><td colspan="5" class="py-6 text-center text-metfraa-gray-400 text-sm">No stage-tagged work in this range.</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <!-- ============ BROWSE ============ -->
@@ -1328,6 +1362,7 @@ function plantApp() {
       ];
     },
     get maxWeight() { return this.db && this.db.teams.length ? Math.max(...this.db.teams.map(t=>t.weight)) : 0; },
+    get maxStageWeight() { return this.db && this.db.stage_breakdown && this.db.stage_breakdown.length ? Math.max(...this.db.stage_breakdown.map(s=>s.weight)) : 0; },
     quickRange(n) {
       this.dbEnd = new Date().toISOString().slice(0,10);
       this.dbStart = new Date(Date.now()-(n-1)*864e5).toISOString().slice(0,10);

@@ -912,6 +912,8 @@ def api_dashboard(start: str | None = None, end: str | None = None,
     per_team = defaultdict(lambda: {"qty": 0.0, "weight": 0.0})
     # job -> team -> {qty, weight}
     job_team = defaultdict(lambda: defaultdict(lambda: {"qty": 0.0, "weight": 0.0}))
+    # production stage -> {qty, weight, lines}
+    stagework = defaultdict(lambda: {"qty": 0.0, "weight": 0.0, "lines": 0})
 
     for w in (db.query(PlantLabourWorkLog)
               .filter(PlantLabourWorkLog.log_date >= s_,
@@ -924,6 +926,10 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         jn = jmap.get(w.job_id, "No job")
         job_team[jn]["Metfraa Team"]["qty"] += w.qty_nos or 0
         job_team[jn]["Metfraa Team"]["weight"] += w.weight_kg or 0
+        st = w.stage or "Unstaged"
+        stagework[st]["qty"] += w.qty_nos or 0
+        stagework[st]["weight"] += w.weight_kg or 0
+        stagework[st]["lines"] += 1
     for w in (db.query(PlantContractorWorkLog)
               .filter(PlantContractorWorkLog.log_date >= s_,
                       PlantContractorWorkLog.log_date <= e).all()):
@@ -936,6 +942,10 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         jn = jmap.get(w.job_id, "No job")
         job_team[jn][name]["qty"] += w.qty_nos or 0
         job_team[jn][name]["weight"] += w.weight_kg or 0
+        st = w.stage or "Unstaged"
+        stagework[st]["qty"] += w.qty_nos or 0
+        stagework[st]["weight"] += w.weight_kg or 0
+        stagework[st]["lines"] += 1
 
     # fill every calendar day in range so the trend line has no gaps
     from datetime import timedelta
@@ -970,6 +980,14 @@ def api_dashboard(start: str | None = None, end: str | None = None,
     job_rows.sort(key=lambda r: r["total_weight"], reverse=True)
     job_breakdown = {"teams": team_names, "jobs": job_rows}
 
+    # stage-wise production, in the real process order (Cutting → … → Painting)
+    STAGE_ORDER = ["Cutting", "H-Beam", "Fitup", "Welding", "Finishing", "Shotblasting", "Painting"]
+    _sord = {s: i for i, s in enumerate(STAGE_ORDER)}
+    stage_breakdown = sorted(
+        ({"stage": s, "qty": round(v["qty"], 2), "weight": round(v["weight"], 2), "lines": v["lines"]}
+         for s, v in stagework.items()),
+        key=lambda r: (_sord.get(r["stage"], 99), r["stage"]))
+
     totals = {
         "present": sum(d["present"] for d in days),
         "half": sum(d["half"] for d in days),
@@ -980,7 +998,7 @@ def api_dashboard(start: str | None = None, end: str | None = None,
     }
     return {"start": s_.isoformat(), "end": e.isoformat(),
             "days": days, "teams": teams, "totals": totals,
-            "job_breakdown": job_breakdown}
+            "job_breakdown": job_breakdown, "stage_breakdown": stage_breakdown}
 
 
 # --------------------------------------------------------------- monthly
