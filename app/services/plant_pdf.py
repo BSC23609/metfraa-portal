@@ -634,7 +634,7 @@ def build_contractor_monthly_pdf(year, month, contractors, mlabel) -> bytes:
     X = {"date": 0, "pres": 64, "abs": 100, "half": 134, "rhrs": 170,
          "otp": 222, "from": 260, "to": 314, "othr": 368, "thrs": 423, "amt": R - L}
     # x-positions of the thin column separators (Date | Regular | Over Time | Tot Hrs | Amount)
-    VSEP = (L + 60, L + 210, L + 406, L + 480)
+    VSEP = (L + 60, L + 210, L + 408, L + 465)
 
     def col_headers(y):
         # group bands

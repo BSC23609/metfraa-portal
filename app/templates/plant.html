@@ -1443,11 +1443,10 @@ function plantApp() {
       if (r.ok) { this.brDay = await r.json(); window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'}); }
     },
     async loadMonthly() {
-      const q = this.mPeriod ? ('?period=' + this.mPeriod) : '';
-      const r = await fetch('/plant/api/monthly' + q);
+      if (!this.mPeriod) this.mPeriod = new Date().toLocaleDateString('en-CA').slice(0, 7);  // default to current month
+      const r = await fetch('/plant/api/monthly?period=' + this.mPeriod);
       if (!r.ok) return;
       this.m = await r.json();
-      if (!this.mPeriod) this.mPeriod = this.m.default_period;  // default to last month
     },
     hhm(hours) {
       const total = Math.round((+hours || 0) * 60); const h = Math.floor(total / 60), mn = total % 60;
