@@ -476,7 +476,7 @@ def _team_cycle(year, month):
     return start, end, days, lab
 
 
-def build_team_monthly_pdf(year, month, company, work_summary, total_weight) -> bytes:
+def build_team_monthly_pdf(year, month, company, work_summary, total_weight, prod_log=None) -> bytes:
     """Metfraa Team only: 26th-prev .. 25th attendance grid + work summary."""
     _ensure()
     buf = io.BytesIO()
@@ -575,6 +575,44 @@ def build_team_monthly_pdf(year, month, company, work_summary, total_weight) -> 
     c.drawRightString(R - 14, y - 16, _fmt(total_weight) + " Kg")
     _footer(c, foot, page_no())
     c.showPage()
+
+    # ---- date-wise production log (Date · Stage · Qty Nos · Weight) ----
+    if prod_log:
+        plog_cols = [("Date", 0), ("Stage", 140), ("Qty (Nos)", 320), ("Weight (Kg)", 430)]
+        y = _header(c, "Metfraa / Plant Operations", "Monthly — Production Log (date-wise)", mlabel)
+        y = _thead(c, y, plog_cols)
+        prev_date = None
+        tq = tw = 0.0
+        for i, p in enumerate(prod_log):
+            rh = 16
+            if y - rh < 70:
+                _footer(c, foot, page_no()); c.showPage()
+                y = _header(c, "Metfraa / Plant Operations", "Monthly — Production Log (cont.)", mlabel)
+                y = _thead(c, y, plog_cols); prev_date = None
+            if i % 2 == 0:
+                c.setFillColor(_hx(SOFT)); c.rect(L, y - rh, R - L, rh, fill=1, stroke=0)
+            new_day = p["date"] != prev_date
+            if new_day and prev_date is not None:
+                c.setStrokeColor(_hx(LINE)); c.setLineWidth(0.6); c.line(L, y, R, y); c.setLineWidth(1)
+            c.setFillColor(_hx(INK))
+            if new_day:
+                c.setFont(_f(True), 8.5); c.drawString(L + 6, y - 12, p["date"])
+            c.setFont(_f(), 8.5); c.setFillColor(_hx(INK))
+            c.drawString(L + 146, y - 12, p["stage"])
+            c.drawRightString(L + 388, y - 12, (_fmt(p["qty"]).rstrip("0").rstrip(".") if p["qty"] else "—"))
+            c.drawRightString(L + 500, y - 12, _fmt(p["weight"]))
+            tq += p["qty"]; tw += p["weight"]
+            prev_date = p["date"]
+            y -= rh
+        y -= 10
+        c.setFillColor(_hx(BLUE)); c.rect(L, y - 24, R - L, 28, fill=1, stroke=0)
+        c.setFont(_f(True), 9); c.setFillColor(_hx(WHITE))
+        c.drawString(L + 14, y - 16, "TOTAL PRODUCTION")
+        c.drawRightString(L + 388, y - 16, _fmt(tq).rstrip("0").rstrip(".") if tq else "0")
+        c.drawRightString(R - 14, y - 16, _fmt(tw) + " Kg")
+        _footer(c, foot, page_no())
+        c.showPage()
+
     c.save()
     return buf.getvalue()
 
@@ -593,8 +631,10 @@ def build_contractor_monthly_pdf(year, month, contractors, mlabel) -> bytes:
         return str(pg[0])
 
     # column x-offsets (from L)
-    X = {"date": 0, "pres": 70, "abs": 108, "half": 146, "rhrs": 188,
-         "otp": 250, "from": 298, "to": 342, "othr": 388, "thrs": 438, "amt": R - L}
+    X = {"date": 0, "pres": 64, "abs": 100, "half": 134, "rhrs": 170,
+         "otp": 222, "from": 260, "to": 314, "othr": 368, "thrs": 423, "amt": R - L}
+    # x-positions of the thin column separators (Date | Regular | Over Time | Tot Hrs | Amount)
+    VSEP = (L + 60, L + 210, L + 406, L + 480)
 
     def col_headers(y):
         # group bands
@@ -659,6 +699,10 @@ def build_contractor_monthly_pdf(year, month, contractors, mlabel) -> bytes:
             c.setFont(_f(True), 8); c.setFillColor(_hx(INK))
             c.drawRightString(L + X["thrs"] + 34, top, hm(row.get("day_hours", 0)))
             c.drawRightString(R - 6, top, "₹" + _fmt(row.get("day_amount", 0), 0))
+            c.setStrokeColor(_hx("#aab6c6")); c.setLineWidth(0.5)
+            for vx in VSEP:
+                c.line(vx, y - rh + 2, vx, y + 2)
+            c.setLineWidth(1)
             y -= rh
         y -= 8
         tt = ct["totals"]

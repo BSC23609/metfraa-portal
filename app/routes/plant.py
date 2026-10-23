@@ -1161,6 +1161,35 @@ def _build_monthly(db: Session, year: int, month: int):
     return company, contractors, work_summary, total_weight, has_data
 
 
+def _prod_log(db: Session, year: int, month: int):
+    """Date-wise production log for the team report — per (date, stage) qty &
+    weight, combining own-team and contractor work lines over the team cycle."""
+    from collections import defaultdict
+    start, end = _cycle_window(year, month)
+    agg = defaultdict(lambda: {"qty": 0.0, "weight": 0.0, "lines": 0})
+    for w in (db.query(PlantLabourWorkLog)
+              .filter(PlantLabourWorkLog.log_date >= start,
+                      PlantLabourWorkLog.log_date <= end).all()):
+        k = (w.log_date, w.stage or "Unstaged")
+        agg[k]["qty"] += w.qty_nos or 0
+        agg[k]["weight"] += w.weight_kg or 0
+        agg[k]["lines"] += 1
+    for w in (db.query(PlantContractorWorkLog)
+              .filter(PlantContractorWorkLog.log_date >= start,
+                      PlantContractorWorkLog.log_date <= end).all()):
+        k = (w.log_date, w.stage or "Unstaged")
+        agg[k]["qty"] += w.qty_nos or 0
+        agg[k]["weight"] += w.weight_kg or 0
+        agg[k]["lines"] += 1
+    order = ["Cutting", "H-Beam", "Fitup", "Welding", "Finishing", "Shotblasting", "Painting"]
+    _o = {s: i for i, s in enumerate(order)}
+    rows = [{"date": d.strftime("%d %b %Y"), "date_raw": d.isoformat(), "stage": st,
+             "qty": round(v["qty"], 2), "weight": round(v["weight"], 2), "lines": v["lines"]}
+            for (d, st), v in agg.items()]
+    rows.sort(key=lambda r: (r["date_raw"], _o.get(r["stage"], 99), r["stage"]))
+    return rows
+
+
 def _monthly_screen_breakdown(db: Session, year: int, month: int):
     """Day-wise spend + team x project weight for the on-SCREEN monthly tab
     only. Does NOT feed the PDF (the report is unchanged). Figures reconcile to
@@ -1520,7 +1549,7 @@ def api_monthly_team_pdf(period: str | None = None,
     if not company["rows"]:
         raise HTTPException(status_code=404, detail="No Metfraa Team attendance for this cycle.")
     from ..services.plant_pdf import build_team_monthly_pdf
-    pdf = build_team_monthly_pdf(year, month, company, work_summary, total_weight)
+    pdf = build_team_monthly_pdf(year, month, company, work_summary, total_weight, _prod_log(db, year, month))
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{_team_filename(year, month)}"'})
 
