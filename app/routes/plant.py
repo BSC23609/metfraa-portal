@@ -1115,7 +1115,8 @@ def _build_monthly(db: Session, year: int, month: int):
             day_reg = round(day_md * (c.per_day_rate or 0), 2)
             reg_hours = round(day_md * wh, 2)
             sessions = _sessions_for(a)
-            ot_hours = round(sum(float(x.get("hours") or 0) for x in sessions), 2)
+            # OT hours are man-hours: persons × session length, summed (matches the amount)
+            ot_hours = round(sum(float(x.get("persons") or 0) * float(x.get("hours") or 0) for x in sessions), 2)
             tot_reg_hours += reg_hours
             tot_ot_hours += ot_hours
             crows.append({"date": a.att_date.strftime("%d %b %Y"),
