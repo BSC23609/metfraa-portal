@@ -129,7 +129,7 @@ def login_page(
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"err": err, "next": next or ""},
+        {"err": err, "next": next or "", "group_hub_url": GROUP_HUB_URL if os.getenv("GROUP_SSO_SECRET") else ""},
     )
 
 
@@ -184,6 +184,84 @@ async def login_submit(
 
     response = RedirectResponse(url=target, status_code=303)
     set_session_cookie(response, token)
+    return response
+
+
+# ============================================================
+# Group single sign-on (app.thebharatsteelgroup.com)
+# ============================================================
+# The group hub signs the person in once, then sends them here with a one-minute
+# token signed with GROUP_SSO_SECRET (shared only between the hub and this app).
+# We check it, find the employee by code (then email), and start a normal session.
+# The ordinary employee-code login keeps working alongside this.
+
+GROUP_HUB_URL = os.getenv("GROUP_HUB_URL", "https://app.thebharatsteelgroup.com").rstrip("/")
+GROUP_SSO_APP_KEY = os.getenv("GROUP_SSO_APP_KEY", "metfraa-portal")
+
+
+def _sso_fail(msg: str) -> RedirectResponse:
+    from urllib.parse import quote
+    return RedirectResponse(url=f"/auth/login?err={quote(msg)}", status_code=303)
+
+
+@router.get("/sso")
+def group_sso(
+    request: Request,
+    token: str = "",
+    next: str = "",
+    db: Session = Depends(get_db),
+):
+    import jwt as pyjwt
+
+    secret = os.getenv("GROUP_SSO_SECRET", "")
+    if not secret:
+        return _sso_fail("Group sign-in is not set up on this app yet.")
+    try:
+        claims = pyjwt.decode(
+            token, secret, algorithms=["HS256"],
+            audience=GROUP_SSO_APP_KEY, issuer="bsg-hub",
+            options={"require": ["exp", "iat", "sub", "aud", "iss"]},
+            leeway=10,
+        )
+    except pyjwt.ExpiredSignatureError:
+        return _sso_fail("That sign-in link expired. Open the app again from the group portal.")
+    except pyjwt.PyJWTError:
+        return _sso_fail("Group sign-in could not be verified.")
+
+    ident = str(claims.get("sub") or "").strip()
+    email = str(claims.get("email") or "").strip().lower()
+    emp = None
+    if ident and "@" not in ident:
+        emp = db.query(Employee).filter(Employee.employee_code == ident.upper()).first()
+    if emp is None and (email or "@" in ident):
+        from sqlalchemy import func
+        look = email or ident.lower()
+        emp = db.query(Employee).filter(func.lower(Employee.email) == look).first()
+    if not emp or not emp.is_active:
+        log.warning("group sso: no active employee for sub=%r email=%r", ident, email)
+        return _sso_fail("Your group account is not linked to a Metfraa employee. Ask IT to set your Metfraa code in the group portal.")
+
+    # Someone who only ever signs in through the hub never sets a Metfraa password.
+    # Clear the forced-reset flag so they aren't blocked, and swap the known default
+    # password for a random one so it can't be used. They can still set their own
+    # Metfraa password later with "Forgot your password?".
+    if emp.must_reset_password:
+        emp.password_hash = bcrypt.hashpw(secrets.token_bytes(24), bcrypt.gensalt()).decode()
+        emp.must_reset_password = False
+
+    emp.last_login_at = datetime.utcnow()
+    db.add(AuditLog(
+        actor_code=emp.employee_code,
+        actor_email=emp.email,
+        action="login",
+        details={"employee_id": emp.id, "name": emp.name, "method": "group_sso", "jti": claims.get("jti")},
+    ))
+    db.commit()
+
+    target = next if (next.startswith("/") and not next.startswith("//")) else "/"
+    response = RedirectResponse(url=target, status_code=303)
+    response.headers["Referrer-Policy"] = "no-referrer"
+    set_session_cookie(response, issue_session_token(emp))
     return response
 
 

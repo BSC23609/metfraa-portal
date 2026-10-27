@@ -91,6 +91,16 @@
         </button>
       </form>
 
+      {% if group_hub_url %}
+      <div class="mt-4">
+        <div class="flex items-center gap-3 text-xs text-metfraa-gray-500 mb-3"><span class="flex-1 h-px bg-metfraa-gray-200"></span>or<span class="flex-1 h-px bg-metfraa-gray-200"></span></div>
+        <a href="{{ group_hub_url }}/launch/metfraa-portal{% if next %}?next={{ next|urlencode }}{% endif %}"
+           class="block w-full text-center border border-metfraa-gray-300 hover:border-metfraa-blue text-metfraa-ink font-semibold py-2.5 rounded-lg transition">
+          Sign in with Bharat Steel Group
+        </a>
+      </div>
+      {% endif %}
+
       <div class="mt-4 text-center">
         <a href="/auth/reset" class="text-xs text-metfraa-blue hover:text-metfraa-blue-dark font-semibold">
           Forgot your password?
