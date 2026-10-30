@@ -524,10 +524,10 @@
       <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div class="lbl">Production by stage — team-wise</div>
         <div class="flex gap-1">
-          <button @click="stageMetric='weight'"
+          <button @click="stageMetric='weight'; drawStageChart()"
             :class="stageMetric==='weight' ? 'bg-metfraa-blue text-white' : 'ring-1 ring-metfraa-gray-300 text-metfraa-gray-600'"
             class="px-3 py-1 rounded-lg text-xs font-bold">Weight (Kg)</button>
-          <button @click="stageMetric='qty'"
+          <button @click="stageMetric='qty'; drawStageChart()"
             :class="stageMetric==='qty' ? 'bg-metfraa-blue text-white' : 'ring-1 ring-metfraa-gray-300 text-metfraa-gray-600'"
             class="px-3 py-1 rounded-lg text-xs font-bold">Qty (Nos)</button>
         </div>
@@ -571,6 +571,7 @@
         </table>
         <p class="text-[11px] text-metfraa-gray-400 mt-2">Each team's production across the stages. Toggle Weight / Qty above.</p>
       </div>
+      <div style="position:relative;height:340px" class="mt-4"><canvas id="stageChart"></canvas></div>
     </div>
   </div>
 
@@ -1166,7 +1167,7 @@ function plantApp() {
     stages: ['Cutting','H-Beam','Fitup','Welding','Finishing','Shotblasting','Painting'],
     dbStart: (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1).toLocaleDateString('en-CA'); })(),
     dbEnd: new Date().toLocaleDateString('en-CA'),
-    db: null, attChart: null, workChart: null, jobChart: null, jobMetric: 'weight', stageMetric: 'weight',
+    db: null, attChart: null, workChart: null, jobChart: null, stageChart: null, jobMetric: 'weight', stageMetric: 'weight',
     brStart: new Date(Date.now()-13*864e5).toISOString().slice(0,10),
     brEnd: new Date().toISOString().slice(0,10),
     rangeDays: [], brDay: null,
@@ -1418,6 +1419,65 @@ function plantApp() {
       });
       } catch(e) { console.warn('job chart skipped:', e); }
     },
+    drawStageChart(tries) {
+      tries = tries || 0;
+      if (typeof Chart === 'undefined') { if (tries < 25) setTimeout(() => this.drawStageChart(tries+1), 200); return; }
+      try {
+      const sb = this.db && this.db.stage_breakdown;
+      const el = document.getElementById('stageChart');
+      if (this.stageChart) { this.stageChart.destroy(); this.stageChart = null; }
+      if (!el || !sb || !sb.teams || !sb.teams.length) return;
+      const palette = ['#1F7CCB','#059669','#d97706','#dc2626','#7c3aed','#0891b2','#be185d','#4d7c0f','#b45309','#0d1421'];
+      const labels = sb.teams.map(t => t.team);
+      const datasets = (sb.stages || []).map((st, i) => ({
+        label: st,
+        data: sb.teams.map(t => (t.by_stage[st] ? t.by_stage[st][this.stageMetric] : 0)),
+        backgroundColor: palette[i % palette.length],
+      }));
+      const segLabels = {
+        id: 'segLabels',
+        afterDatasetsDraw(chart) {
+          const ctx = chart.ctx;
+          ctx.save();
+          ctx.font = 'bold 10px ui-sans-serif, system-ui, sans-serif';
+          ctx.textBaseline = 'middle';
+          const rightUsed = {};   // bar index -> last y of a right-side label (overlap guard)
+          chart.data.datasets.forEach((ds, di) => {
+            const meta = chart.getDatasetMeta(di);
+            if (meta.hidden) return;
+            meta.data.forEach((elm, i) => {
+              const v = ds.data[i];
+              if (!v) return;
+              const p = elm.getProps(['x', 'y', 'base', 'width'], true);
+              const txt = (+v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+              if (Math.abs(p.base - p.y) >= 12) {
+                // tall enough: white label centred inside the coloured box
+                ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center';
+                ctx.fillText(txt, p.x, (p.y + p.base) / 2);
+              } else {
+                // too short: draw it just to the right of the bar, in the stage's colour
+                let yc = (p.y + p.base) / 2;
+                if (rightUsed[i] != null && Math.abs(yc - rightUsed[i]) < 12) yc = rightUsed[i] - 12;
+                rightUsed[i] = yc;
+                ctx.fillStyle = ds.backgroundColor; ctx.textAlign = 'left';
+                ctx.fillText(txt, p.x + p.width / 2 + 6, yc);
+              }
+            });
+          });
+          ctx.restore();
+        }
+      };
+      this.stageChart = new Chart(el, {
+        type: 'bar',
+        data: { labels, datasets },
+        plugins: [segLabels],
+        options: { responsive:true, maintainAspectRatio:false,
+          plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}},
+                   title:{display:true,text:(this.stageMetric==='weight'?'Weight (Kg)':'Qty (Nos)')+' by team, split by stage'}},
+          scales:{ x:{stacked:true}, y:{stacked:true,beginAtZero:true} } }
+      });
+      } catch(e) { console.warn('stage chart skipped:', e); }
+    },
     drawCharts(tries) {
       tries = tries || 0;
       if (typeof Chart === 'undefined') { if (tries < 25) setTimeout(() => this.drawCharts(tries+1), 200); return; }
@@ -1451,6 +1511,7 @@ function plantApp() {
         });
       } catch(e) { console.warn('charts skipped:', e); }
       this.drawJobChart();
+      this.drawStageChart();
     },
     fmtDate(iso) { return new Date(iso+'T00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); },
     async loadRange() {
