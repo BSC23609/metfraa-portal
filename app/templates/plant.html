@@ -1263,7 +1263,7 @@ function plantApp() {
           half1_skilled: +c.half1_skilled || 0, half1_helper: +c.half1_helper || 0,
           half2_skilled: +c.half2_skilled || 0, half2_helper: +c.half2_helper || 0,
           absent_remarks: c.absent_remarks || '', half1_remarks: c.half1_remarks || '', half2_remarks: c.half2_remarks || '',
-          ot: !!c.ot, ot_persons: +c.ot_persons || 0, ot_hours: +c.ot_hours || 0 })),
+          ot_sessions: (c.ot_sessions || []).map(s => ({ persons: +s.persons || 0, from: s.from || '', to: s.to || '' })) })),
         labour_worklog: this.labourWork,
         contractor_worklog: this.contractorWork };
     },
@@ -1298,19 +1298,7 @@ function plantApp() {
       try {
         const r = await fetch('/plant/api/day', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ date: this.day, day_type: this.dayType,
-            labour: this.labour.map(l => ({ id: l.id, status: l.status,
-              half_part: l.status === 'H' ? (l.half_part || null) : null,
-              ot: !!l.ot, ot_hours: +l.ot_hours || 0 })),
-            labour_worklog: this.labourWork,
-            contractor_worklog: this.contractorWork,
-            contractors: this.contractors.map(c => ({ id: c.id,
-              skilled: +c.skilled || 0, helper: +c.helper || 0,
-              absent_skilled: +c.absent_skilled || 0, absent_helper: +c.absent_helper || 0,
-              half1_skilled: +c.half1_skilled || 0, half1_helper: +c.half1_helper || 0,
-              half2_skilled: +c.half2_skilled || 0, half2_helper: +c.half2_helper || 0,
-              absent_remarks: c.absent_remarks || '', half1_remarks: c.half1_remarks || '', half2_remarks: c.half2_remarks || '',
-              ot_sessions: (c.ot_sessions || []).map(s => ({ persons: +s.persons || 0, from: s.from || '', to: s.to || '' })) })) }),
+          body: JSON.stringify(this._dayBody()),
         });
         if (!r.ok) { alert('Save failed'); return; }
         this.saved = true;
