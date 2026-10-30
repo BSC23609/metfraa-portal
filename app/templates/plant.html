@@ -1429,10 +1429,17 @@ function plantApp() {
       if (this.stageChart) { this.stageChart.destroy(); this.stageChart = null; }
       if (!el || !sb || !sb.teams || !sb.teams.length) return;
       const palette = ['#1F7CCB','#059669','#d97706','#dc2626','#7c3aed','#0891b2','#be185d','#4d7c0f','#b45309','#0d1421'];
-      const labels = sb.teams.map(t => t.team);
+      // one bar per team→project; two-line label = [project, (team)]
+      const bars = [];
+      sb.teams.forEach(t => {
+        const projs = (t.projects && t.projects.length) ? t.projects
+                     : [{ project: '—', by_stage: t.by_stage }];
+        projs.forEach(p => bars.push({ team: t.team, project: p.project, by_stage: p.by_stage }));
+      });
+      const labels = bars.map(b => [b.project, '(' + b.team + ')']);
       const datasets = (sb.stages || []).map((st, i) => ({
         label: st,
-        data: sb.teams.map(t => (t.by_stage[st] ? t.by_stage[st][this.stageMetric] : 0)),
+        data: bars.map(b => (b.by_stage[st] ? b.by_stage[st][this.stageMetric] : 0)),
         backgroundColor: palette[i % palette.length],
       }));
       const segLabels = {
@@ -1474,7 +1481,7 @@ function plantApp() {
         plugins: [segLabels],
         options: { responsive:true, maintainAspectRatio:false,
           plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}},
-                   title:{display:true,text:(this.stageMetric==='weight'?'Weight (Kg)':'Qty (Nos)')+' by team, split by stage'}},
+                   title:{display:true,text:(this.stageMetric==='weight'?'Weight (Kg)':'Qty (Nos)')+' by project (grouped by team), split by stage'}},
           scales:{ x:{stacked:true}, y:{stacked:true,beginAtZero:true} } }
       });
       } catch(e) { console.warn('stage chart skipped:', e); }
