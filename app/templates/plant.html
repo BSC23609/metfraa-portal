@@ -522,7 +522,7 @@
     <!-- production by stage -->
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
       <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <div class="lbl">Production by stage — team-wise</div>
+        <div class="lbl">Production by stage — team &amp; project</div>
         <div class="flex gap-1">
           <button @click="stageMetric='weight'; drawStageChart()"
             :class="stageMetric==='weight' ? 'bg-metfraa-blue text-white' : 'ring-1 ring-metfraa-gray-300 text-metfraa-gray-600'"
@@ -543,20 +543,33 @@
               <th class="py-2 pl-3 text-right">Total</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-metfraa-gray-100">
-            <template x-for="t in (db && db.stage_breakdown ? db.stage_breakdown.teams : [])" :key="t.team">
-              <tr>
-                <td class="py-2 pr-4 font-semibold" x-text="t.team"></td>
+          <template x-for="t in (db && db.stage_breakdown ? db.stage_breakdown.teams : [])" :key="t.team">
+            <tbody class="border-t-2 border-metfraa-gray-200">
+              <tr class="bg-metfraa-gray-50">
+                <td class="py-2 pr-4 font-bold" x-text="t.team"></td>
                 <template x-for="st in db.stage_breakdown.stages" :key="st">
-                  <td class="py-2 px-3 text-right mono"
+                  <td class="py-2 px-3 text-right mono font-bold"
                       :class="(t.by_stage[st] && t.by_stage[st][stageMetric]) ? '' : 'text-metfraa-gray-300'"
                       x-text="(t.by_stage[st] ? t.by_stage[st][stageMetric] : 0).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
                 </template>
-                <td class="py-2 pl-3 text-right mono font-semibold text-metfraa-blue" x-text="t[stageMetric].toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                <td class="py-2 pl-3 text-right mono font-bold text-metfraa-blue" x-text="t[stageMetric].toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
               </tr>
-            </template>
+              <template x-for="p in (t.projects || [])" :key="t.team + '|' + p.project">
+                <tr class="border-t border-metfraa-gray-100">
+                  <td class="py-1.5 pr-4 pl-4 text-metfraa-gray-500 text-[13px]">↳ <span x-text="p.project"></span></td>
+                  <template x-for="st in db.stage_breakdown.stages" :key="st">
+                    <td class="py-1.5 px-3 text-right mono text-[13px]"
+                        :class="(p.by_stage[st] && p.by_stage[st][stageMetric]) ? 'text-metfraa-gray-600' : 'text-metfraa-gray-300'"
+                        x-text="(p.by_stage[st] ? p.by_stage[st][stageMetric] : 0).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                  </template>
+                  <td class="py-1.5 pl-3 text-right mono text-[13px] text-metfraa-gray-600" x-text="p[stageMetric].toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
+                </tr>
+              </template>
+            </tbody>
+          </template>
+          <tbody>
             <template x-if="db && db.stage_breakdown && db.stage_breakdown.teams && db.stage_breakdown.teams.length">
-              <tr class="border-t-2 border-metfraa-gray-200 font-bold">
+              <tr class="border-t-2 border-metfraa-gray-300 font-bold">
                 <td class="py-2 pr-4">Total</td>
                 <template x-for="st in db.stage_breakdown.stages" :key="st">
                   <td class="py-2 px-3 text-right mono" x-text="(db.stage_breakdown.totals[st] ? db.stage_breakdown.totals[st][stageMetric] : 0).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
@@ -569,64 +582,9 @@
             </template>
           </tbody>
         </table>
-        <p class="text-[11px] text-metfraa-gray-400 mt-2">Each team's production across the stages. Toggle Weight / Qty above.</p>
+        <p class="text-[11px] text-metfraa-gray-400 mt-2">Each team in bold, with its projects split underneath. Toggle Weight / Qty above.</p>
       </div>
       <div style="position:relative;height:340px" class="mt-4"><canvas id="stageChart"></canvas></div>
-    </div>
-
-    <!-- production by stage, project-wise -->
-    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 mt-5">
-      <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <div class="lbl">Production by stage — project-wise</div>
-        <div class="flex gap-1">
-          <button @click="projMetric='weight'; drawProjStageChart()"
-            :class="projMetric==='weight' ? 'bg-metfraa-blue text-white' : 'ring-1 ring-metfraa-gray-300 text-metfraa-gray-600'"
-            class="px-3 py-1 rounded-lg text-xs font-bold">Weight (Kg)</button>
-          <button @click="projMetric='qty'; drawProjStageChart()"
-            :class="projMetric==='qty' ? 'bg-metfraa-blue text-white' : 'ring-1 ring-metfraa-gray-300 text-metfraa-gray-600'"
-            class="px-3 py-1 rounded-lg text-xs font-bold">Qty (Nos)</button>
-        </div>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm whitespace-nowrap">
-          <thead>
-            <tr class="text-left lbl border-b border-metfraa-gray-100">
-              <th class="py-2 pr-4">Project</th>
-              <template x-for="st in (db && db.stage_project_breakdown ? db.stage_project_breakdown.stages : [])" :key="st">
-                <th class="py-2 px-3 text-right" x-text="st"></th>
-              </template>
-              <th class="py-2 pl-3 text-right">Total</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-metfraa-gray-100">
-            <template x-for="pr in (db && db.stage_project_breakdown ? db.stage_project_breakdown.projects : [])" :key="pr.project">
-              <tr>
-                <td class="py-2 pr-4 font-semibold" x-text="pr.project"></td>
-                <template x-for="st in db.stage_project_breakdown.stages" :key="st">
-                  <td class="py-2 px-3 text-right mono"
-                      :class="(pr.by_stage[st] && pr.by_stage[st][projMetric]) ? '' : 'text-metfraa-gray-300'"
-                      x-text="(pr.by_stage[st] ? pr.by_stage[st][projMetric] : 0).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
-                </template>
-                <td class="py-2 pl-3 text-right mono font-semibold text-metfraa-blue" x-text="pr[projMetric].toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
-              </tr>
-            </template>
-            <template x-if="db && db.stage_project_breakdown && db.stage_project_breakdown.projects && db.stage_project_breakdown.projects.length">
-              <tr class="border-t-2 border-metfraa-gray-200 font-bold">
-                <td class="py-2 pr-4">Total</td>
-                <template x-for="st in db.stage_project_breakdown.stages" :key="st">
-                  <td class="py-2 px-3 text-right mono" x-text="(db.stage_project_breakdown.totals[st] ? db.stage_project_breakdown.totals[st][projMetric] : 0).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
-                </template>
-                <td class="py-2 pl-3 text-right mono text-metfraa-blue" x-text="(db.stage_project_breakdown.grand ? db.stage_project_breakdown.grand[projMetric] : 0).toLocaleString('en-IN',{maximumFractionDigits:2})"></td>
-              </tr>
-            </template>
-            <template x-if="db && (!db.stage_project_breakdown || !db.stage_project_breakdown.projects || !db.stage_project_breakdown.projects.length)">
-              <tr><td class="py-6 text-center text-metfraa-gray-400 text-sm">No project-tagged work in this range.</td></tr>
-            </template>
-          </tbody>
-        </table>
-        <p class="text-[11px] text-metfraa-gray-400 mt-2">Each project's production across the stages. Toggle Weight / Qty above.</p>
-      </div>
-      <div style="position:relative;height:340px" class="mt-4"><canvas id="projStageChart"></canvas></div>
     </div>
   </div>
 
@@ -1222,7 +1180,7 @@ function plantApp() {
     stages: ['Cutting','H-Beam','Fitup','Welding','Finishing','Shotblasting','Painting'],
     dbStart: (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1).toLocaleDateString('en-CA'); })(),
     dbEnd: new Date().toLocaleDateString('en-CA'),
-    db: null, attChart: null, workChart: null, jobChart: null, stageChart: null, projStageChart: null, jobMetric: 'weight', stageMetric: 'weight', projMetric: 'weight',
+    db: null, attChart: null, workChart: null, jobChart: null, stageChart: null, jobMetric: 'weight', stageMetric: 'weight',
     brStart: new Date(Date.now()-13*864e5).toISOString().slice(0,10),
     brEnd: new Date().toISOString().slice(0,10),
     rangeDays: [], brDay: null,
@@ -1521,63 +1479,6 @@ function plantApp() {
       });
       } catch(e) { console.warn('stage chart skipped:', e); }
     },
-    drawProjStageChart(tries) {
-      tries = tries || 0;
-      if (typeof Chart === 'undefined') { if (tries < 25) setTimeout(() => this.drawProjStageChart(tries+1), 200); return; }
-      try {
-      const sb = this.db && this.db.stage_project_breakdown;
-      const el = document.getElementById('projStageChart');
-      if (this.projStageChart) { this.projStageChart.destroy(); this.projStageChart = null; }
-      if (!el || !sb || !sb.projects || !sb.projects.length) return;
-      const palette = ['#1F7CCB','#059669','#d97706','#dc2626','#7c3aed','#0891b2','#be185d','#4d7c0f','#b45309','#0d1421'];
-      const labels = sb.projects.map(r => r.project);
-      const datasets = (sb.stages || []).map((st, i) => ({
-        label: st,
-        data: sb.projects.map(r => (r.by_stage[st] ? r.by_stage[st][this.projMetric] : 0)),
-        backgroundColor: palette[i % palette.length],
-      }));
-      const segLabels = {
-        id: 'segLabels',
-        afterDatasetsDraw(chart) {
-          const ctx = chart.ctx;
-          ctx.save();
-          ctx.font = 'bold 10px ui-sans-serif, system-ui, sans-serif';
-          ctx.textBaseline = 'middle';
-          const rightUsed = {};
-          chart.data.datasets.forEach((ds, di) => {
-            const meta = chart.getDatasetMeta(di);
-            if (meta.hidden) return;
-            meta.data.forEach((elm, i) => {
-              const v = ds.data[i];
-              if (!v) return;
-              const p = elm.getProps(['x', 'y', 'base', 'width'], true);
-              const txt = (+v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
-              if (Math.abs(p.base - p.y) >= 12) {
-                ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center';
-                ctx.fillText(txt, p.x, (p.y + p.base) / 2);
-              } else {
-                let yc = (p.y + p.base) / 2;
-                if (rightUsed[i] != null && Math.abs(yc - rightUsed[i]) < 12) yc = rightUsed[i] - 12;
-                rightUsed[i] = yc;
-                ctx.fillStyle = ds.backgroundColor; ctx.textAlign = 'left';
-                ctx.fillText(txt, p.x + p.width / 2 + 6, yc);
-              }
-            });
-          });
-          ctx.restore();
-        }
-      };
-      this.projStageChart = new Chart(el, {
-        type: 'bar',
-        data: { labels, datasets },
-        plugins: [segLabels],
-        options: { responsive:true, maintainAspectRatio:false,
-          plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}},
-                   title:{display:true,text:(this.projMetric==='weight'?'Weight (Kg)':'Qty (Nos)')+' by project, split by stage'}},
-          scales:{ x:{stacked:true}, y:{stacked:true,beginAtZero:true} } }
-      });
-      } catch(e) { console.warn('project stage chart skipped:', e); }
-    },
     drawCharts(tries) {
       tries = tries || 0;
       if (typeof Chart === 'undefined') { if (tries < 25) setTimeout(() => this.drawCharts(tries+1), 200); return; }
@@ -1612,7 +1513,6 @@ function plantApp() {
       } catch(e) { console.warn('charts skipped:', e); }
       this.drawJobChart();
       this.drawStageChart();
-      this.drawProjStageChart();
     },
     fmtDate(iso) { return new Date(iso+'T00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); },
     async loadRange() {
