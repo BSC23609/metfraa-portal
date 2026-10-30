@@ -916,6 +916,8 @@ def api_dashboard(start: str | None = None, end: str | None = None,
     stagework = defaultdict(lambda: {"qty": 0.0, "weight": 0.0, "lines": 0})
     # team -> stage -> {qty, weight, lines}
     stage_team = defaultdict(lambda: defaultdict(lambda: {"qty": 0.0, "weight": 0.0, "lines": 0}))
+    # project(job) -> stage -> {qty, weight, lines}
+    job_stage = defaultdict(lambda: defaultdict(lambda: {"qty": 0.0, "weight": 0.0, "lines": 0}))
 
     for w in (db.query(PlantLabourWorkLog)
               .filter(PlantLabourWorkLog.log_date >= s_,
@@ -935,6 +937,9 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         stage_team["Metfraa Team"][st]["qty"] += w.qty_nos or 0
         stage_team["Metfraa Team"][st]["weight"] += w.weight_kg or 0
         stage_team["Metfraa Team"][st]["lines"] += 1
+        job_stage[jn][st]["qty"] += w.qty_nos or 0
+        job_stage[jn][st]["weight"] += w.weight_kg or 0
+        job_stage[jn][st]["lines"] += 1
     for w in (db.query(PlantContractorWorkLog)
               .filter(PlantContractorWorkLog.log_date >= s_,
                       PlantContractorWorkLog.log_date <= e).all()):
@@ -954,6 +959,9 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         stage_team[name][st]["qty"] += w.qty_nos or 0
         stage_team[name][st]["weight"] += w.weight_kg or 0
         stage_team[name][st]["lines"] += 1
+        job_stage[jn][st]["qty"] += w.qty_nos or 0
+        job_stage[jn][st]["weight"] += w.weight_kg or 0
+        job_stage[jn][st]["lines"] += 1
 
     # fill every calendar day in range so the trend line has no gaps
     from datetime import timedelta
@@ -1016,6 +1024,28 @@ def api_dashboard(start: str | None = None, end: str | None = None,
                   "weight": round(sum(stagework[s]["weight"] for s in present_stages), 2)},
     }
 
+    # same matrix, PROJECT × STAGE (rows = jobs/projects), biggest first
+    proj_rows = []
+    for jn in job_stage.keys():
+        bs = job_stage[jn]
+        proj_rows.append({
+            "project": jn,
+            "by_stage": {st: {"qty": round(bs.get(st, {}).get("qty", 0), 2),
+                              "weight": round(bs.get(st, {}).get("weight", 0), 2)}
+                         for st in present_stages},
+            "qty": round(sum(bs.get(st, {}).get("qty", 0) for st in present_stages), 2),
+            "weight": round(sum(bs.get(st, {}).get("weight", 0) for st in present_stages), 2),
+        })
+    proj_rows.sort(key=lambda r: r["weight"], reverse=True)
+    stage_project_breakdown = {
+        "stages": present_stages,
+        "projects": proj_rows,
+        "totals": {st: {"qty": round(stagework[st]["qty"], 2),
+                        "weight": round(stagework[st]["weight"], 2)} for st in present_stages},
+        "grand": {"qty": round(sum(stagework[s]["qty"] for s in present_stages), 2),
+                  "weight": round(sum(stagework[s]["weight"] for s in present_stages), 2)},
+    }
+
     totals = {
         "present": sum(d["present"] for d in days),
         "half": sum(d["half"] for d in days),
@@ -1026,7 +1056,8 @@ def api_dashboard(start: str | None = None, end: str | None = None,
     }
     return {"start": s_.isoformat(), "end": e.isoformat(),
             "days": days, "teams": teams, "totals": totals,
-            "job_breakdown": job_breakdown, "stage_breakdown": stage_breakdown}
+            "job_breakdown": job_breakdown, "stage_breakdown": stage_breakdown,
+            "stage_project_breakdown": stage_project_breakdown}
 
 
 # --------------------------------------------------------------- monthly
