@@ -914,6 +914,8 @@ def api_dashboard(start: str | None = None, end: str | None = None,
     job_team = defaultdict(lambda: defaultdict(lambda: {"qty": 0.0, "weight": 0.0}))
     # production stage -> {qty, weight, lines}
     stagework = defaultdict(lambda: {"qty": 0.0, "weight": 0.0, "lines": 0})
+    # team -> stage -> {qty, weight, lines}
+    stage_team = defaultdict(lambda: defaultdict(lambda: {"qty": 0.0, "weight": 0.0, "lines": 0}))
 
     for w in (db.query(PlantLabourWorkLog)
               .filter(PlantLabourWorkLog.log_date >= s_,
@@ -930,6 +932,9 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         stagework[st]["qty"] += w.qty_nos or 0
         stagework[st]["weight"] += w.weight_kg or 0
         stagework[st]["lines"] += 1
+        stage_team["Metfraa Team"][st]["qty"] += w.qty_nos or 0
+        stage_team["Metfraa Team"][st]["weight"] += w.weight_kg or 0
+        stage_team["Metfraa Team"][st]["lines"] += 1
     for w in (db.query(PlantContractorWorkLog)
               .filter(PlantContractorWorkLog.log_date >= s_,
                       PlantContractorWorkLog.log_date <= e).all()):
@@ -946,6 +951,9 @@ def api_dashboard(start: str | None = None, end: str | None = None,
         stagework[st]["qty"] += w.qty_nos or 0
         stagework[st]["weight"] += w.weight_kg or 0
         stagework[st]["lines"] += 1
+        stage_team[name][st]["qty"] += w.qty_nos or 0
+        stage_team[name][st]["weight"] += w.weight_kg or 0
+        stage_team[name][st]["lines"] += 1
 
     # fill every calendar day in range so the trend line has no gaps
     from datetime import timedelta
@@ -980,13 +988,33 @@ def api_dashboard(start: str | None = None, end: str | None = None,
     job_rows.sort(key=lambda r: r["total_weight"], reverse=True)
     job_breakdown = {"teams": team_names, "jobs": job_rows}
 
-    # stage-wise production, in the real process order (Cutting → … → Painting)
+    # stage-wise production as a TEAM × STAGE matrix (rows = teams, cols = stages),
+    # stages in the real process order (Cutting → … → Painting), Unstaged last.
     STAGE_ORDER = ["Cutting", "H-Beam", "Fitup", "Welding", "Finishing", "Shotblasting", "Painting"]
     _sord = {s: i for i, s in enumerate(STAGE_ORDER)}
-    stage_breakdown = sorted(
-        ({"stage": s, "qty": round(v["qty"], 2), "weight": round(v["weight"], 2), "lines": v["lines"]}
-         for s, v in stagework.items()),
-        key=lambda r: (_sord.get(r["stage"], 99), r["stage"]))
+    present_stages = sorted(stagework.keys(),
+                            key=lambda s: (99 if s == "Unstaged" else _sord.get(s, 98), s))
+    stage_team_order = (["Metfraa Team"] if "Metfraa Team" in team_names else []) + \
+                       [t for t in team_names if t != "Metfraa Team"]
+    stage_rows = []
+    for tn in stage_team_order:
+        bs = stage_team.get(tn, {})
+        stage_rows.append({
+            "team": tn,
+            "by_stage": {st: {"qty": round(bs.get(st, {}).get("qty", 0), 2),
+                              "weight": round(bs.get(st, {}).get("weight", 0), 2)}
+                         for st in present_stages},
+            "qty": round(sum(bs.get(st, {}).get("qty", 0) for st in present_stages), 2),
+            "weight": round(sum(bs.get(st, {}).get("weight", 0) for st in present_stages), 2),
+        })
+    stage_breakdown = {
+        "stages": present_stages,
+        "teams": stage_rows,
+        "totals": {st: {"qty": round(stagework[st]["qty"], 2),
+                        "weight": round(stagework[st]["weight"], 2)} for st in present_stages},
+        "grand": {"qty": round(sum(stagework[s]["qty"] for s in present_stages), 2),
+                  "weight": round(sum(stagework[s]["weight"] for s in present_stages), 2)},
+    }
 
     totals = {
         "present": sum(d["present"] for d in days),
