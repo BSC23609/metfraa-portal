@@ -270,3 +270,12 @@ def manifest():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ---- TEMPORARY: logs DATABASE_URL to Vercel's private logs only. REMOVE after use. ----
+@app.get("/__tmp-dburl", include_in_schema=False)
+def __tmp_dburl():
+    import os
+
+    print("TMP_DBURL_START>>>", os.environ.get("DATABASE_URL"), "<<<TMP_DBURL_END")
+    return {"ok": True}
