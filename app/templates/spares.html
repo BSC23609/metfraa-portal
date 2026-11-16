@@ -43,8 +43,6 @@
            class="text-sm rounded-lg border-metfraa-gray-300 w-72">
     <div class="flex-1"></div>
     <button @click="openAdd()" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold">+ Add part</button>
-    <button @click="showImport = true" class="px-3 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-bold">Import</button>
-    <a href="/spares/export.csv" class="px-3 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-bold">Export CSV</a>
   </div>
 
   <!-- table -->
@@ -170,27 +168,6 @@
     </div>
   </div>
 
-  <!-- import modal -->
-  <div x-show="showImport" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" @click.self="showImport=false">
-    <div class="bg-white rounded-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-      <h3 class="display text-xl text-metfraa-ink mb-1">Import parts (CSV)</h3>
-      <p class="text-sm text-metfraa-gray-500 mb-3">Paste rows copied from Excel (or a CSV). First row must be the header — columns like
-        Part Code, Part Name, Machine / Equipment, Manufacturer, Unit, Opening Qty, Qty In, Qty Out, Min Stock Level, Unit Price, Supplier, Last Purchase Date.
-        S.No, Current Stock, Reorder Status and Stock Value are ignored (they're recalculated).</p>
-      <textarea x-model="importText" rows="10" placeholder="Part Code,Part Name,Machine / Equipment,…"
-                class="w-full text-xs mono rounded-lg border-metfraa-gray-300"></textarea>
-      <label class="flex items-center gap-2 mt-3 text-sm">
-        <input type="checkbox" x-model="importReplace" class="rounded border-metfraa-gray-300">
-        Replace the current list (archive all existing parts first)
-      </label>
-      <p x-show="importMsg" class="text-sm mt-2" :class="importErr?'text-red-600':'text-green-700'" x-text="importMsg"></p>
-      <div class="flex justify-end gap-2 mt-5">
-        <button @click="showImport=false" class="px-4 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-bold">Close</button>
-        <button @click="doImport()" :disabled="saving" class="px-5 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50" x-text="saving?'Importing…':'Import'"></button>
-      </div>
-    </div>
-  </div>
-
 </div>
 
 <script>
@@ -200,7 +177,6 @@ function sparesApp() {
     showForm: false, saving: false, formErr: '',
     form: {},
     showMove: false, moveErr: '', move: {},
-    showImport: false, importText: '', importReplace: false, importMsg: '', importErr: false,
 
     init() { this.load(); },
 
@@ -266,21 +242,6 @@ function sparesApp() {
       if (!confirm('Remove "' + r.part_name + '" from the inventory?')) return;
       await fetch('/spares/api/' + r.id + '/delete', { method: 'POST' });
       await this.load();
-    },
-
-    async doImport() {
-      if (!this.importText.trim()) { this.importErr = true; this.importMsg = 'Paste some rows first'; return; }
-      this.saving = true; this.importMsg = '';
-      try {
-        const r = await fetch('/spares/api/import', { method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ csv_text: this.importText, replace: this.importReplace }) });
-        const d = await r.json();
-        if (!r.ok) { this.importErr = true; this.importMsg = d.detail || 'Import failed'; return; }
-        this.importErr = false; this.importMsg = 'Imported ' + d.created + ' parts.';
-        this.importText = ''; await this.load();
-      } catch (e) { this.importErr = true; this.importMsg = 'Import failed'; }
-      finally { this.saving = false; }
     },
   };
 }

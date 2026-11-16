@@ -8,13 +8,11 @@ and reorder status are derived (never stored) so they can't drift:
 
 Access is gated by the same maint_admin flag as the Maintenance module.
 """
-import csv
-import io
 import logging
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import or_
@@ -221,114 +219,3 @@ def api_delete(pid: int, user: Employee = Depends(get_current_user),
     p.active = False
     db.commit()
     return {"ok": True}
-
-
-# ----------------------------------------------------------------- import
-class ImportIn(BaseModel):
-    csv_text: str
-    replace: bool = False          # True -> deactivate existing first
-
-
-# header label -> model field
-_IMPORT_MAP = {
-    "part code": "part_code", "partcode": "part_code",
-    "part name": "part_name", "partname": "part_name", "description": "part_name",
-    "machine / equipment": "machine", "machine": "machine", "equipment": "machine",
-    "manufacturer": "manufacturer", "make": "manufacturer",
-    "unit": "unit", "uom": "unit",
-    "opening qty": "opening_qty", "opening": "opening_qty",
-    "qty in": "qty_in", "in": "qty_in",
-    "qty out": "qty_out", "out": "qty_out",
-    "min stock level": "min_stock_level", "min stock": "min_stock_level",
-    "reorder level": "min_stock_level",
-    "unit price": "unit_price", "price": "unit_price", "rate": "unit_price",
-    "supplier": "supplier", "vendor": "supplier",
-    "last purchase date": "last_purchase_date", "purchase date": "last_purchase_date",
-}
-# columns we skip (derived / running number)
-_IMPORT_SKIP = {"s.no", "sno", "sl.no", "current stock", "stock",
-                "reorder status", "status", "stock value", "value"}
-
-
-@router.post("/api/import")
-def api_import(payload: ImportIn, user: Employee = Depends(get_current_user),
-               db: Session = Depends(get_db)):
-    _guard(db, user)
-    text = (payload.csv_text or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="No CSV data provided")
-    reader = csv.reader(io.StringIO(text))
-    rows = [r for r in reader if any((c or "").strip() for c in r)]
-    if len(rows) < 2:
-        raise HTTPException(status_code=400, detail="Need a header row plus at least one data row")
-
-    header = [(c or "").strip().lower() for c in rows[0]]
-    fields = []
-    for h in header:
-        if h in _IMPORT_SKIP:
-            fields.append(None)
-        else:
-            fields.append(_IMPORT_MAP.get(h))
-    if "part_name" not in fields:
-        raise HTTPException(status_code=400,
-                            detail="Could not find a 'Part Name' column in the header")
-
-    if payload.replace:
-        db.query(MaintSparePart).filter(MaintSparePart.active == True).update(  # noqa: E712
-            {MaintSparePart.active: False}, synchronize_session=False)
-
-    created = 0
-    for r in rows[1:]:
-        data = {}
-        for i, field in enumerate(fields):
-            if not field or i >= len(r):
-                continue
-            data[field] = r[i]
-        name = (data.get("part_name") or "").strip()
-        if not name:
-            continue
-        p = MaintSparePart(
-            part_code=(data.get("part_code") or "").strip() or None,
-            part_name=name,
-            machine=(data.get("machine") or "").strip() or None,
-            manufacturer=(data.get("manufacturer") or "").strip() or None,
-            unit=(data.get("unit") or "").strip() or None,
-            opening_qty=_fnum(data.get("opening_qty")),
-            qty_in=_fnum(data.get("qty_in")),
-            qty_out=_fnum(data.get("qty_out")),
-            min_stock_level=_fnum(data.get("min_stock_level")),
-            unit_price=_fnum(data.get("unit_price")),
-            supplier=(data.get("supplier") or "").strip() or None,
-            last_purchase_date=_pdate(data.get("last_purchase_date")),
-        )
-        db.add(p)
-        created += 1
-    db.commit()
-    return {"ok": True, "created": created}
-
-
-# ----------------------------------------------------------------- export
-@router.get("/export.csv")
-def export_csv(user: Employee = Depends(get_current_user),
-               db: Session = Depends(get_db)):
-    _guard(db, user)
-    rows = (db.query(MaintSparePart)
-            .filter(MaintSparePart.active == True)  # noqa: E712
-            .order_by(MaintSparePart.part_name).all())
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["S.No", "Part Code", "Part Name", "Machine / Equipment",
-                "Manufacturer", "Unit", "Opening Qty", "Qty In", "Qty Out",
-                "Current Stock", "Min Stock Level", "Reorder Status",
-                "Unit Price", "Stock Value", "Supplier", "Last Purchase Date"])
-    for i, p in enumerate(rows, 1):
-        j = _json(p)
-        w.writerow([i, j["part_code"] or "", j["part_name"], j["machine"] or "",
-                    j["manufacturer"] or "", j["unit"] or "", j["opening_qty"],
-                    j["qty_in"], j["qty_out"], j["current_stock"],
-                    j["min_stock_level"], j["reorder_status"], j["unit_price"],
-                    j["stock_value"], j["supplier"] or "",
-                    j["last_purchase_date"] or ""])
-    return Response(content=buf.getvalue(), media_type="text/csv",
-                    headers={"Content-Disposition":
-                             "attachment; filename=spare_parts_inventory.csv"})

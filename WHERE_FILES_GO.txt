@@ -1,18 +1,22 @@
-Spare Parts Inventory module — files and where each goes in metfraa-portal:
+Spare Parts Inventory — auto-seed update (removes Import/Export CSV).
 
-NEW files (just add them):
-  app/routes/spares.py          -> app\routes\spares.py
-  app/templates/spares.html     -> app\templates\spares.html
+Built on your CURRENT repo (origin f695fb8), so only 4 files change.
 
-MODIFIED files (overwrite existing):
-  app/main.py                   -> app\main.py          (registers the router)
-  app/models.py                 -> app\models.py        (adds MaintSparePart table)
-  app/startup_migrations.py     -> app\startup_migrations.py  (creates the table on boot)
-  app/templates/home.html       -> app\templates\home.html    (adds the Spare Parts tile)
+NEW file:
+  app/spare_parts_seed.py        -> app\spare_parts_seed.py   (45 parts + auto-loader)
 
-DATA:
-  Spare_Parts_Import.csv        -> import via the Import button on the Spare Parts page
-                                   (45 parts from your workbook)
+OVERWRITE these:
+  app/main.py                    (runs the seed on startup)
+  app/routes/spares.py           (import/export endpoints removed)
+  app/templates/spares.html      (Import/Export buttons removed)
 
-After pushing: hard-refresh (Ctrl+Shift+R). The Spare Parts tile appears under
-Maintenance for anyone with maintenance access.
+Do NOT need changing (already live): models.py, startup_migrations.py, home.html.
+
+HOW IT WORKS NOW:
+  The 45 parts load into the database automatically the first time the app
+  starts with an empty table. No buttons to press. Staff add/edit parts and
+  record stock in/out directly in the portal. Re-deploys never duplicate or
+  overwrite edited rows.
+
+OPTIONAL cleanup (leftover from the first version):
+  git rm --cached Spare_Parts_Import.csv WHERE_FILES_GO.txt

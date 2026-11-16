@@ -59,6 +59,13 @@ async def lifespan(app: FastAPI):
             run_startup_migrations()
         except Exception as e:
             print(f"[startup] Migrations failed: {e}")
+        try:
+            from .spare_parts_seed import seed_spare_parts
+            seeded = seed_spare_parts()
+            if seeded:
+                print(f"[startup] Spare parts seeded: {seeded} rows")
+        except Exception as e:
+            print(f"[startup] Spare parts seed skipped: {e}")
 
     sched = None
     if IS_VERCEL:
