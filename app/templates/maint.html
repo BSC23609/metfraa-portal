@@ -39,6 +39,9 @@
       <button @click="tab='eb'; loadEb()"
               :class="tab==='eb' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">EB / Power</button>
+      <button @click="tab='spares'"
+              :class="tab==='spares' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">Spare Parts</button>
     </nav>
   </div>
 
@@ -883,6 +886,10 @@
         </button>
       </div>
     </div>
+  </div>
+
+  <div x-show="tab==='spares'" x-cloak>
+    {% include "_spares_panel.html" %}
   </div>
 
 </div>
