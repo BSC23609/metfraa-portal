@@ -1230,6 +1230,7 @@ class MaintEvent(Base):
     __tablename__ = "maint_events"
 
     id = Column(Integer, primary_key=True)
+    ref_no = Column(String(40), nullable=True, index=True)   # complaint no. from imported register
     asset_id = Column(Integer, ForeignKey("maint_assets.id"), nullable=False)
     event_date = Column(Date, nullable=False)
     category = Column(String(24), nullable=False)   # Breakdown / Scheduled PM / Unscheduled PM

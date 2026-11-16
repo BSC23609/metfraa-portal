@@ -348,6 +348,7 @@ def _event_json(e: MaintEvent):
         "reported_at": e.reported_at.isoformat(timespec="minutes") if e.reported_at else None,
         "restored_at": e.restored_at.isoformat(timespec="minutes") if e.restored_at else None,
         "downtime_hrs": e.downtime_hrs, "complaint": e.complaint, "cause": e.cause,
+        "ref_no": e.ref_no,
         "action": e.action, "parts": e.parts, "parts_detail": e.parts_detail or [],
         "cost": e.cost,
         "meter_at_event": e.meter_at_event,
