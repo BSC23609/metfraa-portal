@@ -304,21 +304,26 @@
           <template x-if="eForm.partsUsed==='yes'">
             <div class="rounded-lg bg-metfraa-gray-50 border border-metfraa-gray-200 p-2 space-y-2">
               <template x-for="(row, idx) in eForm.partRows" :key="idx">
-                <div class="flex gap-2 items-end">
-                  <div class="flex-1">
-                    <label class="lbl-f" x-show="idx===0">Part</label>
-                    <select x-model.number="row.part_id" class="inp">
-                      <option value="">Select part…</option>
-                      <template x-for="s in spareOptions" :key="s.id">
-                        <option :value="s.id" x-text="s.label"></option>
-                      </template>
-                    </select>
+                <div>
+                  <div class="flex gap-2 items-end">
+                    <div class="flex-1">
+                      <label class="lbl-f" x-show="idx===0">Part</label>
+                      <select x-model.number="row.part_id" class="inp">
+                        <option value="">Select part…</option>
+                        <template x-for="s in spareOptions" :key="s.id">
+                          <option :value="s.id" x-text="s.label"></option>
+                        </template>
+                      </select>
+                    </div>
+                    <div class="w-24">
+                      <label class="lbl-f" x-show="idx===0">Qty</label>
+                      <input type="number" step="any" min="0" x-model.number="row.qty" class="inp" placeholder="Qty" />
+                    </div>
+                    <button type="button" x-show="eForm.partRows.length>1" @click="eForm.partRows.splice(idx,1)" class="text-red-500 text-lg leading-none px-2 pb-2">&times;</button>
                   </div>
-                  <div class="w-24">
-                    <label class="lbl-f" x-show="idx===0">Qty</label>
-                    <input type="number" step="any" min="0" x-model.number="row.qty" class="inp" placeholder="Qty" />
+                  <div x-show="row.part_id" class="text-[11px] text-metfraa-gray-500 mt-0.5 pl-0.5">
+                    Available Qty - <span class="font-semibold" x-text="(spareOptions.find(x => x.id === +row.part_id) || {}).stock ?? 0"></span>
                   </div>
-                  <button type="button" x-show="eForm.partRows.length>1" @click="eForm.partRows.splice(idx,1)" class="text-red-500 text-lg leading-none px-2 pb-2">&times;</button>
                 </div>
               </template>
               <div class="flex items-center justify-between">
@@ -1103,6 +1108,7 @@ function maintApp() {
           if (!key || seen[key]) continue;          // one entry per part — no duplicates
           seen[key] = true;
           out.push({ id: s.id, name: s.part_name,
+            stock: s.current_stock ?? 0,
             label: (s.part_code ? s.part_code + ' ' : '') + s.part_name + '(' + (s.current_stock ?? 0) + 'QTY)' });
         }
         this.spareOptions = out;
