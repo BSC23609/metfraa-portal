@@ -1109,7 +1109,7 @@ function maintApp() {
           seen[key] = true;
           out.push({ id: s.id, name: s.part_name,
             stock: s.current_stock ?? 0,
-            label: (s.part_code ? s.part_code + ' ' : '') + s.part_name + '(' + (s.current_stock ?? 0) + 'QTY)' });
+            label: (s.part_code ? s.part_code + ' ' : '') + s.part_name + ' (Available Qty - ' + (s.current_stock ?? 0) + ')' });
         }
         this.spareOptions = out;
       } catch (e) {}
