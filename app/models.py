@@ -1241,6 +1241,7 @@ class MaintEvent(Base):
     cause = Column(Text, nullable=True)
     action = Column(Text, nullable=True)
     parts = Column(Text, nullable=True)
+    parts_detail = Column(JSON, nullable=True)   # [{part_id, qty}] issued from spare parts inventory
     cost = Column(Float, nullable=True)
     meter_at_event = Column(Float, nullable=True)
     attended_by_id = Column(Integer, ForeignKey("plant_labour.id"), nullable=True)

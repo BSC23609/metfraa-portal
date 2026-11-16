@@ -196,6 +196,7 @@ SPARES_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_spare_parts_code ON maint_spare_parts(part_code)",
     "CREATE INDEX IF NOT EXISTS idx_spare_parts_active ON maint_spare_parts(active)",
     "ALTER TABLE maint_spare_parts ADD COLUMN IF NOT EXISTS reorder_alerted BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE maint_events ADD COLUMN IF NOT EXISTS parts_detail JSON",
 ]
 STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + SPARES_MIGRATIONS
 

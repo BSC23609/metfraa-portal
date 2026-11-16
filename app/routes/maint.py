@@ -23,7 +23,8 @@ from ..services import email_service as _email
 from ..services import wati as _wati
 from ..models import (Employee, MaintAsset, MaintEvent, MaintMachineType,
                       MaintHoliday, MaintPMPlan, MaintReading,
-                      MaintEbReading, MaintReminderLog, PlantLabour)
+                      MaintEbReading, MaintReminderLog, PlantLabour,
+                      MaintSparePart)
 
 router = APIRouter(prefix="/maint", tags=["maint"])
 log = logging.getLogger("maint")
@@ -327,7 +328,8 @@ def _event_json(e: MaintEvent):
         "reported_at": e.reported_at.isoformat(timespec="minutes") if e.reported_at else None,
         "restored_at": e.restored_at.isoformat(timespec="minutes") if e.restored_at else None,
         "downtime_hrs": e.downtime_hrs, "complaint": e.complaint, "cause": e.cause,
-        "action": e.action, "parts": e.parts, "cost": e.cost,
+        "action": e.action, "parts": e.parts, "parts_detail": e.parts_detail or [],
+        "cost": e.cost,
         "meter_at_event": e.meter_at_event,
         "attended_by_id": e.attended_by_id, "verified_by_id": e.verified_by_id,
         "attended_by_name": e.attended_by.name if e.attended_by else None,
@@ -348,6 +350,7 @@ class EventIn(BaseModel):
     cause: str | None = None
     action: str | None = None
     parts: str | None = None
+    parts_detail: list | None = None   # [{part_id, qty}] issued from spare parts
     cost: float | None = None
     meter_at_event: float | None = None
     attended_by_id: int | None = None
@@ -355,6 +358,52 @@ class EventIn(BaseModel):
     operator: str | None = None
     repaired_by: str | None = None
     remarks: str | None = None
+
+
+def _norm_parts_detail(raw):
+    """Clean the incoming [{part_id, qty}] list: drop blanks, coerce types."""
+    out = []
+    for it in (raw or []):
+        try:
+            pid = int(it.get("part_id"))
+            qty = float(it.get("qty") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if pid and qty:
+            out.append({"part_id": pid, "qty": qty})
+    return out
+
+
+def _detail_map(detail):
+    m = {}
+    for it in (detail or []):
+        pid = int(it["part_id"]); m[pid] = m.get(pid, 0) + float(it["qty"])
+    return m
+
+
+def _reconcile_part_stock(db: Session, old_detail, new_detail):
+    """Apply the change in parts used to the spare-parts inventory.
+
+    Issuing a part increases its qty_out (so current stock falls). On edit we
+    apply only the DELTA between the previously-saved usage and the new usage,
+    so stock is never double-counted and reducing/removing a part restores it.
+    Fires the spare-parts reorder alert when a part crosses its minimum.
+    """
+    from .spares import _check_reorder_alert
+    om, nm = _detail_map(old_detail), _detail_map(new_detail)
+    for pid in set(om) | set(nm):
+        delta = nm.get(pid, 0) - om.get(pid, 0)
+        if not delta:
+            continue
+        part = db.get(MaintSparePart, pid)
+        if not part:
+            continue
+        part.qty_out = (part.qty_out or 0) + delta   # +delta issued, -delta returned
+        db.commit()
+        try:
+            _check_reorder_alert(db, part)
+        except Exception:
+            log.warning("[maint] reorder check failed for part %s", pid, exc_info=True)
 
 
 def _apply_event(e: MaintEvent, p: EventIn):
@@ -378,6 +427,7 @@ def _apply_event(e: MaintEvent, p: EventIn):
     e.cause = p.cause
     e.action = p.action
     e.parts = p.parts
+    e.parts_detail = _norm_parts_detail(p.parts_detail)
     e.cost = p.cost
     e.meter_at_event = p.meter_at_event
     e.attended_by_id = p.attended_by_id
@@ -417,6 +467,7 @@ def api_create_event(payload: EventIn, user: Employee = Depends(get_current_user
     e = MaintEvent(asset_id=payload.asset_id)
     _apply_event(e, payload)
     db.add(e); db.commit(); db.refresh(e)
+    _reconcile_part_stock(db, [], e.parts_detail or [])
     return _event_json(e)
 
 
@@ -432,6 +483,7 @@ def api_update_event(event_id: int, payload: EventIn,
         raise HTTPException(400, "Invalid category")
     if not _pdate(payload.event_date):
         raise HTTPException(400, "Event date is required (YYYY-MM-DD)")
+    old_detail = list(e.parts_detail or [])   # capture before overwrite for the delta
     _apply_event(e, payload)
     if (e.category in ("Scheduled PM", "Unscheduled PM") and e.pm_plan_id
             and e.status == "Completed"):
@@ -440,6 +492,7 @@ def api_update_event(event_id: int, payload: EventIn,
             _plan.last_done_date = e.event_date or _ist_today()
             _plan.last_done_meter = _latest_meter(db, _plan.asset_id)
     db.commit(); db.refresh(e)
+    _reconcile_part_stock(db, old_detail, e.parts_detail or [])
     return _event_json(e)
 
 

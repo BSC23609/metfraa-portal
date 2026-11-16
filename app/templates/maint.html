@@ -1201,15 +1201,21 @@ function maintApp() {
         complaint: e.complaint || '', cause: e.cause || '', action: e.action || '', parts: e.parts || '',
         cost: e.cost, meter_at_event: e.meter_at_event,
         operator: e.operator || e.attended_by_name || '', repaired_by: e.repaired_by || e.verified_by_name || '',
-        remarks: e.remarks || '', partsUsed: (e.parts ? 'yes' : 'no'), partRows: [] };
-      if (e.parts) this.loadSpareList();
+        remarks: e.remarks || '',
+        partsUsed: ((e.parts_detail && e.parts_detail.length) || e.parts) ? 'yes' : 'no',
+        partRows: (e.parts_detail && e.parts_detail.length)
+          ? e.parts_detail.map(d => ({ part_id: d.part_id, qty: d.qty })) : [] };
+      if (this.eForm.partsUsed === 'yes') this.loadSpareList();
       this.tab = 'log';
     },
     async saveEvent() {
       if (!this.eForm.asset_id) { toast('Select an asset', 'error'); return; }
       if (!this.eForm.event_date) { toast('Date is required', 'error'); return; }
-      // Build the "parts used" text from the picked rows (overwrites only when rows chosen)
+      // Build the "parts used" text + structured detail from the picked rows
+      let detail = [];
       if (this.eForm.partsUsed === 'yes' && (this.eForm.partRows || []).some(r => r.part_id && r.qty)) {
+        detail = this.eForm.partRows.filter(r => r.part_id && r.qty)
+          .map(r => ({ part_id: +r.part_id, qty: +r.qty }));
         this.eForm.parts = this.eForm.partRows
           .filter(r => r.part_id && r.qty)
           .map(r => { const s = this.spareOptions.find(x => x.id === +r.part_id); return (s ? s.name : 'Part') + ' ×' + r.qty; })
@@ -1221,6 +1227,7 @@ function maintApp() {
       try {
         const p = { ...this.eForm };
         ['reported_at','restored_at'].forEach(k => { if (!p[k]) p[k] = null; });
+        p.parts_detail = detail;
         delete p.partsUsed; delete p.partRows;
         if (p.category !== 'Breakdown') { p.status = null; p.reported_at = null; p.restored_at = null; }
         const url = this.eForm.id ? `/maint/api/events/${this.eForm.id}` : '/maint/api/events';
