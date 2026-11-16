@@ -402,6 +402,7 @@
       <div>
         <label class="lbl-f">Category</label>
         <select x-model="bCategory" @change="bStatus=''" class="inp">
+          <option value="">All</option>
           <option value="Breakdown">Breakdown</option>
           <option value="Preventive">Preventive Maintenance</option>
         </select>
@@ -1101,9 +1102,11 @@ function maintApp() {
       return d >= 0 ? d.toFixed(2) + ' h' : 'check times';
     },
     get statusOptions() {
+      if (!this.bCategory) return ['Open', 'Under repair', 'Closed', 'Pending', 'Completed'];
       return this.bCategory === 'Preventive' ? ['Pending', 'Completed'] : ['Open', 'Under repair', 'Closed'];
     },
     _inCategory(e) {
+      if (!this.bCategory) return true;   // All
       return this.bCategory === 'Preventive'
         ? (e.category === 'Scheduled PM' || e.category === 'Unscheduled PM')
         : e.category === 'Breakdown';
