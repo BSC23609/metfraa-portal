@@ -292,9 +292,42 @@
           </div>
           <div><label class="lbl-f">Action taken</label><textarea x-model="eForm.action" rows="2" class="inp"></textarea></div>
           <div class="grid grid-cols-2 gap-2">
-            <div><label class="lbl-f">Parts used</label><input type="text" x-model="eForm.parts" class="inp" /></div>
+            <div>
+              <label class="lbl-f">Parts used</label>
+              <select x-model="eForm.partsUsed" @change="onPartsUsedChange()" class="inp">
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </div>
             <div><label class="lbl-f">Cost</label><input type="number" step="any" x-model.number="eForm.cost" class="inp" /></div>
           </div>
+          <template x-if="eForm.partsUsed==='yes'">
+            <div class="rounded-lg bg-metfraa-gray-50 border border-metfraa-gray-200 p-2 space-y-2">
+              <template x-for="(row, idx) in eForm.partRows" :key="idx">
+                <div class="flex gap-2 items-end">
+                  <div class="flex-1">
+                    <label class="lbl-f" x-show="idx===0">Part</label>
+                    <select x-model.number="row.part_id" class="inp">
+                      <option value="">Select part…</option>
+                      <template x-for="s in spareList" :key="s.id">
+                        <option :value="s.id" x-text="s.part_name + (s.part_code ? ' ('+s.part_code+')' : '') + (s.machine ? ' — '+s.machine : '')"></option>
+                      </template>
+                    </select>
+                  </div>
+                  <div class="w-24">
+                    <label class="lbl-f" x-show="idx===0">Qty</label>
+                    <input type="number" step="any" min="0" x-model.number="row.qty" class="inp" placeholder="Qty" />
+                  </div>
+                  <button type="button" x-show="eForm.partRows.length>1" @click="eForm.partRows.splice(idx,1)" class="text-red-500 text-lg leading-none px-2 pb-2">&times;</button>
+                </div>
+              </template>
+              <div class="flex items-center justify-between">
+                <button type="button" @click="eForm.partRows.push({part_id:'', qty:null})" class="text-xs font-semibold text-metfraa-blue hover:underline">+ Add part</button>
+                <span class="text-[11px] text-metfraa-gray-400">Listed from Spare Parts inventory</span>
+              </div>
+              <p x-show="eForm.id && eForm.parts && !eForm.partRows.some(r=>r.part_id&&r.qty)" class="text-[11px] text-metfraa-gray-500">Current: <span x-text="eForm.parts"></span> (add parts above to replace)</p>
+            </div>
+          </template>
           <div class="grid grid-cols-2 gap-2">
             <div>
               <label class="lbl-f">Operator</label>
@@ -936,7 +969,7 @@ function maintApp() {
     q: '', fLocation: '', fType: '', activeOnly: false,
     modal: false, saving: false,
     form: {},
-    events: [], eForm: {}, eSaving: false,
+    events: [], eForm: {}, eSaving: false, spareList: [],
     ocrBusy: false, ocrMode: 'reading', ocrQueue: [],
     bStatus: '', bAsset: '',
     readings: [], rMonthly: [], rAssetId: '', rForm: {}, rSaving: false,
@@ -1055,9 +1088,23 @@ function maintApp() {
       return { id: null, asset_id: '', event_date: new Date().toISOString().slice(0,10),
         category: 'Scheduled PM', status: 'Completed', reported_at: '', restored_at: '',
         complaint: '', cause: '', action: '', parts: '', cost: null, meter_at_event: null,
-        operator: '', repaired_by: '', remarks: '' };
+        operator: '', repaired_by: '', remarks: '', partsUsed: 'no', partRows: [] };
     },
     newEvent() { this.eForm = this.blankEvent(); },
+    async loadSpareList() {
+      if (this.spareList.length) return;
+      try {
+        const r = await fetch('/spares/api/list');
+        if (r.ok) { const d = await r.json(); this.spareList = d.rows || []; }
+      } catch (e) {}
+    },
+    onPartsUsedChange() {
+      if (this.eForm.partsUsed === 'yes') {
+        this.loadSpareList();
+        if (!this.eForm.partRows || !this.eForm.partRows.length)
+          this.eForm.partRows = [{ part_id: '', qty: null }];
+      }
+    },
     ocrScan(mode) {
       const assetId = mode === 'reading' ? this.rAssetId : this.eForm.asset_id;
       if (!assetId) { toast('Select a machine first', 'error'); return; }
@@ -1138,16 +1185,27 @@ function maintApp() {
         complaint: e.complaint || '', cause: e.cause || '', action: e.action || '', parts: e.parts || '',
         cost: e.cost, meter_at_event: e.meter_at_event,
         operator: e.operator || e.attended_by_name || '', repaired_by: e.repaired_by || e.verified_by_name || '',
-        remarks: e.remarks || '' };
+        remarks: e.remarks || '', partsUsed: (e.parts ? 'yes' : 'no'), partRows: [] };
+      if (e.parts) this.loadSpareList();
       this.tab = 'log';
     },
     async saveEvent() {
       if (!this.eForm.asset_id) { toast('Select an asset', 'error'); return; }
       if (!this.eForm.event_date) { toast('Date is required', 'error'); return; }
+      // Build the "parts used" text from the picked rows (overwrites only when rows chosen)
+      if (this.eForm.partsUsed === 'yes' && (this.eForm.partRows || []).some(r => r.part_id && r.qty)) {
+        this.eForm.parts = this.eForm.partRows
+          .filter(r => r.part_id && r.qty)
+          .map(r => { const s = this.spareList.find(x => x.id === +r.part_id); return (s ? s.part_name : 'Part') + ' ×' + r.qty; })
+          .join(', ');
+      } else if (this.eForm.partsUsed === 'no') {
+        this.eForm.parts = '';
+      }
       this.eSaving = true;
       try {
         const p = { ...this.eForm };
         ['reported_at','restored_at'].forEach(k => { if (!p[k]) p[k] = null; });
+        delete p.partsUsed; delete p.partRows;
         if (p.category !== 'Breakdown') { p.status = null; p.reported_at = null; p.restored_at = null; }
         const url = this.eForm.id ? `/maint/api/events/${this.eForm.id}` : '/maint/api/events';
         const res = await fetch(url, { method: this.eForm.id ? 'PUT' : 'POST',
