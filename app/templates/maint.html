@@ -719,6 +719,18 @@
             </div>
           </div>
           <div><label class="lbl-f">Remarks</label><input type="text" x-model="ebForm.remarks" class="inp" /></div>
+          <div class="flex gap-2 mb-2">
+            <button @click="ocrScan('eb')" :disabled="ocrBusy" type="button"
+              class="flex-1 ring-1 ring-metfraa-blue text-metfraa-blue font-semibold px-4 py-2.5 rounded-lg disabled:opacity-40"
+              x-text="ocrBusy ? 'Reading…' : '📷 Add scan'"></button>
+            <button @click="ocrUpload('eb')" :disabled="ocrBusy" type="button"
+              class="flex-1 ring-1 ring-metfraa-blue text-metfraa-blue font-semibold px-4 py-2.5 rounded-lg disabled:opacity-40">🖼️ Add photos</button>
+          </div>
+          <div x-show="ocrQueue.length && ocrMode==='eb'" class="mb-2 flex items-center gap-3 bg-metfraa-blue/5 border border-metfraa-blue/30 rounded-lg px-3 py-2">
+            <span class="text-xs font-semibold text-metfraa-blue" x-text="ocrQueue.length + ' photo' + (ocrQueue.length>1?'s':'') + ' ready'"></span>
+            <button @click="extractOcr()" :disabled="ocrBusy" type="button" class="ml-auto text-xs font-semibold px-3 py-1.5 rounded-lg bg-metfraa-blue text-white disabled:opacity-40" x-text="ocrBusy ? 'Reading…' : 'Extract & fill'"></button>
+            <button @click="clearOcrQueue()" :disabled="ocrBusy" type="button" class="text-xs font-semibold text-metfraa-gray-500 hover:underline">Clear</button>
+          </div>
           <button @click="saveEb()" :disabled="ebSaving" class="w-full bg-metfraa-blue hover:bg-metfraa-blue-dark text-white font-semibold px-4 py-2.5 rounded-lg disabled:opacity-50">
             <span x-show="!ebSaving" x-text="ebForm.id ? 'Update reading' : 'Save reading'"></span><span x-show="ebSaving">Saving…</span>
           </button>
@@ -1121,17 +1133,18 @@ function maintApp() {
           this.eForm.partRows = [{ part_id: '', qty: null }];
       }
     },
+    _ocrAsset(mode) {
+      return mode === 'reading' ? this.rAssetId : mode === 'event' ? this.eForm.asset_id : null;
+    },
     ocrScan(mode) {
-      const assetId = mode === 'reading' ? this.rAssetId : this.eForm.asset_id;
-      if (!assetId) { toast('Select a machine first', 'error'); return; }
+      if (mode !== 'eb' && !this._ocrAsset(mode)) { toast('Select a machine first', 'error'); return; }
       if (mode !== this.ocrMode) this.ocrQueue = [];   // don't mix photos across forms
       this.ocrMode = mode;
       this.$refs.ocrFile.value = '';
       this.$refs.ocrFile.click();
     },
     ocrUpload(mode) {
-      const assetId = mode === 'reading' ? this.rAssetId : this.eForm.asset_id;
-      if (!assetId) { toast('Select a machine first', 'error'); return; }
+      if (mode !== 'eb' && !this._ocrAsset(mode)) { toast('Select a machine first', 'error'); return; }
       if (mode !== this.ocrMode) this.ocrQueue = [];
       this.ocrMode = mode;
       this.$refs.ocrGallery.value = '';
@@ -1150,13 +1163,13 @@ function maintApp() {
     // send every queued photo together; the model combines them into one set of fields
     async extractOcr() {
       if (!this.ocrQueue.length) { toast('Add at least one photo first', 'error'); return; }
-      const assetId = this.ocrMode === 'reading' ? this.rAssetId : this.eForm.asset_id;
-      if (!assetId) { toast('Select a machine first', 'error'); return; }
+      const assetId = this._ocrAsset(this.ocrMode);
+      if (this.ocrMode !== 'eb' && !assetId) { toast('Select a machine first', 'error'); return; }
       this.ocrBusy = true;
       try {
         const r = await fetch('/maint/api/ocr/extract', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ asset_id: +assetId, mode: this.ocrMode, images: this.ocrQueue }),
+          body: JSON.stringify({ asset_id: assetId ? +assetId : null, mode: this.ocrMode, images: this.ocrQueue }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.detail || 'Scan failed');
@@ -1190,6 +1203,8 @@ function maintApp() {
         if (fields.end_time) this.rForm.end_time = fields.end_time;
         if (!this.rForm.values) this.rForm.values = {};
         for (const p of this.rInputParams) { if (fields[p.code] != null) this.rForm.values[p.code] = fields[p.code]; }
+      } else if (mode === 'eb') {
+        ['reading_date','reading_time','active_mwh','apparent_mvah','rate_per_unit','md_kw','md_kva','freq_hz','v_ry','v_yb','v_br','v_rn','v_yn','v_bn','remarks'].forEach(k => { if (fields[k] != null) this.ebForm[k] = fields[k]; });
       } else {
         ['event_date','category','complaint','cause','action','parts','cost','meter_at_event','operator','repaired_by'].forEach(k => { if (fields[k] != null) this.eForm[k] = fields[k]; });
       }

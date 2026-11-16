@@ -111,14 +111,32 @@ OCR_MODEL = os.getenv("MAINT_OCR_MODEL", "claude-haiku-5-5")
 
 
 class OcrIn(BaseModel):
-    asset_id: int
-    mode: str = "reading"     # 'reading' | 'event'
+    asset_id: int | None = None   # not needed for EB readings
+    mode: str = "reading"     # 'reading' | 'event' | 'eb'
     image: str | None = None            # single image (base64 / data: URL) — legacy
     images: list[str] | None = None     # several photos of the SAME machine, read together
 
 
 def _ocr_fields_for(db: Session, asset_id: int, mode: str):
-    a = db.get(MaintAsset, asset_id)
+    if mode == "eb":
+        return [
+            {"code": "reading_date", "label": "Date", "type": "date"},
+            {"code": "reading_time", "label": "Time", "type": "time"},
+            {"code": "active_mwh", "label": "Active energy (MWh)", "type": "number"},
+            {"code": "apparent_mvah", "label": "Apparent energy (MVAH)", "type": "number"},
+            {"code": "rate_per_unit", "label": "Rate (Rs per unit)", "type": "number"},
+            {"code": "md_kw", "label": "Maximum demand (kW)", "type": "number"},
+            {"code": "md_kva", "label": "Maximum demand (kVA)", "type": "number"},
+            {"code": "freq_hz", "label": "Frequency (Hz)", "type": "number"},
+            {"code": "v_ry", "label": "Line voltage R-Y", "type": "number"},
+            {"code": "v_yb", "label": "Line voltage Y-B", "type": "number"},
+            {"code": "v_br", "label": "Line voltage B-R", "type": "number"},
+            {"code": "v_rn", "label": "Phase voltage R-N", "type": "number"},
+            {"code": "v_yn", "label": "Phase voltage Y-N", "type": "number"},
+            {"code": "v_bn", "label": "Phase voltage B-N", "type": "number"},
+            {"code": "remarks", "label": "Remarks", "type": "text"},
+        ]
+    a = db.get(MaintAsset, asset_id) if asset_id else None
     if mode == "event":
         return [
             {"code": "event_date", "label": "Date", "type": "date"},
@@ -157,8 +175,8 @@ async def api_ocr_extract(payload: OcrIn, user: Employee = Depends(get_current_u
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise HTTPException(400, "Scan is not configured yet — set ANTHROPIC_API_KEY on the server.")
-    a = db.get(MaintAsset, payload.asset_id)
-    if not a:
+    a = db.get(MaintAsset, payload.asset_id) if payload.asset_id else None
+    if payload.mode != "eb" and not a:
         raise HTTPException(400, "Unknown asset")
     fields = _ocr_fields_for(db, payload.asset_id, payload.mode)
 
@@ -178,9 +196,11 @@ async def api_ocr_extract(payload: OcrIn, user: Employee = Depends(get_current_u
                              "source": {"type": "base64", "media_type": media, "data": im}})
 
     field_lines = "\n".join(f'- {f["code"]}: {f["label"]} [{f["type"]}]' for f in fields)
+    subject = (f"for asset {a.asset_code} ({a.description or ''})" if a
+               else "of an electricity (EB) energy meter / power-analyser display or logbook")
     prompt = (
         f"You are reading one or more photos of a maintenance log sheet or machine/HMI display screens "
-        f"for asset {a.asset_code} ({a.description or ''}). "
+        f"{subject}. "
         "The photos are of the SAME machine; combine the values across all of them into one result. "
         "Extract ONLY the values that are clearly visible. "
         "Return a single JSON object whose keys are the field codes listed below and whose "
