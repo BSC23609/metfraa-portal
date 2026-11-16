@@ -309,8 +309,8 @@
                     <label class="lbl-f" x-show="idx===0">Part</label>
                     <select x-model.number="row.part_id" class="inp">
                       <option value="">Select part…</option>
-                      <template x-for="s in spareList" :key="s.id">
-                        <option :value="s.id" x-text="s.part_name + (s.part_code ? ' ('+s.part_code+')' : '') + (s.machine ? ' — '+s.machine : '')"></option>
+                      <template x-for="s in spareOptions" :key="s.id">
+                        <option :value="s.id" x-text="s.label"></option>
                       </template>
                     </select>
                   </div>
@@ -969,7 +969,7 @@ function maintApp() {
     q: '', fLocation: '', fType: '', activeOnly: false,
     modal: false, saving: false,
     form: {},
-    events: [], eForm: {}, eSaving: false, spareList: [],
+    events: [], eForm: {}, eSaving: false, spareOptions: [],
     ocrBusy: false, ocrMode: 'reading', ocrQueue: [],
     bStatus: '', bAsset: '',
     readings: [], rMonthly: [], rAssetId: '', rForm: {}, rSaving: false,
@@ -1092,10 +1092,20 @@ function maintApp() {
     },
     newEvent() { this.eForm = this.blankEvent(); },
     async loadSpareList() {
-      if (this.spareList.length) return;
+      if (this.spareOptions.length) return;
       try {
         const r = await fetch('/spares/api/list');
-        if (r.ok) { const d = await r.json(); this.spareList = d.rows || []; }
+        if (!r.ok) return;
+        const d = await r.json();
+        const seen = {}, out = [];
+        for (const s of (d.rows || [])) {
+          const key = (s.part_code || s.part_name || '').toString().toLowerCase().trim();
+          if (!key || seen[key]) continue;          // one entry per part — no duplicates
+          seen[key] = true;
+          out.push({ id: s.id, name: s.part_name,
+            label: (s.part_code ? s.part_code + ' ' : '') + s.part_name + '(' + (s.current_stock ?? 0) + 'QTY)' });
+        }
+        this.spareOptions = out;
       } catch (e) {}
     },
     onPartsUsedChange() {
@@ -1196,7 +1206,7 @@ function maintApp() {
       if (this.eForm.partsUsed === 'yes' && (this.eForm.partRows || []).some(r => r.part_id && r.qty)) {
         this.eForm.parts = this.eForm.partRows
           .filter(r => r.part_id && r.qty)
-          .map(r => { const s = this.spareList.find(x => x.id === +r.part_id); return (s ? s.part_name : 'Part') + ' ×' + r.qty; })
+          .map(r => { const s = this.spareOptions.find(x => x.id === +r.part_id); return (s ? s.name : 'Part') + ' ×' + r.qty; })
           .join(', ');
       } else if (this.eForm.partsUsed === 'no') {
         this.eForm.parts = '';
