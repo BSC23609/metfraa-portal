@@ -1,0 +1,18 @@
+Spare Parts Inventory module — files and where each goes in metfraa-portal:
+
+NEW files (just add them):
+  app/routes/spares.py          -> app\routes\spares.py
+  app/templates/spares.html     -> app\templates\spares.html
+
+MODIFIED files (overwrite existing):
+  app/main.py                   -> app\main.py          (registers the router)
+  app/models.py                 -> app\models.py        (adds MaintSparePart table)
+  app/startup_migrations.py     -> app\startup_migrations.py  (creates the table on boot)
+  app/templates/home.html       -> app\templates\home.html    (adds the Spare Parts tile)
+
+DATA:
+  Spare_Parts_Import.csv        -> import via the Import button on the Spare Parts page
+                                   (45 parts from your workbook)
+
+After pushing: hard-refresh (Ctrl+Shift+R). The Spare Parts tile appears under
+Maintenance for anyone with maintenance access.

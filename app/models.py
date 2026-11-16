@@ -1306,3 +1306,32 @@ class MaintEbReading(Base):
     entered_by = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MaintSparePart(Base):
+    """Machine spare parts inventory register.
+
+    Mirrors the group's Spare Parts Inventory workbook. Current stock, stock
+    value and reorder status are DERIVED (opening + in - out, stock x price,
+    stock <= min) and computed in the API, never stored, so they can never go
+    stale. Stock in/out happen through /spares/api/{id}/move which bumps
+    qty_in / qty_out.
+    """
+    __tablename__ = "maint_spare_parts"
+
+    id = Column(Integer, primary_key=True)
+    part_code = Column(String(60), nullable=True, index=True)
+    part_name = Column(String(255), nullable=False)
+    machine = Column(String(255), nullable=True)          # Machine / Equipment
+    manufacturer = Column(String(255), nullable=True)
+    unit = Column(String(20), nullable=True)              # No, Set, Mtr...
+    opening_qty = Column(Float, nullable=False, default=0)
+    qty_in = Column(Float, nullable=False, default=0)
+    qty_out = Column(Float, nullable=False, default=0)
+    min_stock_level = Column(Float, nullable=False, default=0)
+    unit_price = Column(Float, nullable=False, default=0)
+    supplier = Column(String(255), nullable=True)
+    last_purchase_date = Column(Date, nullable=True)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

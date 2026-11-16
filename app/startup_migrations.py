@@ -174,6 +174,30 @@ OTP_MIGRATIONS = [
 ]
 STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + OTP_MIGRATIONS
 
+# Spare parts inventory register. Types mirror models.MaintSparePart.
+SPARES_MIGRATIONS = [
+    "CREATE TABLE IF NOT EXISTS maint_spare_parts ("
+    " id SERIAL PRIMARY KEY,"
+    " part_code VARCHAR(60),"
+    " part_name VARCHAR(255) NOT NULL,"
+    " machine VARCHAR(255),"
+    " manufacturer VARCHAR(255),"
+    " unit VARCHAR(20),"
+    " opening_qty DOUBLE PRECISION NOT NULL DEFAULT 0,"
+    " qty_in DOUBLE PRECISION NOT NULL DEFAULT 0,"
+    " qty_out DOUBLE PRECISION NOT NULL DEFAULT 0,"
+    " min_stock_level DOUBLE PRECISION NOT NULL DEFAULT 0,"
+    " unit_price DOUBLE PRECISION NOT NULL DEFAULT 0,"
+    " supplier VARCHAR(255),"
+    " last_purchase_date DATE,"
+    " active BOOLEAN NOT NULL DEFAULT TRUE,"
+    " created_at TIMESTAMP DEFAULT now(),"
+    " updated_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_spare_parts_code ON maint_spare_parts(part_code)",
+    "CREATE INDEX IF NOT EXISTS idx_spare_parts_active ON maint_spare_parts(active)",
+]
+STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + SPARES_MIGRATIONS
+
 
 def run_startup_migrations() -> None:
     """Apply pending column additions. Runs on every startup — safe.

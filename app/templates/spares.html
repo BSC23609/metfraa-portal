@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}Spare Parts Inventory — Metfraa{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="sparesApp()" x-init="init()" x-cloak>
+
+  <!-- header -->
+  <div class="mb-8">
+    <div class="lbl mb-2">Metfraa Portal</div>
+    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">Spare Parts Inventory</h1>
+    <div class="flex items-center gap-3 mt-3">
+      <span class="h-px w-10 bg-metfraa-blue"></span>
+      <p class="text-sm text-metfraa-gray-500">Machine spare parts register — stock, reorder levels &amp; value.</p>
+    </div>
+  </div>
+
+  <!-- KPI tiles -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="lbl">Parts</div>
+      <div class="text-3xl font-bold text-metfraa-ink mono mt-1" x-text="totals.parts ?? 0"></div>
+    </div>
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="lbl">Total units in stock</div>
+      <div class="text-3xl font-bold text-metfraa-ink mono mt-1" x-text="(totals.total_units ?? 0).toLocaleString('en-IN')"></div>
+    </div>
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
+      <div class="lbl">Stock value</div>
+      <div class="text-3xl font-bold text-metfraa-blue mono mt-1">₹<span x-text="(totals.stock_value ?? 0).toLocaleString('en-IN',{maximumFractionDigits:0})"></span></div>
+    </div>
+    <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5 cursor-pointer"
+         :class="onlyReorder ? 'ring-2 ring-red-400' : ''" @click="onlyReorder = !onlyReorder; load()">
+      <div class="lbl">Reorder now</div>
+      <div class="text-3xl font-bold mono mt-1" :class="(totals.reorder_count ?? 0) ? 'text-red-600' : 'text-metfraa-ink'" x-text="totals.reorder_count ?? 0"></div>
+      <div class="text-[11px] text-metfraa-gray-400 mt-0.5" x-text="onlyReorder ? 'showing reorder only — click to clear' : 'click to filter'"></div>
+    </div>
+  </div>
+
+  <!-- toolbar -->
+  <div class="flex flex-wrap items-center gap-2 mb-4">
+    <input type="search" x-model.debounce.350ms="q" @input="load()"
+           placeholder="Search part, code, machine, supplier…"
+           class="text-sm rounded-lg border-metfraa-gray-300 w-72">
+    <div class="flex-1"></div>
+    <button @click="openAdd()" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold">+ Add part</button>
+    <button @click="showImport = true" class="px-3 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-bold">Import</button>
+    <a href="/spares/export.csv" class="px-3 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-bold">Export CSV</a>
+  </div>
+
+  <!-- table -->
+  <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 overflow-x-auto">
+    <table class="w-full text-sm whitespace-nowrap">
+      <thead>
+        <tr class="text-left lbl border-b border-metfraa-gray-100">
+          <th class="py-2.5 px-3">Part</th>
+          <th class="py-2.5 px-3">Machine</th>
+          <th class="py-2.5 px-3 text-right">Stock</th>
+          <th class="py-2.5 px-3 text-right">Min</th>
+          <th class="py-2.5 px-3">Status</th>
+          <th class="py-2.5 px-3 text-right">Price</th>
+          <th class="py-2.5 px-3 text-right">Value</th>
+          <th class="py-2.5 px-3">Supplier</th>
+          <th class="py-2.5 px-3 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-metfraa-gray-100">
+        <template x-for="r in rows" :key="r.id">
+          <tr class="hover:bg-metfraa-gray-50">
+            <td class="py-2 px-3">
+              <div class="font-semibold text-metfraa-ink" x-text="r.part_name"></div>
+              <div class="text-[11px] text-metfraa-gray-400">
+                <span x-show="r.part_code" x-text="r.part_code"></span>
+                <span x-show="r.manufacturer" x-text="(r.part_code ? ' · ' : '') + r.manufacturer"></span>
+              </div>
+            </td>
+            <td class="py-2 px-3 text-metfraa-gray-600" x-text="r.machine || '—'"></td>
+            <td class="py-2 px-3 text-right mono font-semibold"
+                :class="r.reorder_status === 'REORDER NOW' ? 'text-red-600' : ''">
+              <span x-text="r.current_stock.toLocaleString('en-IN')"></span>
+              <span class="text-[11px] text-metfraa-gray-400" x-text="r.unit || ''"></span>
+            </td>
+            <td class="py-2 px-3 text-right mono text-metfraa-gray-500" x-text="r.min_stock_level.toLocaleString('en-IN')"></td>
+            <td class="py-2 px-3">
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                    :class="r.reorder_status === 'REORDER NOW' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'"
+                    x-text="r.reorder_status"></span>
+            </td>
+            <td class="py-2 px-3 text-right mono" x-text="r.unit_price ? '₹'+r.unit_price.toLocaleString('en-IN') : '—'"></td>
+            <td class="py-2 px-3 text-right mono" x-text="r.stock_value ? '₹'+r.stock_value.toLocaleString('en-IN',{maximumFractionDigits:0}) : '—'"></td>
+            <td class="py-2 px-3 text-metfraa-gray-600" x-text="r.supplier || '—'"></td>
+            <td class="py-2 px-3 text-right">
+              <div class="inline-flex gap-1">
+                <button @click="openMove(r,'in')"  title="Stock in"  class="w-7 h-7 rounded ring-1 ring-green-300 text-green-700 font-bold">+</button>
+                <button @click="openMove(r,'out')" title="Stock out" class="w-7 h-7 rounded ring-1 ring-amber-300 text-amber-700 font-bold">−</button>
+                <button @click="openEdit(r)" title="Edit" class="w-7 h-7 rounded ring-1 ring-metfraa-gray-300 text-metfraa-gray-600">✎</button>
+                <button @click="del(r)" title="Remove" class="w-7 h-7 rounded ring-1 ring-red-200 text-red-500">✕</button>
+              </div>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="!rows.length">
+          <td colspan="9" class="py-10 text-center text-metfraa-gray-400 text-sm">No parts found.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- add / edit modal -->
+  <div x-show="showForm" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" @click.self="showForm=false">
+    <div class="bg-white rounded-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="display text-xl text-metfraa-ink" x-text="form.id ? 'Edit part' : 'Add part'"></h3>
+        <button @click="showForm=false" class="text-metfraa-gray-400 text-2xl leading-none">&times;</button>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label class="block"><span class="lbl">Part name *</span>
+          <input x-model="form.part_name" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Part code</span>
+          <input x-model="form.part_code" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Machine / Equipment</span>
+          <input x-model="form.machine" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Manufacturer</span>
+          <input x-model="form.manufacturer" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Unit</span>
+          <input x-model="form.unit" placeholder="No, Set, Mtr…" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Supplier</span>
+          <input x-model="form.supplier" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Opening qty</span>
+          <input type="number" step="any" x-model.number="form.opening_qty" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300 mono"></label>
+        <label class="block"><span class="lbl">Min stock level</span>
+          <input type="number" step="any" x-model.number="form.min_stock_level" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300 mono"></label>
+        <label class="block"><span class="lbl">Qty in</span>
+          <input type="number" step="any" x-model.number="form.qty_in" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300 mono"></label>
+        <label class="block"><span class="lbl">Qty out</span>
+          <input type="number" step="any" x-model.number="form.qty_out" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300 mono"></label>
+        <label class="block"><span class="lbl">Unit price (₹)</span>
+          <input type="number" step="any" x-model.number="form.unit_price" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300 mono"></label>
+        <label class="block"><span class="lbl">Last purchase date</span>
+          <input type="date" x-model="form.last_purchase_date" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+      </div>
+      <p x-show="formErr" class="text-sm text-red-600 mt-3" x-text="formErr"></p>
+      <div class="flex justify-end gap-2 mt-5">
+        <button @click="showForm=false" class="px-4 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-bold">Cancel</button>
+        <button @click="save()" :disabled="saving" class="px-5 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50" x-text="saving?'Saving…':'Save'"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- stock move modal -->
+  <div x-show="showMove" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" @click.self="showMove=false">
+    <div class="bg-white rounded-xl w-full max-w-sm p-6">
+      <h3 class="display text-xl text-metfraa-ink mb-1" x-text="(move.direction==='in'?'Stock in':'Stock out')"></h3>
+      <p class="text-sm text-metfraa-gray-500 mb-4"><span x-text="move.part_name"></span> · in stock: <span class="mono font-semibold" x-text="move.current"></span></p>
+      <label class="block mb-3"><span class="lbl">Quantity</span>
+        <input type="number" step="any" min="0" x-model.number="move.qty" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300 mono"></label>
+      <template x-if="move.direction==='in'">
+        <div class="grid grid-cols-2 gap-3 mb-1">
+          <label class="block"><span class="lbl">Unit price (₹)</span>
+            <input type="number" step="any" x-model.number="move.unit_price" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300 mono"></label>
+          <label class="block"><span class="lbl">Purchase date</span>
+            <input type="date" x-model="move.purchase_date" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        </div>
+      </template>
+      <p x-show="moveErr" class="text-sm text-red-600 mt-2" x-text="moveErr"></p>
+      <div class="flex justify-end gap-2 mt-5">
+        <button @click="showMove=false" class="px-4 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-bold">Cancel</button>
+        <button @click="doMove()" :disabled="saving" class="px-5 py-2 rounded-lg text-white text-sm font-bold disabled:opacity-50"
+                :class="move.direction==='in'?'bg-green-600':'bg-amber-600'" x-text="saving?'…':(move.direction==='in'?'Add stock':'Issue stock')"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- import modal -->
+  <div x-show="showImport" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" @click.self="showImport=false">
+    <div class="bg-white rounded-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+      <h3 class="display text-xl text-metfraa-ink mb-1">Import parts (CSV)</h3>
+      <p class="text-sm text-metfraa-gray-500 mb-3">Paste rows copied from Excel (or a CSV). First row must be the header — columns like
+        Part Code, Part Name, Machine / Equipment, Manufacturer, Unit, Opening Qty, Qty In, Qty Out, Min Stock Level, Unit Price, Supplier, Last Purchase Date.
+        S.No, Current Stock, Reorder Status and Stock Value are ignored (they're recalculated).</p>
+      <textarea x-model="importText" rows="10" placeholder="Part Code,Part Name,Machine / Equipment,…"
+                class="w-full text-xs mono rounded-lg border-metfraa-gray-300"></textarea>
+      <label class="flex items-center gap-2 mt-3 text-sm">
+        <input type="checkbox" x-model="importReplace" class="rounded border-metfraa-gray-300">
+        Replace the current list (archive all existing parts first)
+      </label>
+      <p x-show="importMsg" class="text-sm mt-2" :class="importErr?'text-red-600':'text-green-700'" x-text="importMsg"></p>
+      <div class="flex justify-end gap-2 mt-5">
+        <button @click="showImport=false" class="px-4 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-bold">Close</button>
+        <button @click="doImport()" :disabled="saving" class="px-5 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50" x-text="saving?'Importing…':'Import'"></button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function sparesApp() {
+  return {
+    rows: [], totals: {}, q: '', onlyReorder: false,
+    showForm: false, saving: false, formErr: '',
+    form: {},
+    showMove: false, moveErr: '', move: {},
+    showImport: false, importText: '', importReplace: false, importMsg: '', importErr: false,
+
+    init() { this.load(); },
+
+    async load() {
+      const p = new URLSearchParams();
+      if (this.q) p.set('q', this.q);
+      if (this.onlyReorder) p.set('reorder', '1');
+      try {
+        const r = await fetch('/spares/api/list?' + p.toString());
+        const d = await r.json();
+        this.rows = d.rows || [];
+        this.totals = d.totals || {};
+      } catch (e) { console.warn('load failed', e); }
+    },
+
+    blank() {
+      return { id: null, part_name: '', part_code: '', machine: '', manufacturer: '',
+               unit: '', supplier: '', opening_qty: 0, min_stock_level: 0,
+               qty_in: 0, qty_out: 0, unit_price: 0, last_purchase_date: '' };
+    },
+    openAdd() { this.form = this.blank(); this.formErr = ''; this.showForm = true; },
+    openEdit(r) {
+      this.form = { id: r.id, part_name: r.part_name, part_code: r.part_code || '',
+        machine: r.machine || '', manufacturer: r.manufacturer || '', unit: r.unit || '',
+        supplier: r.supplier || '', opening_qty: r.opening_qty, min_stock_level: r.min_stock_level,
+        qty_in: r.qty_in, qty_out: r.qty_out, unit_price: r.unit_price,
+        last_purchase_date: r.last_purchase_date || '' };
+      this.formErr = ''; this.showForm = true;
+    },
+    async save() {
+      if (!this.form.part_name.trim()) { this.formErr = 'Part name is required'; return; }
+      this.saving = true; this.formErr = '';
+      try {
+        const url = '/spares/api/save' + (this.form.id ? ('?pid=' + this.form.id) : '');
+        const r = await fetch(url, { method: 'POST',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.form) });
+        if (!r.ok) { this.formErr = (await r.json()).detail || 'Save failed'; return; }
+        this.showForm = false; await this.load();
+      } catch (e) { this.formErr = 'Save failed'; }
+      finally { this.saving = false; }
+    },
+
+    openMove(r, dir) {
+      this.move = { id: r.id, part_name: r.part_name, current: r.current_stock,
+        direction: dir, qty: null, unit_price: r.unit_price || null, purchase_date: '' };
+      this.moveErr = ''; this.showMove = true;
+    },
+    async doMove() {
+      if (!this.move.qty || this.move.qty <= 0) { this.moveErr = 'Enter a quantity'; return; }
+      this.saving = true; this.moveErr = '';
+      try {
+        const body = { direction: this.move.direction, qty: this.move.qty };
+        if (this.move.direction === 'in') { body.unit_price = this.move.unit_price; body.purchase_date = this.move.purchase_date; }
+        const r = await fetch('/spares/api/' + this.move.id + '/move', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!r.ok) { this.moveErr = (await r.json()).detail || 'Failed'; return; }
+        this.showMove = false; await this.load();
+      } catch (e) { this.moveErr = 'Failed'; }
+      finally { this.saving = false; }
+    },
+
+    async del(r) {
+      if (!confirm('Remove "' + r.part_name + '" from the inventory?')) return;
+      await fetch('/spares/api/' + r.id + '/delete', { method: 'POST' });
+      await this.load();
+    },
+
+    async doImport() {
+      if (!this.importText.trim()) { this.importErr = true; this.importMsg = 'Paste some rows first'; return; }
+      this.saving = true; this.importMsg = '';
+      try {
+        const r = await fetch('/spares/api/import', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ csv_text: this.importText, replace: this.importReplace }) });
+        const d = await r.json();
+        if (!r.ok) { this.importErr = true; this.importMsg = d.detail || 'Import failed'; return; }
+        this.importErr = false; this.importMsg = 'Imported ' + d.created + ' parts.';
+        this.importText = ''; await this.load();
+      } catch (e) { this.importErr = true; this.importMsg = 'Import failed'; }
+      finally { this.saving = false; }
+    },
+  };
+}
+</script>
+{% endblock %}
