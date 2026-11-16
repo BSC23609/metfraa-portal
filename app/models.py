@@ -1332,6 +1332,9 @@ class MaintSparePart(Base):
     unit_price = Column(Float, nullable=False, default=0)
     supplier = Column(String(255), nullable=True)
     last_purchase_date = Column(Date, nullable=True)
+    # True once a reorder alert has been sent; cleared when stock recovers so the
+    # next dip alerts again (avoids re-pinging on every stock-out while low).
+    reorder_alerted = Column(Boolean, default=False, nullable=False)
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

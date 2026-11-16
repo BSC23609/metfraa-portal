@@ -9,6 +9,7 @@ and reorder status are derived (never stored) so they can't drift:
 Access is gated by the same maint_admin flag as the Maintenance module.
 """
 import logging
+import os
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -22,10 +23,49 @@ from ..access import get_access
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Employee, MaintSparePart
+from ..services import wati as _wati
 
 router = APIRouter(prefix="/spares", tags=["spares"])
 log = logging.getLogger("spares")
 templates = Jinja2Templates(directory="app/templates")
+
+# Default reorder-alert recipient: Ajoy Kumar Khatua (Metfraa Maintenance).
+# Override with SPARE_ALERT_MOBILE (comma/space/semicolon list) in the env.
+DEFAULT_SPARE_ALERT_MOBILE = "919002039036"
+
+
+def _maint_mobiles() -> list:
+    """Who gets the reorder alert. SPARE_ALERT_MOBILE overrides; otherwise the
+    maintenance team's MAINT_SUPERVISOR_MOBILE, else Ajoy's number."""
+    raw = (os.getenv("SPARE_ALERT_MOBILE")
+           or os.getenv("MAINT_SUPERVISOR_MOBILE")
+           or DEFAULT_SPARE_ALERT_MOBILE)
+    return [p.strip() for p in raw.replace(";", ",").split(",") if p.strip()]
+
+
+def _check_reorder_alert(db: Session, p: MaintSparePart):
+    """Ping maintenance once when a part crosses into REORDER NOW; clear the flag
+    when stock recovers so the next dip alerts again. Never raises into the API.
+    """
+    current = (p.opening_qty or 0) + (p.qty_in or 0) - (p.qty_out or 0)
+    is_reorder = current <= (p.min_stock_level or 0)
+    try:
+        if is_reorder and not p.reorder_alerted:
+            for phone in _maint_mobiles():
+                try:
+                    _wati.spare_reorder_alert(
+                        phone, p.part_name, p.machine, round(current, 2),
+                        round(p.min_stock_level or 0, 2), p.supplier, db)
+                except Exception:
+                    log.warning("[spares] reorder alert failed for %s",
+                                p.part_name, exc_info=True)
+            p.reorder_alerted = True
+            db.commit()
+        elif not is_reorder and p.reorder_alerted:
+            p.reorder_alerted = False
+            db.commit()
+    except Exception:
+        log.warning("[spares] reorder-alert check failed", exc_info=True)
 
 
 def _guard(db: Session, user: Employee):
@@ -169,6 +209,7 @@ def api_save(payload: PartIn, pid: int | None = None,
         db.add(p)
     _apply(p, payload)
     db.commit()
+    _check_reorder_alert(db, p)
     return {"ok": True, "part": _json(p)}
 
 
@@ -205,6 +246,7 @@ def api_move(pid: int, payload: MoveIn,
     else:
         raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
     db.commit()
+    _check_reorder_alert(db, p)
     return {"ok": True, "part": _json(p)}
 
 

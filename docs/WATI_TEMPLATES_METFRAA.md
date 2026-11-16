@@ -295,3 +295,35 @@ environment with `WATI_TGT26_PASS_TPL` if Meta approval lands differently.
 images, POST `/tgt26/send-passes` as an admin — first with the default
 `?dry_run=true` to see the recipient list, then `?dry_run=false` to send.
 Delivery lands in `wa_log` like every other template.
+
+---
+
+## 6. `met_spare_reorder` → maintenance (spare parts reorder alert)
+
+Sent automatically the moment a spare part's current stock drops to or below its
+minimum level (status becomes **REORDER NOW**). Goes to Metfraa Maintenance —
+by default **Ajoy Kumar Khatua (919002039036)**. One alert per dip: it fires
+once on the crossing and only re-fires after stock recovers above the minimum
+and dips again.
+
+**Category:** UTILITY (not Marketing).
+**Variables:** `part`, `machine`, `stock`, `min`, `supplier`
+**Buttons:** none.
+
+```
+Spare part reorder alert.
+
+Part: {{part}}
+Machine: {{machine}}
+Current stock: {{stock}}
+Minimum level: {{min}}
+Supplier: {{supplier}}
+
+Stock has reached the reorder level. Please arrange procurement.
+
+Metfraa Steel Buildings
+```
+
+**Recipient config:** set `SPARE_ALERT_MOBILE` in Vercel to change or add numbers
+(comma-separated for several). If unset, it falls back to `MAINT_SUPERVISOR_MOBILE`,
+then to Ajoy's number. The template name can be overridden with `WATI_SPARE_REORDER_TPL`.

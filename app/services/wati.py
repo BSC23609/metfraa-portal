@@ -53,6 +53,8 @@ TPL = {
     # Authentication-category template: single {{1}} = the code, Copy-code
     # button. Shared with BSC Tickets — already Meta-approved as otp_password2.
     "otp": lambda: os.getenv("WATI_OTP_TPL", "otp_password2"),
+    # Spare parts reorder alert to maintenance. Utility category, named vars.
+    "spare_reorder": lambda: os.getenv("WATI_SPARE_REORDER_TPL", "met_spare_reorder"),
 }
 
 
@@ -220,3 +222,19 @@ def password_otp(phone, code: str, db=None) -> bool:
     category with one variable {{1}} (the code) and a Copy-code button — WATI
     populates both the body and the button from the single "1" parameter."""
     return send_template(phone, TPL["otp"](), {"1": str(code)}, db)
+
+
+def spare_reorder_alert(phone, part_name, machine, stock, min_level, supplier,
+                        db=None) -> bool:
+    """Alert maintenance that a spare part has hit its reorder level.
+
+    Variable NAMES must match the met_spare_reorder template exactly:
+    part, machine, stock, min, supplier.
+    """
+    return send_template(phone, TPL["spare_reorder"](), {
+        "part": part_name or "-",
+        "machine": machine or "-",
+        "stock": stock,
+        "min": min_level,
+        "supplier": supplier or "-",
+    }, db)
