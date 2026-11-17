@@ -1,5 +1,26 @@
 <div x-data="sparesApp()" x-init="init()" x-cloak>
 
+  <input type="file" x-ref="ocrFile" accept="image/*" capture="environment" class="hidden" @change="onOcrFile($event)">
+  <input type="file" x-ref="ocrGallery" accept="image/*" multiple class="hidden" @change="onOcrFile($event)">
+
+  <!-- Add a part from a photo (OCR) -->
+  <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-4">
+    <span class="lbl">Add a part from a photo</span>
+    <button @click="ocrScan()" :disabled="ocrBusy" type="button"
+            class="text-sm font-semibold text-metfraa-blue hover:underline disabled:opacity-40"
+            x-text="ocrBusy ? 'Reading…' : '📷 Add scan'"></button>
+    <button @click="ocrUpload()" :disabled="ocrBusy" type="button"
+            class="text-sm font-semibold text-metfraa-blue hover:underline disabled:opacity-40">🖼️ Add photos</button>
+    <template x-if="ocrQueue.length">
+      <span class="flex items-center gap-3 bg-metfraa-blue/5 border border-metfraa-blue/30 rounded-lg px-3 py-1.5">
+        <span class="text-xs font-semibold text-metfraa-blue" x-text="ocrQueue.length + ' photo' + (ocrQueue.length>1?'s':'') + ' ready'"></span>
+        <button @click="extractOcr()" :disabled="ocrBusy" type="button" class="text-xs font-semibold px-3 py-1 rounded-lg bg-metfraa-blue text-white disabled:opacity-40" x-text="ocrBusy ? 'Reading…' : 'Extract & fill'"></button>
+        <button @click="clearOcrQueue()" :disabled="ocrBusy" type="button" class="text-xs font-semibold text-metfraa-gray-500 hover:underline">Clear</button>
+      </span>
+    </template>
+    <span x-show="ocrMsg" class="text-xs font-semibold" :class="ocrMsgOk ? 'text-green-600' : 'text-metfraa-gray-500'" x-text="ocrMsg"></span>
+  </div>
+
   <!-- KPI tiles -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
@@ -205,8 +226,63 @@ function sparesApp() {
     form: {},
     showMove: false, moveErr: '', move: {},
     report: {}, reportSending: false, reportMsg: '', reportMsgOk: false,
+    ocrBusy: false, ocrQueue: [], ocrMsg: '', ocrMsgOk: false,
 
     init() { this.load(); this.loadReportStatus(); },
+
+    // -------- Add a part from a photo (OCR) --------
+    ocrScan() { this.$refs.ocrFile.value = ''; this.$refs.ocrFile.click(); },
+    ocrUpload() { this.$refs.ocrGallery.value = ''; this.$refs.ocrGallery.click(); },
+    clearOcrQueue() { this.ocrQueue = []; this.ocrMsg = ''; },
+    downscaleImage(file, maxDim) {
+      return new Promise((res, rej) => {
+        const img = new Image();
+        img.onload = () => {
+          let w = img.width, h = img.height;
+          const s = Math.min(1, maxDim / Math.max(w, h));
+          const c = document.createElement('canvas');
+          c.width = Math.round(w * s); c.height = Math.round(h * s);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          res(c.toDataURL('image/jpeg', 0.85));
+        };
+        img.onerror = rej;
+        img.src = URL.createObjectURL(file);
+      });
+    },
+    async onOcrFile(ev) {
+      const files = [...(ev.target.files || [])];
+      for (const f of files) {
+        try { this.ocrQueue.push(await this.downscaleImage(f, 1568)); } catch (e) {}
+      }
+      this.ocrMsgOk = false;
+      this.ocrMsg = this.ocrQueue.length
+        ? (this.ocrQueue.length + ' photo' + (this.ocrQueue.length > 1 ? 's' : '') + ' ready — tap “Extract & fill”')
+        : '';
+    },
+    async extractOcr() {
+      if (!this.ocrQueue.length) { this.ocrMsgOk = false; this.ocrMsg = 'Add a photo first'; return; }
+      this.ocrBusy = true; this.ocrMsg = 'Reading…'; this.ocrMsgOk = false;
+      try {
+        const r = await fetch('/maint/api/ocr/extract', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'spare', images: this.ocrQueue }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Scan failed');
+        const f = d.fields || {};
+        this.openAdd();
+        for (const k in f) { if (k in this.form) this.form[k] = f[k]; }
+        const n = Object.keys(f).length;
+        this.ocrMsgOk = n > 0;
+        this.ocrMsg = n ? ('Filled ' + n + ' field(s) — check and Save') : 'Nothing could be read — enter manually';
+        this.ocrQueue = [];
+      } catch (e) {
+        this.ocrMsgOk = false; this.ocrMsg = e.message || 'Scan failed';
+      } finally {
+        this.ocrBusy = false;
+        setTimeout(() => { if (this.ocrMsgOk) this.ocrMsg = ''; }, 9000);
+      }
+    },
 
     async loadReportStatus() {
       try {

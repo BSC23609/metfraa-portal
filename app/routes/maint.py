@@ -111,8 +111,8 @@ OCR_MODEL = os.getenv("MAINT_OCR_MODEL", "claude-haiku-5-5")
 
 
 class OcrIn(BaseModel):
-    asset_id: int | None = None   # not needed for EB readings
-    mode: str = "reading"     # 'reading' | 'event' | 'eb'
+    asset_id: int | None = None   # not needed for EB readings / spare parts
+    mode: str = "reading"     # 'reading' | 'event' | 'eb' | 'spare'
     image: str | None = None            # single image (base64 / data: URL) — legacy
     images: list[str] | None = None     # several photos of the SAME machine, read together
 
@@ -135,6 +135,19 @@ def _ocr_fields_for(db: Session, asset_id: int, mode: str):
             {"code": "v_yn", "label": "Phase voltage Y-N", "type": "number"},
             {"code": "v_bn", "label": "Phase voltage B-N", "type": "number"},
             {"code": "remarks", "label": "Remarks", "type": "text"},
+        ]
+    if mode == "spare":
+        return [
+            {"code": "part_name", "label": "Part name / description", "type": "text"},
+            {"code": "part_code", "label": "Part code / number", "type": "text"},
+            {"code": "machine", "label": "Machine / equipment it fits", "type": "text"},
+            {"code": "manufacturer", "label": "Manufacturer / brand", "type": "text"},
+            {"code": "unit", "label": "Unit (No, Set, Mtr, Ltr)", "type": "text"},
+            {"code": "supplier", "label": "Supplier / vendor name", "type": "text"},
+            {"code": "store_location", "label": "Store / rack / bin location", "type": "text"},
+            {"code": "unit_price", "label": "Unit price / rate (number only)", "type": "number"},
+            {"code": "opening_qty", "label": "Quantity", "type": "number"},
+            {"code": "min_stock_level", "label": "Minimum stock level", "type": "number"},
         ]
     a = db.get(MaintAsset, asset_id) if asset_id else None
     if mode == "event":
@@ -176,7 +189,7 @@ async def api_ocr_extract(payload: OcrIn, user: Employee = Depends(get_current_u
     if not key:
         raise HTTPException(400, "Scan is not configured yet — set ANTHROPIC_API_KEY on the server.")
     a = db.get(MaintAsset, payload.asset_id) if payload.asset_id else None
-    if payload.mode != "eb" and not a:
+    if payload.mode not in ("eb", "spare") and not a:
         raise HTTPException(400, "Unknown asset")
     fields = _ocr_fields_for(db, payload.asset_id, payload.mode)
 
@@ -196,12 +209,23 @@ async def api_ocr_extract(payload: OcrIn, user: Employee = Depends(get_current_u
                              "source": {"type": "base64", "media_type": media, "data": im}})
 
     field_lines = "\n".join(f'- {f["code"]}: {f["label"]} [{f["type"]}]' for f in fields)
-    subject = (f"for asset {a.asset_code} ({a.description or ''})" if a
-               else "of an electricity (EB) energy meter / power-analyser display or logbook")
+    if payload.mode == "spare":
+        subject = ("of a spare-part label, box, nameplate, purchase bill or inventory "
+                   "sheet — read the part name, part/catalogue number, the machine it fits, "
+                   "manufacturer/brand, unit, supplier/vendor, price and quantity")
+    elif a:
+        subject = f"for asset {a.asset_code} ({a.description or ''})"
+    else:
+        subject = "of an electricity (EB) energy meter / power-analyser display or logbook"
+    if payload.mode == "spare":
+        lead = (f"You are reading one or more photos {subject}. "
+                "The photos are of the SAME spare part; combine the values across all of them into one result. ")
+    else:
+        lead = (f"You are reading one or more photos of a maintenance log sheet or machine/HMI display screens "
+                f"{subject}. "
+                "The photos are of the SAME machine; combine the values across all of them into one result. ")
     prompt = (
-        f"You are reading one or more photos of a maintenance log sheet or machine/HMI display screens "
-        f"{subject}. "
-        "The photos are of the SAME machine; combine the values across all of them into one result. "
+        lead +
         "Extract ONLY the values that are clearly visible. "
         "Return a single JSON object whose keys are the field codes listed below and whose "
         "values are what you read. Omit any field you cannot read confidently — do NOT guess. "
