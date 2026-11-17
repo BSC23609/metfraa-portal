@@ -330,50 +330,39 @@ then to Ajoy's number. The template name can be overridden with `WATI_SPARE_REOR
 
 ---
 
-## 7. `met_spare_reorder_report` → maintenance (month-end reorder summary)
+## 7. Month-end reorder summary → maintenance (EMAIL, no template)
 
 A single consolidated list of **every** spare part currently in **REORDER NOW**
 status, sent once at month-end (the last day of the month, from **3:00 pm IST**).
-Complements the instant per-part alert above — that fires on each crossing; this
-is the end-of-month picture in one message. Same recipient(s) as the alert
-(`SPARE_ALERT_MOBILE` → `MAINT_SUPERVISOR_MOBILE` → Ajoy 919002039036).
+Complements the instant per-part WhatsApp alert above — that fires on each
+crossing; this is the end-of-month picture in one message.
 
-**Category:** UTILITY (not Marketing).
-**Variables:** `month`, `count`, `parts`
-**Buttons:** none.
+**This report is sent by EMAIL, not WhatsApp, so it needs no WATI template.** It
+goes to `MAINT_REMINDER_EMAIL` (default **maintenance@metfraa.com** — the same
+inbox that already receives the daily maintenance reminder), as an HTML table of
+part, machine, stock/min, supplier and store location.
 
-> `parts` is **one line** — semicolon-separated, e.g.
-> `286213 RAC TIP (airless spray) 1/1; 189920 strainer (airless spray) 1/1`.
-> WhatsApp wraps it. It can never contain a line break (WATI rejects newlines in
-> a parameter), so each part cannot sit on its own line within one variable.
-
-```
-Spare parts reorder summary — {{month}}.
-
-{{count}} part(s) are at or below their minimum stock level and need reordering:
-
-{{parts}}
-
-Please arrange procurement. Full details are in the Maintenance portal under Spare Parts.
-
-Metfraa Steel Buildings
-```
-
-**Override the name** with `WATI_SPARE_REORDER_REPORT_TPL` if Meta approves it
-under a different name.
-
-### Scheduling the month-end report
+### Scheduling
 
 `/cron/spare-reorder-report` is **not** in `vercel.json` (Hobby caps crons at 2,
 both already used). It is driven by `.github/workflows/spare-reorder-report.yml`,
-which pings **hourly**. The endpoint self-gates: it only sends on the **last day
-of the month from 3pm IST**, and is **idempotent per month** (one successful send
-blocks any repeat), so the extra hourly hits are no-ops. Hourly rather than one
-daily run because GitHub's scheduler drifts — a wide window plus the once-a-month
-guard means the report still lands.
+which pings **hourly** reusing the **existing** `CRON_SECRET` repo secret (the
+same one the daily `maint-reminder` workflow already uses — nothing new to set
+up). The endpoint self-gates: it only sends on the **last day of the month from
+3pm IST**, and is **idempotent per month** (one successful send, stamped in
+`wa_log`, blocks any repeat), so the extra hourly hits are no-ops. Hourly rather
+than one daily run because GitHub's scheduler drifts.
 
-Requires the repo secret `CRON_SECRET` (same value as the Vercel env var) and
-`CRON_ENABLED=true`. **Test on demand:**
+Requires `CRON_ENABLED=true` on Vercel (already set — the other crons rely on
+it). **Test on demand:**
 `GET https://app.metfraa.com/cron/spare-reorder-report?force=1`
 with header `Authorization: Bearer <CRON_SECRET>` — `force=1` bypasses the
 day/time gate and the once-a-month guard and sends immediately.
+
+### Optional: also send it on WhatsApp
+
+A `met_spare_reorder_report` WhatsApp template and a `wati.spare_reorder_report`
+wrapper exist for anyone who later wants this on WhatsApp too (UTILITY category,
+variables `month`, `count`, `parts` — `parts` is one semicolon-separated line as
+WATI rejects newlines). It is **not used by default**; the email path above needs
+no template at all.

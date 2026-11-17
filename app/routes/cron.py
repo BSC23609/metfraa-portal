@@ -106,18 +106,24 @@ from datetime import datetime, timedelta, timezone  # noqa: E402
 _IST = timezone(timedelta(hours=5, minutes=30))
 
 
-def _reorder_report(db: Session, force: bool = False) -> dict:
-    """Month-end consolidated reorder report to maintenance (Ajoy).
+# Marker written to wa_log on a successful month-end email, so the once-a-month
+# idempotency check needs no extra table.
+_REORDER_REPORT_MARK = "spare_reorder_report_email"
 
-    Lists every spare part currently in REORDER NOW status and WhatsApps a
-    single summary to the maintenance number(s). Fires once, on the LAST day of
-    the month from 3pm IST onward; idempotent per month (a WATI 'sent' row for
-    the report template this month blocks re-send). `force=1` bypasses the day /
-    time gate and the once-a-month guard for on-demand testing.
+
+def _reorder_report(db: Session, force: bool = False) -> dict:
+    """Month-end consolidated reorder report to maintenance (Ajoy), by EMAIL.
+
+    Lists every spare part currently in REORDER NOW status and emails one
+    summary to the maintenance inbox (MAINT_REMINDER_EMAIL, default
+    maintenance@metfraa.com — the same address that gets the daily reminder, so
+    no WhatsApp template and no new scheduling secret are needed). Fires once, on
+    the LAST day of the month from 3pm IST onward; idempotent per month (a
+    'sent' marker in wa_log this month blocks re-send). `force=1` bypasses the
+    day/time gate and the once-a-month guard for on-demand testing.
     """
     from ..models import MaintSparePart, WaLog
-    from ..services import wati as _wati
-    from .spares import _maint_mobiles
+    from ..services import email_service as _email
 
     now_ist = datetime.now(_IST)
     is_last_day = (now_ist + timedelta(days=1)).month != now_ist.month
@@ -134,7 +140,7 @@ def _reorder_report(db: Session, force: bool = False) -> dict:
                                        microsecond=0)
                        .astimezone(timezone.utc).replace(tzinfo=None))
         already = (db.query(WaLog)
-                   .filter(WaLog.template == _wati.TPL["spare_reorder_report"](),
+                   .filter(WaLog.template == _REORDER_REPORT_MARK,
                            WaLog.result == "sent",
                            WaLog.created_at >= month_start)
                    .first())
@@ -151,52 +157,89 @@ def _reorder_report(db: Session, force: bool = False) -> dict:
         if current <= (p.min_stock_level or 0):
             low.append((p, current))
 
+    month = now_ist.strftime("%B %Y")
+    if not low:
+        return {"status": "ok", "month": month, "reorder_count": 0, "sent": 0,
+                "forced": force, "note": "no parts need reorder"}
+
     def _fmt(n):
         n = round(n or 0, 2)
         return str(int(n)) if n == int(n) else str(n)
 
-    items = []
-    for p, cur in low:
+    def _esc(s):
+        return (str(s or "")
+                .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+    rows_html, rows_txt = [], []
+    for i, (p, cur) in enumerate(low, 1):
+        rows_html.append(
+            "<tr>"
+            f"<td style='padding:6px 10px;border:1px solid #e2e8f0'>{i}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #e2e8f0'>{_esc(p.part_name)}"
+            + (f"<br><span style='color:#94a3b8;font-size:11px'>{_esc(p.part_code)}</span>" if p.part_code else "")
+            + "</td>"
+            f"<td style='padding:6px 10px;border:1px solid #e2e8f0'>{_esc(p.machine) or '-'}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #e2e8f0;text-align:right;color:#dc2626;font-weight:700'>{_fmt(cur)}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #e2e8f0;text-align:right'>{_fmt(p.min_stock_level)}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #e2e8f0'>{_esc(p.supplier) or '-'}</td>"
+            f"<td style='padding:6px 10px;border:1px solid #e2e8f0'>{_esc(p.store_location) or '-'}</td>"
+            "</tr>")
         code = (p.part_code + " ") if p.part_code else ""
         mc = f" ({p.machine})" if p.machine else ""
-        items.append(f"{code}{p.part_name}{mc} {_fmt(cur)}/{_fmt(p.min_stock_level)}")
+        rows_txt.append(f"{i}. {code}{p.part_name}{mc} — stock {_fmt(cur)} / min {_fmt(p.min_stock_level)}")
 
-    # One line only — WATI rejects newlines in a parameter. Clamp length so the
-    # template parameter stays within WhatsApp's limit.
-    line, shown = "", 0
-    for it in items:
-        piece = (("; " if line else "") + it)
-        if len(line) + len(piece) > 850:
-            break
-        line += piece
-        shown += 1
-    if shown < len(items):
-        line += f"; …+{len(items) - shown} more"
-    parts_text = line or "None — all parts above minimum."
+    html = (
+        "<div style='font-family:Arial,Helvetica,sans-serif;color:#0d1421;max-width:760px'>"
+        f"<p>Good afternoon Ajoy,</p>"
+        f"<p><b>{len(low)} spare part(s)</b> are at or below their minimum stock level "
+        f"as of month-end (<b>{month}</b>) and need reordering:</p>"
+        "<table style='border-collapse:collapse;font-size:13px;width:100%'>"
+        "<thead><tr style='background:#0A2B66;color:#fff'>"
+        "<th style='padding:6px 10px;border:1px solid #0A2B66;text-align:left'>#</th>"
+        "<th style='padding:6px 10px;border:1px solid #0A2B66;text-align:left'>Part</th>"
+        "<th style='padding:6px 10px;border:1px solid #0A2B66;text-align:left'>Machine</th>"
+        "<th style='padding:6px 10px;border:1px solid #0A2B66;text-align:right'>Stock</th>"
+        "<th style='padding:6px 10px;border:1px solid #0A2B66;text-align:right'>Min</th>"
+        "<th style='padding:6px 10px;border:1px solid #0A2B66;text-align:left'>Supplier</th>"
+        "<th style='padding:6px 10px;border:1px solid #0A2B66;text-align:left'>Store location</th>"
+        "</tr></thead><tbody>" + "".join(rows_html) + "</tbody></table>"
+        "<p style='margin-top:14px'>Full details are in the Maintenance portal under "
+        "<a href='https://app.metfraa.com/maint'>Spare Parts</a>.</p>"
+        "<p style='color:#94a3b8;font-size:12px'>Metfraa Steel Buildings — automated month-end reorder summary.</p>"
+        "</div>")
+    text = (f"Month-end spare parts reorder summary — {month}\n"
+            f"{len(low)} part(s) at or below minimum:\n\n" + "\n".join(rows_txt))
 
-    month = now_ist.strftime("%b %Y")
-    mobiles = _maint_mobiles()
+    to = os.getenv("MAINT_REMINDER_EMAIL", "maintenance@metfraa.com")
+    subject = f"Spare parts to reorder — {month} ({len(low)})"
     sent = 0
-    for phone in mobiles:
-        try:
-            if _wati.spare_reorder_report(phone, month, len(low), parts_text, db):
-                sent += 1
-        except Exception:
-            log.warning("[cron] reorder report send failed for %s", phone,
-                        exc_info=True)
+    try:
+        if _email.send_email(to, subject, html, text):
+            sent = 1
+            try:
+                db.add(WaLog(phone=to[:32], template=_REORDER_REPORT_MARK,
+                             result="sent", detail=f"{len(low)} parts",
+                             created_at=datetime.utcnow()))
+                db.commit()
+            except Exception:
+                db.rollback()
+    except Exception:
+        log.warning("[cron] reorder report email failed", exc_info=True)
+
     return {"status": "ok", "month": month, "reorder_count": len(low),
-            "recipients": len(mobiles), "sent": sent, "forced": force}
+            "to": to, "sent": sent, "forced": force}
 
 
 @router.get("/spare-reorder-report")
 def cron_spare_reorder_report(request: Request, force: int = 0,
                               db: Session = Depends(get_db)):
-    """Month-end spare-parts reorder summary to maintenance (Ajoy).
+    """Month-end spare-parts reorder summary emailed to maintenance (Ajoy).
 
     NOT in vercel.json (Hobby caps crons at 2, both used). Driven by
-    .github/workflows/spare-reorder-report.yml, which pings hourly; the endpoint
-    self-gates to the last day of the month from 3pm IST and is idempotent per
-    month, so frequent pings are safe. `?force=1` sends immediately for testing.
+    .github/workflows/spare-reorder-report.yml, which pings hourly reusing the
+    existing CRON_SECRET; the endpoint self-gates to the last day of the month
+    from 3pm IST and is idempotent per month, so frequent pings are safe.
+    `?force=1` sends immediately for testing.
     """
     _authorize(request)
     if not _enabled():
