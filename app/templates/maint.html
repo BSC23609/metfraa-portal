@@ -42,6 +42,9 @@
       <button @click="tab='spares'"
               :class="tab==='spares' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">Spare Parts</button>
+      <button @click="tab='report'; renderReport()"
+              :class="tab==='report' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">Report</button>
     </nav>
   </div>
 
@@ -991,6 +994,110 @@
     {% include "_spares_panel.html" %}
   </div>
 
+  <!-- ===================== REPORT ===================== -->
+  <div x-show="tab==='report'" x-cloak>
+    <div class="flex items-start justify-between flex-wrap gap-3 mb-5">
+      <div>
+        <div class="lbl mb-1">Breakdown Maintenance Review</div>
+        <h2 class="display text-2xl text-metfraa-ink leading-tight">Equipment &amp; machinery — July to October 2026</h2>
+        <p class="text-xs text-metfraa-gray-500 mt-1">Metfraa Steel Buildings Pvt. Ltd. · Prepared by Ajoy Kumar Khatua · Source: Smaac Maintenance Resolution &amp; Maintenance Reports</p>
+      </div>
+      <button onclick="window.print()" class="text-xs font-semibold px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-metfraa-ink hover:bg-metfraa-gray-50 no-print">Print / PDF</button>
+    </div>
+
+    <!-- KPI cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="lbl-f">Breakdowns logged</div>
+        <div class="display text-3xl font-bold text-metfraa-ink">23</div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="lbl-f">Total downtime</div>
+        <div class="display text-3xl font-bold text-red-600">12h 59m</div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="lbl-f">Avg per breakdown</div>
+        <div class="display text-3xl font-bold text-metfraa-ink">34 min</div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="lbl-f">Spares issued</div>
+        <div class="display text-3xl font-bold text-metfraa-ink">₹24,802</div>
+      </div>
+    </div>
+    <p class="text-xs text-metfraa-gray-500 mb-6">10 resolved and 13 closed · 21 Medium and 2 High priority · Longest single stoppage 1h 25m (Arc Welding-03, 14 Jul).</p>
+
+    <!-- Chart grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="font-semibold text-sm text-metfraa-ink mb-1">Breakdowns by month</div>
+        <div class="text-[11px] text-metfraa-gray-500 mb-3">Peaked in July, then held at 4–6 a month. July includes 4 older breakdowns (Mar–Jun) entered on 3 Jul.</div>
+        <div style="height:240px"><canvas id="repBdMonth"></canvas></div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="font-semibold text-sm text-metfraa-ink mb-1">Downtime by month (minutes)</div>
+        <div class="text-[11px] text-metfraa-gray-500 mb-3">Jul 5h 15m · Aug 2h 50m · Sep 2h 0m · Oct 2h 54m.</div>
+        <div style="height:240px"><canvas id="repDtMonth"></canvas></div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="font-semibold text-sm text-metfraa-ink mb-1">Spares cost per month (₹)</div>
+        <div class="text-[11px] text-metfraa-gray-500 mb-3">Peak month September ₹13,072. Total ₹24,802.</div>
+        <div style="height:240px"><canvas id="repSpareMonth"></canvas></div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="font-semibold text-sm text-metfraa-ink mb-1">Breakdowns by machine group</div>
+        <div class="text-[11px] text-metfraa-gray-500 mb-3">Arc welding leads on count; others = PTW, shot blasting, magnetic drill, pug cutting, air compressor.</div>
+        <div style="height:240px"><canvas id="repBdGroup"></canvas></div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="font-semibold text-sm text-metfraa-ink mb-1">Spares spend by machine group (₹)</div>
+        <div class="text-[11px] text-metfraa-gray-500 mb-3">Airless spray and grinders take 94% of spares spend.</div>
+        <div style="height:240px"><canvas id="repSpareGroup"></canvas></div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
+        <div class="font-semibold text-sm text-metfraa-ink mb-1">Downtime by machine group (minutes)</div>
+        <div class="text-[11px] text-metfraa-gray-500 mb-3">Arc welding machines lose the most time.</div>
+        <div style="height:240px"><canvas id="repDtGroup"></canvas></div>
+      </div>
+      <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4 lg:col-span-2">
+        <div class="font-semibold text-sm text-metfraa-ink mb-1">Root cause — breakdown count vs downtime</div>
+        <div class="text-[11px] text-metfraa-gray-500 mb-3">Wear &amp; tear causes the most breakdowns, but electrical faults cause the most downtime.</div>
+        <div style="height:260px"><canvas id="repRootCause"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Monthly cost detail -->
+    <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4 mt-5">
+      <div class="font-semibold text-sm text-metfraa-ink mb-3">Monthly cost detail</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-[11px] uppercase tracking-wide text-metfraa-gray-500 border-b border-metfraa-gray-200">
+              <th class="py-2 pr-3">Month</th><th class="py-2 pr-3">Vouchers</th>
+              <th class="py-2 pr-3">Machines</th><th class="py-2 pr-3 text-right">Amount (₹)</th><th class="py-2 text-right">Share</th>
+            </tr>
+          </thead>
+          <tbody class="text-metfraa-ink">
+            <tr class="border-b border-metfraa-gray-100"><td class="py-2 pr-3 font-medium">July 2026</td><td class="py-2 pr-3">2</td><td class="py-2 pr-3 text-metfraa-gray-600">ARC Welding-01, -07</td><td class="py-2 pr-3 text-right">430</td><td class="py-2 text-right">1.7%</td></tr>
+            <tr class="border-b border-metfraa-gray-100"><td class="py-2 pr-3 font-medium">September 2026</td><td class="py-2 pr-3">5</td><td class="py-2 pr-3 text-metfraa-gray-600">Airless Spray, AG-5 Grinder-01, AG-4 Grinder-05, ARC Welding-09/-07/-03</td><td class="py-2 pr-3 text-right">13,072</td><td class="py-2 text-right">52.7%</td></tr>
+            <tr class="border-b border-metfraa-gray-100"><td class="py-2 pr-3 font-medium">October 2026</td><td class="py-2 pr-3">3</td><td class="py-2 pr-3 text-metfraa-gray-600">Airless Spray, AG-4 Grinder-03</td><td class="py-2 pr-3 text-right">11,300</td><td class="py-2 text-right">45.6%</td></tr>
+            <tr class="font-bold"><td class="py-2 pr-3">TOTAL</td><td class="py-2 pr-3">10</td><td class="py-2 pr-3"></td><td class="py-2 pr-3 text-right">24,802</td><td class="py-2 text-right">100%</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Key observations -->
+    <div class="bg-metfraa-gray-50 rounded-xl border border-metfraa-gray-200 p-4 mt-5">
+      <div class="font-semibold text-sm text-metfraa-ink mb-2">Key observations</div>
+      <ul class="text-sm text-metfraa-gray-700 space-y-1.5 list-disc pl-5">
+        <li>July peak: 8 breakdowns, 5 of them electrical (arc welding, compressor, grinder, cut-off).</li>
+        <li>October: 5 breakdowns, including both High-priority armature failures on 12 Oct.</li>
+        <li>Airless spray tip, filter and strainer damage recurs in Aug, Sep and Oct.</li>
+        <li>Spares issued — Airless spray ₹12,067 · Angle grinders ₹11,190 · Arc welding ₹1,545.</li>
+      </ul>
+    </div>
+  </div>
+
 </div>
 
 <style>
@@ -1024,6 +1131,7 @@
   }
   select.inp { padding-right: 2rem; }
   textarea.inp { min-height: 2.5rem; }
+  @media print { .no-print { display: none !important; } }
 </style>
 
 <script>
@@ -1050,6 +1158,62 @@ function maintApp() {
     logSaving: false,
     ebReadings: [], ebMonthly: [], ebForm: {}, ebSaving: false,
     pdfUrl: '', pdfTitle: '', pdfUploadUrl: '', pdfUploading: false,
+    _reportCharts: [],
+
+    renderReport() {
+      if (typeof Chart === 'undefined') return;
+      this.$nextTick(() => {
+        (this._reportCharts || []).forEach(c => { try { c.destroy(); } catch (e) {} });
+        this._reportCharts = [];
+        const BLUE = '#01578C', NAVY = '#0A2B66', RED = '#dc2626', AMBER = '#E19619', GRAY = '#94a3b8';
+        const mk = (id, cfg) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          this._reportCharts.push(new Chart(el.getContext('2d'), cfg));
+        };
+        const bar = (labels, data, color, horizontal, prefix) => ({
+          type: 'bar',
+          data: { labels, datasets: [{ data, backgroundColor: color, borderRadius: 4, maxBarThickness: 48 }] },
+          options: {
+            indexAxis: horizontal ? 'y' : 'x',
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: { callbacks: { label: ctx => (prefix || '') + ctx.parsed[horizontal ? 'x' : 'y'].toLocaleString('en-IN') } }
+            },
+            scales: {
+              x: { grid: { display: horizontal }, ticks: { font: { size: 11 } } },
+              y: { grid: { display: !horizontal }, beginAtZero: true, ticks: { font: { size: 11 } } }
+            }
+          }
+        });
+        mk('repBdMonth', bar(['Jul','Aug','Sep','Oct'], [8,4,6,5], BLUE, false, ''));
+        mk('repDtMonth', bar(['Jul','Aug','Sep','Oct'], [315,170,120,174], NAVY, false, ''));
+        mk('repSpareMonth', bar(['Jul','Aug','Sep','Oct'], [430,0,13072,11300], AMBER, false, '₹'));
+        mk('repBdGroup', bar(['Arc welding','Airless spray','Angle grinders','Cut-off M/C','Others'], [6,5,5,2,5], BLUE, false, ''));
+        mk('repSpareGroup', bar(['Airless spray','Angle grinders','Arc welding','Others'], [12067,11190,1545,0], AMBER, true, '₹'));
+        mk('repDtGroup', bar(['Cut-off M/C','Airless spray','Others','Grinders','Arc welding'], [79,115,145,170,270], RED, true, ''));
+        mk('repRootCause', {
+          type: 'bar',
+          data: {
+            labels: ['Wear & Tear','Electrical','Operator Error','Mechanical'],
+            datasets: [
+              { label: 'Breakdowns', data: [8,7,6,2], backgroundColor: BLUE, borderRadius: 4, yAxisID: 'y' },
+              { label: 'Downtime (min)', data: [145,365,214,55], backgroundColor: RED, borderRadius: 4, yAxisID: 'y1' }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } },
+            scales: {
+              x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+              y: { position: 'left', beginAtZero: true, title: { display: true, text: 'Breakdowns', font: { size: 10 } }, ticks: { font: { size: 11 } } },
+              y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'Downtime (min)', font: { size: 10 } }, ticks: { font: { size: 11 } } }
+            }
+          }
+        });
+      });
+    },
 
     async init() {
       this.eForm = this.blankEvent();
