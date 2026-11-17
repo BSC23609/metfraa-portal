@@ -649,6 +649,29 @@ def api_readings(asset_id: int, user: Employee = Depends(get_current_user),
     return list(reversed(out))
 
 
+@router.get("/api/readings/latest")
+def api_readings_latest(user: Employee = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Most recent reading for every metered machine (one row per machine)."""
+    _guard(db, user)
+    rows = []
+    for a in db.query(MaintAsset).all():
+        t = a.machine_type
+        params = ((t.reading_params if t else None) or [])
+        if not params:
+            continue
+        last = (db.query(MaintReading).filter(MaintReading.asset_id == a.id)
+                .order_by(MaintReading.reading_date.desc(), MaintReading.id.desc())
+                .first())
+        rows.append({
+            "asset_id": a.id, "asset_code": a.asset_code,
+            "description": a.description, "params": params,
+            "last": _reading_json(last) if last else None,
+        })
+    rows.sort(key=lambda r: (r["last"] is None, r["asset_code"] or ""))
+    return {"rows": rows}
+
+
 @router.get("/api/readings/monthly")
 def api_readings_monthly(asset_id: int, user: Employee = Depends(get_current_user),
                          db: Session = Depends(get_db)):
