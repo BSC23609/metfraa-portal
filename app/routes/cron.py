@@ -255,7 +255,7 @@ def _review_report(db: Session, force: bool = False) -> dict:
     """Email the graphical Breakdown Maintenance Review at the START of the month.
 
     Goes to MAINT_REVIEW_EMAIL (default MAINT_REMINDER_EMAIL,
-    maintenance@metfraa.com). Fires on the 1st of the month from 9am IST onward;
+    maintenance@metfraa.com). Fires on the 1st of the month from 10am IST onward;
     idempotent per month via a wa_log marker. `force=1` sends immediately.
     """
     from ..models import WaLog
@@ -267,8 +267,8 @@ def _review_report(db: Session, force: bool = False) -> dict:
         if now_ist.day != 1:
             return {"status": "skipped", "reason": "not month-start",
                     "date_ist": now_ist.strftime("%Y-%m-%d %H:%M")}
-        if now_ist.hour < 9:
-            return {"status": "skipped", "reason": "before 9am IST",
+        if now_ist.hour < 10:
+            return {"status": "skipped", "reason": "before 10am IST",
                     "date_ist": now_ist.strftime("%Y-%m-%d %H:%M")}
         month_start = (now_ist.replace(day=1, hour=0, minute=0, second=0,
                                        microsecond=0)
@@ -306,7 +306,7 @@ def cron_maint_review_report(request: Request, force: int = 0,
     """Month-start Breakdown Maintenance Review emailed to maintenance.
 
     Pinged hourly by the same workflow as the reorder report (reusing
-    CRON_SECRET); self-gates to the 1st of the month from 9am IST and is
+    CRON_SECRET); self-gates to the 1st of the month from 10am IST and is
     idempotent per month. `?force=1` sends immediately for testing.
     """
     _authorize(request)

@@ -1588,7 +1588,7 @@ def _review_status(db: Session) -> dict:
            or os.getenv("MAINT_REMINDER_EMAIL", "maintenance@metfraa.com")))
     return {"last_sent": last_ist, "to": to,
             "sent_this_month": sent_this_month,
-            "schedule": "1st of month, 9 AM IST"}
+            "schedule": "1st of month, 10 AM IST"}
 
 
 @router.get("/api/review-report/status")
