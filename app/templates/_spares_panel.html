@@ -31,6 +31,43 @@
     <button @click="openAdd()" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold">+ Add part</button>
   </div>
 
+  <!-- Month-end reorder report tracker -->
+  <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-4 mb-4 flex flex-wrap items-center gap-x-6 gap-y-2">
+    <div>
+      <div class="lbl">Month-end reorder report</div>
+      <div class="text-sm text-metfraa-ink mt-0.5">
+        <template x-if="report.last_sent">
+          <span>
+            <span class="inline-block w-2 h-2 rounded-full align-middle mr-1"
+                  :class="report.sent_this_month ? 'bg-green-500' : 'bg-amber-400'"></span>
+            Last sent <b x-text="report.last_sent"></b>
+            <span class="text-metfraa-gray-500" x-text="report.last_count ? '· ' + report.last_count + ' part(s)' : ''"></span>
+            <span class="text-metfraa-gray-500" x-text="report.to ? '· to ' + report.to : ''"></span>
+          </span>
+        </template>
+        <template x-if="!report.last_sent">
+          <span class="text-metfraa-gray-500">
+            <span class="inline-block w-2 h-2 rounded-full bg-metfraa-gray-300 align-middle mr-1"></span>
+            Not sent yet
+          </span>
+        </template>
+      </div>
+      <div class="text-[11px] text-metfraa-gray-400 mt-0.5">
+        Emailed automatically — <span x-text="report.schedule || 'last day of month, 3 PM IST'"></span>.
+        <span x-show="(report.reorder_now ?? 0) > 0" class="text-red-600 font-semibold" x-text="report.reorder_now + ' part(s) in reorder now'"></span>
+      </div>
+    </div>
+    <div class="flex-1"></div>
+    <div class="flex items-center gap-2">
+      <span x-show="reportMsg" class="text-xs font-semibold"
+            :class="reportMsgOk ? 'text-green-600' : 'text-red-600'" x-text="reportMsg"></span>
+      <button @click="sendReport()" :disabled="reportSending"
+              class="px-3 py-2 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold hover:bg-metfraa-blue hover:text-white disabled:opacity-50">
+        <span x-show="!reportSending">Send now</span><span x-show="reportSending">Sending…</span>
+      </button>
+    </div>
+  </div>
+
   <!-- table -->
   <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 overflow-x-auto">
     <table class="w-full text-sm whitespace-nowrap">
@@ -167,8 +204,39 @@ function sparesApp() {
     showForm: false, saving: false, formErr: '',
     form: {},
     showMove: false, moveErr: '', move: {},
+    report: {}, reportSending: false, reportMsg: '', reportMsgOk: false,
 
-    init() { this.load(); },
+    init() { this.load(); this.loadReportStatus(); },
+
+    async loadReportStatus() {
+      try {
+        const r = await fetch('/spares/api/reorder-report/status');
+        if (r.ok) this.report = await r.json();
+      } catch (e) { console.warn('report status failed', e); }
+    },
+
+    async sendReport() {
+      this.reportSending = true; this.reportMsg = '';
+      try {
+        const r = await fetch('/spares/api/reorder-report/send', { method: 'POST' });
+        const d = await r.json();
+        const res = (d && d.result) || {};
+        this.reportMsgOk = !!(d.ok && res.sent);
+        if (res.reorder_count === 0) {
+          this.reportMsg = 'Nothing to reorder — no email sent';
+        } else if (res.sent) {
+          this.reportMsg = 'Sent — ' + res.reorder_count + ' part(s) to ' + (res.to || 'maintenance');
+        } else {
+          this.reportMsg = 'Send failed — check email settings';
+        }
+        if (d && d.status) this.report = d.status;
+      } catch (e) {
+        this.reportMsgOk = false; this.reportMsg = 'Send failed';
+      } finally {
+        this.reportSending = false;
+        setTimeout(() => { this.reportMsg = ''; }, 8000);
+      }
+    },
 
     async load() {
       const p = new URLSearchParams();

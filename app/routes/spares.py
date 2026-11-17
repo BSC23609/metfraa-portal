@@ -265,3 +265,60 @@ def api_delete(pid: int, user: Employee = Depends(get_current_user),
     p.active = False
     db.commit()
     return {"ok": True}
+
+
+# -------------------------------------------- month-end reorder report status
+from datetime import timedelta, timezone  # noqa: E402
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _report_status(db: Session) -> dict:
+    """Latest month-end reorder report send (for the admin tracker)."""
+    from ..models import WaLog
+    from .cron import _REORDER_REPORT_MARK
+
+    last = (db.query(WaLog)
+            .filter(WaLog.template == _REORDER_REPORT_MARK, WaLog.result == "sent")
+            .order_by(WaLog.created_at.desc()).first())
+    now_ist = datetime.now(_IST)
+    sent_this_month = False
+    last_ist = None
+    if last and last.created_at:
+        # created_at is naive-UTC.
+        lt = last.created_at.replace(tzinfo=timezone.utc).astimezone(_IST)
+        last_ist = lt.strftime("%d %b %Y, %I:%M %p")
+        sent_this_month = (lt.year == now_ist.year and lt.month == now_ist.month)
+    # How many parts WOULD be in the report right now.
+    reorder_now = 0
+    for p in (db.query(MaintSparePart)
+              .filter(MaintSparePart.active == True).all()):  # noqa: E712
+        cur = (p.opening_qty or 0) + (p.qty_in or 0) - (p.qty_out or 0)
+        if cur <= (p.min_stock_level or 0):
+            reorder_now += 1
+    return {
+        "last_sent": last_ist,
+        "last_count": (last.detail or "").split(" ")[0] if last and last.detail else None,
+        "to": last.phone if last else os.getenv("MAINT_REMINDER_EMAIL",
+                                                "maintenance@metfraa.com"),
+        "sent_this_month": sent_this_month,
+        "reorder_now": reorder_now,
+        "schedule": "Last day of month, 3 PM IST",
+    }
+
+
+@router.get("/api/reorder-report/status")
+def api_report_status(user: Employee = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    _guard(db, user)
+    return _report_status(db)
+
+
+@router.post("/api/reorder-report/send")
+def api_report_send(user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """Admin 'Send now' — email the month-end reorder report immediately."""
+    _guard(db, user)
+    from .cron import _reorder_report
+
+    result = _reorder_report(db, force=True)
+    return {"ok": True, "result": result, "status": _report_status(db)}
