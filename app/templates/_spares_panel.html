@@ -44,6 +44,7 @@
           <th class="py-2.5 px-3 text-right">Price</th>
           <th class="py-2.5 px-3 text-right">Value</th>
           <th class="py-2.5 px-3">Supplier</th>
+          <th class="py-2.5 px-3">Store location</th>
           <th class="py-2.5 px-3 text-right">Actions</th>
         </tr>
       </thead>
@@ -72,6 +73,7 @@
             <td class="py-2 px-3 text-right mono" x-text="r.unit_price ? '₹'+r.unit_price.toLocaleString('en-IN') : '—'"></td>
             <td class="py-2 px-3 text-right mono" x-text="r.stock_value ? '₹'+r.stock_value.toLocaleString('en-IN',{maximumFractionDigits:0}) : '—'"></td>
             <td class="py-2 px-3 text-metfraa-gray-600" x-text="r.supplier || '—'"></td>
+            <td class="py-2 px-3 text-metfraa-gray-600" x-text="r.store_location || '—'"></td>
             <td class="py-2 px-3 text-right">
               <div class="inline-flex gap-1">
                 <button @click="openMove(r,'in')"  title="Stock in"  class="w-7 h-7 rounded ring-1 ring-green-300 text-green-700 font-bold">+</button>
@@ -83,7 +85,7 @@
           </tr>
         </template>
         <tr x-show="!rows.length">
-          <td colspan="9" class="py-10 text-center text-metfraa-gray-400 text-sm">No parts found.</td>
+          <td colspan="10" class="py-10 text-center text-metfraa-gray-400 text-sm">No parts found.</td>
         </tr>
       </tbody>
     </table>
@@ -109,6 +111,8 @@
           <input x-model="form.unit" placeholder="No, Set, Mtr…" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
         <label class="block"><span class="lbl">Supplier</span>
           <input x-model="form.supplier" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Store location</span>
+          <input x-model="form.store_location" placeholder="Rack / bin / store" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
         <label class="block"><span class="lbl">Opening qty</span>
           <input type="number" step="any" x-model.number="form.opening_qty" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300 mono"></label>
         <label class="block"><span class="lbl">Min stock level</span>
@@ -180,14 +184,14 @@ function sparesApp() {
 
     blank() {
       return { id: null, part_name: '', part_code: '', machine: '', manufacturer: '',
-               unit: '', supplier: '', opening_qty: 0, min_stock_level: 0,
+               unit: '', supplier: '', store_location: '', opening_qty: 0, min_stock_level: 0,
                qty_in: 0, qty_out: 0, unit_price: 0, last_purchase_date: '' };
     },
     openAdd() { this.form = this.blank(); this.formErr = ''; this.showForm = true; },
     openEdit(r) {
       this.form = { id: r.id, part_name: r.part_name, part_code: r.part_code || '',
         machine: r.machine || '', manufacturer: r.manufacturer || '', unit: r.unit || '',
-        supplier: r.supplier || '', opening_qty: r.opening_qty, min_stock_level: r.min_stock_level,
+        supplier: r.supplier || '', store_location: r.store_location || '', opening_qty: r.opening_qty, min_stock_level: r.min_stock_level,
         qty_in: r.qty_in, qty_out: r.qty_out, unit_price: r.unit_price,
         last_purchase_date: r.last_purchase_date || '' };
       this.formErr = ''; this.showForm = true;

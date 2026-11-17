@@ -1333,6 +1333,7 @@ class MaintSparePart(Base):
     min_stock_level = Column(Float, nullable=False, default=0)
     unit_price = Column(Float, nullable=False, default=0)
     supplier = Column(String(255), nullable=True)
+    store_location = Column(String(255), nullable=True)   # Rack / bin / store location
     last_purchase_date = Column(Date, nullable=True)
     # True once a reorder alert has been sent; cleared when stock recovers so the
     # next dip alerts again (avoids re-pinging on every stock-out while low).

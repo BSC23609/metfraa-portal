@@ -122,6 +122,7 @@ def _json(p: MaintSparePart) -> dict:
         "unit_price": round(p.unit_price or 0, 2),
         "stock_value": round(value, 2),
         "supplier": p.supplier,
+        "store_location": p.store_location,
         "last_purchase_date": _iso(p.last_purchase_date),
     }
 
@@ -149,6 +150,7 @@ def api_list(q: str | None = None, reorder: int = 0,
             MaintSparePart.machine.ilike(like),
             MaintSparePart.manufacturer.ilike(like),
             MaintSparePart.supplier.ilike(like),
+            MaintSparePart.store_location.ilike(like),
         ))
     rows = [_json(p) for p in query.order_by(MaintSparePart.part_name).all()]
     if reorder:
@@ -175,6 +177,7 @@ class PartIn(BaseModel):
     min_stock_level: float | None = 0
     unit_price: float | None = 0
     supplier: str | None = None
+    store_location: str | None = None
     last_purchase_date: str | None = None
 
 
@@ -190,6 +193,7 @@ def _apply(p: MaintSparePart, d: PartIn):
     p.min_stock_level = _fnum(d.min_stock_level)
     p.unit_price = _fnum(d.unit_price)
     p.supplier = (d.supplier or "").strip() or None
+    p.store_location = (d.store_location or "").strip() or None
     p.last_purchase_date = _pdate(d.last_purchase_date)
 
 
