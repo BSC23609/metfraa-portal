@@ -55,6 +55,10 @@ TPL = {
     "otp": lambda: os.getenv("WATI_OTP_TPL", "otp_password2"),
     # Spare parts reorder alert to maintenance. Utility category, named vars.
     "spare_reorder": lambda: os.getenv("WATI_SPARE_REORDER_TPL", "met_spare_reorder"),
+    # Month-end consolidated reorder report. Utility category, named vars:
+    # month, count, parts (parts is a single line — WATI rejects newlines).
+    "spare_reorder_report": lambda: os.getenv("WATI_SPARE_REORDER_REPORT_TPL",
+                                              "met_spare_reorder_report"),
 }
 
 
@@ -237,4 +241,18 @@ def spare_reorder_alert(phone, part_name, machine, stock, min_level, supplier,
         "stock": stock,
         "min": min_level,
         "supplier": supplier or "-",
+    }, db)
+
+
+def spare_reorder_report(phone, month, count, parts, db=None) -> bool:
+    """Month-end consolidated reorder report to maintenance.
+
+    Variable NAMES must match the met_spare_reorder_report template exactly:
+    month, count, parts. `parts` is a single line (semicolon-separated) because
+    WATI rejects newlines/tabs inside a template parameter.
+    """
+    return send_template(phone, TPL["spare_reorder_report"](), {
+        "month": month or "-",
+        "count": str(count),
+        "parts": parts or "None — all parts above minimum.",
     }, db)

@@ -98,3 +98,107 @@ def cron_gatepass_overdue(request: Request, db: Session = Depends(get_db)):
         return {"ok": True, "skipped": "cron disabled"}
     from .gatepass import run_overdue_check
     return {"ok": True, **run_overdue_check(db)}
+
+
+# IST is UTC+05:30; WaLog.created_at is stored naive-UTC.
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _reorder_report(db: Session, force: bool = False) -> dict:
+    """Month-end consolidated reorder report to maintenance (Ajoy).
+
+    Lists every spare part currently in REORDER NOW status and WhatsApps a
+    single summary to the maintenance number(s). Fires once, on the LAST day of
+    the month from 3pm IST onward; idempotent per month (a WATI 'sent' row for
+    the report template this month blocks re-send). `force=1` bypasses the day /
+    time gate and the once-a-month guard for on-demand testing.
+    """
+    from ..models import MaintSparePart, WaLog
+    from ..services import wati as _wati
+    from .spares import _maint_mobiles
+
+    now_ist = datetime.now(_IST)
+    is_last_day = (now_ist + timedelta(days=1)).month != now_ist.month
+
+    if not force:
+        if not is_last_day:
+            return {"status": "skipped", "reason": "not month-end",
+                    "date_ist": now_ist.strftime("%Y-%m-%d %H:%M")}
+        if now_ist.hour < 15:
+            return {"status": "skipped", "reason": "before 3pm IST",
+                    "date_ist": now_ist.strftime("%Y-%m-%d %H:%M")}
+        # Once per calendar month: skip if we already logged a successful send.
+        month_start = (now_ist.replace(day=1, hour=0, minute=0, second=0,
+                                       microsecond=0)
+                       .astimezone(timezone.utc).replace(tzinfo=None))
+        already = (db.query(WaLog)
+                   .filter(WaLog.template == _wati.TPL["spare_reorder_report"](),
+                           WaLog.result == "sent",
+                           WaLog.created_at >= month_start)
+                   .first())
+        if already:
+            return {"status": "skipped", "reason": "already sent this month"}
+
+    # Collect everything currently at/under its minimum.
+    parts = (db.query(MaintSparePart)
+             .filter(MaintSparePart.active == True)  # noqa: E712
+             .order_by(MaintSparePart.machine, MaintSparePart.part_name).all())
+    low = []
+    for p in parts:
+        current = (p.opening_qty or 0) + (p.qty_in or 0) - (p.qty_out or 0)
+        if current <= (p.min_stock_level or 0):
+            low.append((p, current))
+
+    def _fmt(n):
+        n = round(n or 0, 2)
+        return str(int(n)) if n == int(n) else str(n)
+
+    items = []
+    for p, cur in low:
+        code = (p.part_code + " ") if p.part_code else ""
+        mc = f" ({p.machine})" if p.machine else ""
+        items.append(f"{code}{p.part_name}{mc} {_fmt(cur)}/{_fmt(p.min_stock_level)}")
+
+    # One line only — WATI rejects newlines in a parameter. Clamp length so the
+    # template parameter stays within WhatsApp's limit.
+    line, shown = "", 0
+    for it in items:
+        piece = (("; " if line else "") + it)
+        if len(line) + len(piece) > 850:
+            break
+        line += piece
+        shown += 1
+    if shown < len(items):
+        line += f"; …+{len(items) - shown} more"
+    parts_text = line or "None — all parts above minimum."
+
+    month = now_ist.strftime("%b %Y")
+    mobiles = _maint_mobiles()
+    sent = 0
+    for phone in mobiles:
+        try:
+            if _wati.spare_reorder_report(phone, month, len(low), parts_text, db):
+                sent += 1
+        except Exception:
+            log.warning("[cron] reorder report send failed for %s", phone,
+                        exc_info=True)
+    return {"status": "ok", "month": month, "reorder_count": len(low),
+            "recipients": len(mobiles), "sent": sent, "forced": force}
+
+
+@router.get("/spare-reorder-report")
+def cron_spare_reorder_report(request: Request, force: int = 0,
+                              db: Session = Depends(get_db)):
+    """Month-end spare-parts reorder summary to maintenance (Ajoy).
+
+    NOT in vercel.json (Hobby caps crons at 2, both used). Driven by
+    .github/workflows/spare-reorder-report.yml, which pings hourly; the endpoint
+    self-gates to the last day of the month from 3pm IST and is idempotent per
+    month, so frequent pings are safe. `?force=1` sends immediately for testing.
+    """
+    _authorize(request)
+    if not _enabled():
+        return {"ok": True, "skipped": "cron disabled"}
+    return {"ok": True, **_reorder_report(db, force=bool(force))}

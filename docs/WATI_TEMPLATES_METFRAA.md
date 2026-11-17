@@ -327,3 +327,53 @@ Metfraa Steel Buildings
 **Recipient config:** set `SPARE_ALERT_MOBILE` in Vercel to change or add numbers
 (comma-separated for several). If unset, it falls back to `MAINT_SUPERVISOR_MOBILE`,
 then to Ajoy's number. The template name can be overridden with `WATI_SPARE_REORDER_TPL`.
+
+---
+
+## 7. `met_spare_reorder_report` → maintenance (month-end reorder summary)
+
+A single consolidated list of **every** spare part currently in **REORDER NOW**
+status, sent once at month-end (the last day of the month, from **3:00 pm IST**).
+Complements the instant per-part alert above — that fires on each crossing; this
+is the end-of-month picture in one message. Same recipient(s) as the alert
+(`SPARE_ALERT_MOBILE` → `MAINT_SUPERVISOR_MOBILE` → Ajoy 919002039036).
+
+**Category:** UTILITY (not Marketing).
+**Variables:** `month`, `count`, `parts`
+**Buttons:** none.
+
+> `parts` is **one line** — semicolon-separated, e.g.
+> `286213 RAC TIP (airless spray) 1/1; 189920 strainer (airless spray) 1/1`.
+> WhatsApp wraps it. It can never contain a line break (WATI rejects newlines in
+> a parameter), so each part cannot sit on its own line within one variable.
+
+```
+Spare parts reorder summary — {{month}}.
+
+{{count}} part(s) are at or below their minimum stock level and need reordering:
+
+{{parts}}
+
+Please arrange procurement. Full details are in the Maintenance portal under Spare Parts.
+
+Metfraa Steel Buildings
+```
+
+**Override the name** with `WATI_SPARE_REORDER_REPORT_TPL` if Meta approves it
+under a different name.
+
+### Scheduling the month-end report
+
+`/cron/spare-reorder-report` is **not** in `vercel.json` (Hobby caps crons at 2,
+both already used). It is driven by `.github/workflows/spare-reorder-report.yml`,
+which pings **hourly**. The endpoint self-gates: it only sends on the **last day
+of the month from 3pm IST**, and is **idempotent per month** (one successful send
+blocks any repeat), so the extra hourly hits are no-ops. Hourly rather than one
+daily run because GitHub's scheduler drifts — a wide window plus the once-a-month
+guard means the report still lands.
+
+Requires the repo secret `CRON_SECRET` (same value as the Vercel env var) and
+`CRON_ENABLED=true`. **Test on demand:**
+`GET https://app.metfraa.com/cron/spare-reorder-report?force=1`
+with header `Authorization: Bearer <CRON_SECRET>` — `force=1` bypasses the
+day/time gate and the once-a-month guard and sends immediately.

@@ -1,0 +1,44 @@
+name: Spare parts reorder report
+
+# Month-end consolidated reorder summary to maintenance (Ajoy).
+#
+# Not a Vercel cron: Hobby plans cap crons at 2 and both are in use. This pings
+# hourly; the endpoint self-gates — it only sends on the LAST day of the month
+# from 3pm IST onward, and is idempotent per month (a successful send this month
+# blocks any repeat), so the extra hourly hits are harmless no-ops. Hourly (not
+# a single daily run) because GitHub's scheduler is best-effort and can drift by
+# hours; a wide window plus the once-a-month guard means the report still lands.
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit /cron/spare-reorder-report
+        run: |
+          hit() {
+            curl -sS --max-time 70 -o /tmp/resp.txt -w "%{http_code}" \
+              "https://app.metfraa.com/cron/spare-reorder-report" \
+              -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" || echo "000"
+          }
+          code=$(hit)
+          echo "HTTP $code"; cat /tmp/resp.txt; echo
+
+          if [ "$code" -ge 500 ] || [ "$code" = "000" ]; then
+            echo "::warning::first attempt returned $code - retrying in 20s"
+            sleep 20
+            code=$(hit)
+            echo "retry HTTP $code"; cat /tmp/resp.txt; echo
+          fi
+
+          if [ "$code" -ge 400 ] && [ "$code" -lt 500 ]; then
+            echo "::error::spare-reorder-report returned $code - check CRON_SECRET / route"; exit 1
+          fi
+          if [ "$code" -ge 500 ] || [ "$code" = "000" ]; then
+            echo "::warning::still $code after retry - report is idempotent, next run catches up"
+            exit 0
+          fi
+          echo "OK"
