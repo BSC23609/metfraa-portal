@@ -3,24 +3,6 @@
   <input type="file" x-ref="ocrFile" accept="image/*" capture="environment" class="hidden" @change="onOcrFile($event)">
   <input type="file" x-ref="ocrGallery" accept="image/*" multiple class="hidden" @change="onOcrFile($event)">
 
-  <!-- Add a part from a photo (OCR) -->
-  <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-4">
-    <span class="lbl">Add a part from a photo</span>
-    <button @click="ocrScan()" :disabled="ocrBusy" type="button"
-            class="text-sm font-semibold text-metfraa-blue hover:underline disabled:opacity-40"
-            x-text="ocrBusy ? 'Reading…' : '📷 Add scan'"></button>
-    <button @click="ocrUpload()" :disabled="ocrBusy" type="button"
-            class="text-sm font-semibold text-metfraa-blue hover:underline disabled:opacity-40">🖼️ Add photos</button>
-    <template x-if="ocrQueue.length">
-      <span class="flex items-center gap-3 bg-metfraa-blue/5 border border-metfraa-blue/30 rounded-lg px-3 py-1.5">
-        <span class="text-xs font-semibold text-metfraa-blue" x-text="ocrQueue.length + ' photo' + (ocrQueue.length>1?'s':'') + ' ready'"></span>
-        <button @click="extractOcr()" :disabled="ocrBusy" type="button" class="text-xs font-semibold px-3 py-1 rounded-lg bg-metfraa-blue text-white disabled:opacity-40" x-text="ocrBusy ? 'Reading…' : 'Extract & fill'"></button>
-        <button @click="clearOcrQueue()" :disabled="ocrBusy" type="button" class="text-xs font-semibold text-metfraa-gray-500 hover:underline">Clear</button>
-      </span>
-    </template>
-    <span x-show="ocrMsg" class="text-xs font-semibold" :class="ocrMsgOk ? 'text-green-600' : 'text-metfraa-gray-500'" x-text="ocrMsg"></span>
-  </div>
-
   <!-- KPI tiles -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
     <div class="bg-white rounded-lg ring-1 ring-metfraa-gray-200 p-5">
@@ -156,6 +138,25 @@
         <h3 class="display text-xl text-metfraa-ink" x-text="form.id ? 'Edit part' : 'Add part'"></h3>
         <button @click="showForm=false" class="text-metfraa-gray-400 text-2xl leading-none">&times;</button>
       </div>
+
+      <!-- Fill from a photo (OCR) -->
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4 bg-metfraa-blue/5 border border-metfraa-blue/20 rounded-lg px-3 py-2">
+        <span class="lbl">Fill from a photo</span>
+        <button @click="ocrScan()" :disabled="ocrBusy" type="button"
+                class="text-sm font-semibold text-metfraa-blue hover:underline disabled:opacity-40"
+                x-text="ocrBusy ? 'Reading…' : '📷 Add scan'"></button>
+        <button @click="ocrUpload()" :disabled="ocrBusy" type="button"
+                class="text-sm font-semibold text-metfraa-blue hover:underline disabled:opacity-40">🖼️ Add photos</button>
+        <template x-if="ocrQueue.length">
+          <span class="flex items-center gap-2">
+            <span class="text-xs font-semibold text-metfraa-blue" x-text="ocrQueue.length + ' photo' + (ocrQueue.length>1?'s':'') + ' ready'"></span>
+            <button @click="extractOcr()" :disabled="ocrBusy" type="button" class="text-xs font-semibold px-3 py-1 rounded-lg bg-metfraa-blue text-white disabled:opacity-40" x-text="ocrBusy ? 'Reading…' : 'Extract & fill'"></button>
+            <button @click="clearOcrQueue()" :disabled="ocrBusy" type="button" class="text-xs font-semibold text-metfraa-gray-500 hover:underline">Clear</button>
+          </span>
+        </template>
+        <span x-show="ocrMsg" class="text-xs font-semibold basis-full" :class="ocrMsgOk ? 'text-green-600' : 'text-metfraa-gray-500'" x-text="ocrMsg"></span>
+      </div>
+
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label class="block"><span class="lbl">Part name *</span>
           <input x-model="form.part_name" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
@@ -270,7 +271,6 @@ function sparesApp() {
         const d = await r.json();
         if (!r.ok) throw new Error(d.detail || 'Scan failed');
         const f = d.fields || {};
-        this.openAdd();
         for (const k in f) { if (k in this.form) this.form[k] = f[k]; }
         const n = Object.keys(f).length;
         this.ocrMsgOk = n > 0;
@@ -331,14 +331,14 @@ function sparesApp() {
                unit: '', supplier: '', store_location: '', opening_qty: 0, min_stock_level: 0,
                qty_in: 0, qty_out: 0, unit_price: 0, last_purchase_date: '' };
     },
-    openAdd() { this.form = this.blank(); this.formErr = ''; this.showForm = true; },
+    openAdd() { this.form = this.blank(); this.formErr = ''; this.clearOcrQueue(); this.showForm = true; },
     openEdit(r) {
       this.form = { id: r.id, part_name: r.part_name, part_code: r.part_code || '',
         machine: r.machine || '', manufacturer: r.manufacturer || '', unit: r.unit || '',
         supplier: r.supplier || '', store_location: r.store_location || '', opening_qty: r.opening_qty, min_stock_level: r.min_stock_level,
         qty_in: r.qty_in, qty_out: r.qty_out, unit_price: r.unit_price,
         last_purchase_date: r.last_purchase_date || '' };
-      this.formErr = ''; this.showForm = true;
+      this.formErr = ''; this.clearOcrQueue(); this.showForm = true;
     },
     async save() {
       if (!this.form.part_name.trim()) { this.formErr = 'Part name is required'; return; }
