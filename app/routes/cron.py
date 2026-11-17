@@ -245,3 +245,71 @@ def cron_spare_reorder_report(request: Request, force: int = 0,
     if not _enabled():
         return {"ok": True, "skipped": "cron disabled"}
     return {"ok": True, **_reorder_report(db, force=bool(force))}
+
+
+# ----------------------------------------- month-start maintenance review email
+_REVIEW_REPORT_MARK = "maint_review_report_email"
+
+
+def _review_report(db: Session, force: bool = False) -> dict:
+    """Email the graphical Breakdown Maintenance Review at the START of the month.
+
+    Goes to MAINT_REVIEW_EMAIL (default MAINT_REMINDER_EMAIL,
+    maintenance@metfraa.com). Fires on the 1st of the month from 9am IST onward;
+    idempotent per month via a wa_log marker. `force=1` sends immediately.
+    """
+    from ..models import WaLog
+    from ..services import email_service as _email
+    from ..maint_review_report import build_email
+
+    now_ist = datetime.now(_IST)
+    if not force:
+        if now_ist.day != 1:
+            return {"status": "skipped", "reason": "not month-start",
+                    "date_ist": now_ist.strftime("%Y-%m-%d %H:%M")}
+        if now_ist.hour < 9:
+            return {"status": "skipped", "reason": "before 9am IST",
+                    "date_ist": now_ist.strftime("%Y-%m-%d %H:%M")}
+        month_start = (now_ist.replace(day=1, hour=0, minute=0, second=0,
+                                       microsecond=0)
+                       .astimezone(timezone.utc).replace(tzinfo=None))
+        already = (db.query(WaLog)
+                   .filter(WaLog.template == _REVIEW_REPORT_MARK,
+                           WaLog.result == "sent",
+                           WaLog.created_at >= month_start)
+                   .first())
+        if already:
+            return {"status": "skipped", "reason": "already sent this month"}
+
+    subject, html, text = build_email()
+    to = (os.getenv("MAINT_REVIEW_EMAIL")
+          or os.getenv("MAINT_REMINDER_EMAIL", "maintenance@metfraa.com"))
+    sent = 0
+    try:
+        if _email.send_email(to, subject, html, text):
+            sent = 1
+            try:
+                db.add(WaLog(phone=to[:32], template=_REVIEW_REPORT_MARK,
+                             result="sent", detail="review report",
+                             created_at=datetime.utcnow()))
+                db.commit()
+            except Exception:
+                db.rollback()
+    except Exception:
+        log.warning("[cron] review report email failed", exc_info=True)
+    return {"status": "ok", "to": to, "sent": sent, "forced": force}
+
+
+@router.get("/maint-review-report")
+def cron_maint_review_report(request: Request, force: int = 0,
+                             db: Session = Depends(get_db)):
+    """Month-start Breakdown Maintenance Review emailed to maintenance.
+
+    Pinged hourly by the same workflow as the reorder report (reusing
+    CRON_SECRET); self-gates to the 1st of the month from 9am IST and is
+    idempotent per month. `?force=1` sends immediately for testing.
+    """
+    _authorize(request)
+    if not _enabled():
+        return {"ok": True, "skipped": "cron disabled"}
+    return {"ok": True, **_review_report(db, force=bool(force))}

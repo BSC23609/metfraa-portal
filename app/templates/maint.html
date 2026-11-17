@@ -1005,6 +1005,41 @@
       <button onclick="window.print()" class="text-xs font-semibold px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-metfraa-ink hover:bg-metfraa-gray-50 no-print">Print / PDF</button>
     </div>
 
+    <!-- Month-start email tracker -->
+    <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4 mb-5 flex flex-wrap items-center gap-x-6 gap-y-2 no-print">
+      <div>
+        <div class="lbl">Emailed monthly report</div>
+        <div class="text-sm text-metfraa-ink mt-0.5">
+          <template x-if="reviewReport.last_sent">
+            <span>
+              <span class="inline-block w-2 h-2 rounded-full align-middle mr-1"
+                    :class="reviewReport.sent_this_month ? 'bg-green-500' : 'bg-amber-400'"></span>
+              Last sent <b x-text="reviewReport.last_sent"></b>
+              <span class="text-metfraa-gray-500" x-text="reviewReport.to ? '· to ' + reviewReport.to : ''"></span>
+            </span>
+          </template>
+          <template x-if="!reviewReport.last_sent">
+            <span class="text-metfraa-gray-500">
+              <span class="inline-block w-2 h-2 rounded-full bg-metfraa-gray-300 align-middle mr-1"></span>
+              Not sent yet
+            </span>
+          </template>
+        </div>
+        <div class="text-[11px] text-metfraa-gray-400 mt-0.5">
+          Sent automatically — <span x-text="reviewReport.schedule || '1st of month, 9 AM IST'"></span>.
+        </div>
+      </div>
+      <div class="flex-1"></div>
+      <div class="flex items-center gap-2">
+        <span x-show="reviewMsg" class="text-xs font-semibold"
+              :class="reviewMsgOk ? 'text-green-600' : 'text-red-600'" x-text="reviewMsg"></span>
+        <button @click="sendReviewReport()" :disabled="reviewSending"
+                class="px-3 py-2 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue text-sm font-bold hover:bg-metfraa-blue hover:text-white disabled:opacity-50">
+          <span x-show="!reviewSending">Send now</span><span x-show="reviewSending">Sending…</span>
+        </button>
+      </div>
+    </div>
+
     <!-- KPI cards -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
       <div class="bg-white rounded-xl border border-metfraa-gray-200 p-4">
@@ -1159,8 +1194,35 @@ function maintApp() {
     ebReadings: [], ebMonthly: [], ebForm: {}, ebSaving: false,
     pdfUrl: '', pdfTitle: '', pdfUploadUrl: '', pdfUploading: false,
     _reportCharts: [],
+    reviewReport: {}, reviewSending: false, reviewMsg: '', reviewMsgOk: false,
+
+    async loadReviewStatus() {
+      try {
+        const r = await fetch('/maint/api/review-report/status');
+        if (r.ok) this.reviewReport = await r.json();
+      } catch (e) { console.warn('review status failed', e); }
+    },
+
+    async sendReviewReport() {
+      this.reviewSending = true; this.reviewMsg = '';
+      try {
+        const r = await fetch('/maint/api/review-report/send', { method: 'POST' });
+        const d = await r.json();
+        const res = (d && d.result) || {};
+        this.reviewMsgOk = !!(d.ok && res.sent);
+        this.reviewMsg = res.sent ? ('Sent to ' + (res.to || 'maintenance'))
+                                  : 'Send failed — check email settings';
+        if (d && d.status) this.reviewReport = d.status;
+      } catch (e) {
+        this.reviewMsgOk = false; this.reviewMsg = 'Send failed';
+      } finally {
+        this.reviewSending = false;
+        setTimeout(() => { this.reviewMsg = ''; }, 8000);
+      }
+    },
 
     renderReport() {
+      this.loadReviewStatus();
       if (typeof Chart === 'undefined') return;
       this.$nextTick(() => {
         (this._reportCharts || []).forEach(c => { try { c.destroy(); } catch (e) {} });

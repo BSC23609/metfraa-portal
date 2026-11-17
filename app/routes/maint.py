@@ -1562,3 +1562,47 @@ def api_eb_delete(reading_id: int, user: Employee = Depends(get_current_user),
         raise HTTPException(404, "Reading not found")
     db.delete(r); db.commit()
     return {"ok": True}
+
+
+# --------------------------------- month-start maintenance review report status
+from datetime import timedelta as _td, timezone as _tz  # noqa: E402
+_REVIEW_IST = _tz(_td(hours=5, minutes=30))
+
+
+def _review_status(db: Session) -> dict:
+    """Latest month-start review-report send (for the admin tracker)."""
+    from ..models import WaLog
+    from .cron import _REVIEW_REPORT_MARK
+
+    last = (db.query(WaLog)
+            .filter(WaLog.template == _REVIEW_REPORT_MARK, WaLog.result == "sent")
+            .order_by(WaLog.created_at.desc()).first())
+    now_ist = datetime.now(_REVIEW_IST)
+    last_ist, sent_this_month = None, False
+    if last and last.created_at:
+        lt = last.created_at.replace(tzinfo=_tz.utc).astimezone(_REVIEW_IST)
+        last_ist = lt.strftime("%d %b %Y, %I:%M %p")
+        sent_this_month = (lt.year == now_ist.year and lt.month == now_ist.month)
+    to = (last.phone if last else
+          (os.getenv("MAINT_REVIEW_EMAIL")
+           or os.getenv("MAINT_REMINDER_EMAIL", "maintenance@metfraa.com")))
+    return {"last_sent": last_ist, "to": to,
+            "sent_this_month": sent_this_month,
+            "schedule": "1st of month, 9 AM IST"}
+
+
+@router.get("/api/review-report/status")
+def api_review_status(user: Employee = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    _guard(db, user)
+    return _review_status(db)
+
+
+@router.post("/api/review-report/send")
+def api_review_send(user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """Admin 'Send now' — email the maintenance review report immediately."""
+    _guard(db, user)
+    from .cron import _review_report
+    result = _review_report(db, force=True)
+    return {"ok": True, "result": result, "status": _review_status(db)}
