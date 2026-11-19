@@ -1385,6 +1385,32 @@ async def api_settle_offline(sub_id: int, request: Request,
     return {"ok": True}
 
 
+@router.post("/api/admin/submissions/{sub_id}/reopen-offline")
+async def api_reopen_offline(sub_id: int, request: Request,
+                             user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    """Undo a mistaken 'settled offline' — return it to the pending review queue
+    so it can be approved (or settled) correctly."""
+    blocked = _admin_guard(request, user, db)
+    if blocked:
+        return blocked
+    s = _load(db, sub_id)
+    if not s:
+        return _err(404, "Submission not found.")
+    if s.status != "settled_offline":
+        return _err(400, "Only submissions marked settled-offline can be reopened "
+                         f"this way. This one is '{s.status}'.")
+    locked = _in_locked_consolidated(db, sub_id)
+    if locked:
+        return _err(409, "Cannot reopen — this submission is part of a consolidated "
+                         "report. Ask Arasu to reject that report first.")
+    s.status = "pending"
+    s.reviewed_by = _me_email(db, user)
+    s.reviewed_at_ist = _ist_now()
+    s.review_note = str((await _body(request)).get("note") or "")
+    db.commit()
+    return {"ok": True}
+
+
 def _in_locked_consolidated(db: Session, sub_id: int):
     """A submission inside a consolidated report that has left draft cannot be
     reopened — the source blocks this to stop the report and the rows diverging."""

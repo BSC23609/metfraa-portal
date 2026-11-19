@@ -3225,6 +3225,13 @@
         title: 'Revert to pending so you can re-review this submission',
         onclick: () => unapproveSubmission(s),
       }, 'Reopen') : null,
+      // "Reopen" — undo a mistaken "Settled already" (settled offline)
+      s.status === 'settled_offline' ? el('button', {
+        class: 'view',
+        style: 'background:transparent;color:#b45309;border-color:#fcd34d;',
+        title: 'Marked settled-offline by mistake — return it to Pending to re-review',
+        onclick: () => reopenOfflineSubmission(s),
+      }, 'Reopen') : null,
       // "Recall" — for sent-back submissions that HR wants back
       isDraft ? el('button', {
         class: 'view',
@@ -3651,6 +3658,34 @@
       await api(`/expense/api/admin/submissions/${s.id}/unapprove`, {
         method: 'POST',
         body: JSON.stringify({ reason: reason.trim() }),
+      });
+      toast('Reopened · back in Pending Approvals', 'success');
+      await Promise.all([loadPending(), loadSubmissions()]);
+      drawPendingTable(); drawSubmissionsTable();
+    } catch (err) {
+      toast(err.message || 'Reopen failed', 'error');
+    } finally { hideLoading(); }
+  }
+
+  // Undo a mistaken "Settled already" (settled offline) — flip back to pending.
+  async function reopenOfflineSubmission(s) {
+    if (s.status !== 'settled_offline') {
+      toast(`Only settled-offline submissions can be reopened this way (this one is '${s.status}').`, 'error');
+      return;
+    }
+    const reason = await promptModal({
+      title: 'Reopen this settled-offline submission?',
+      body: `${s.employee_name} · ${s.reference} · ₹${fmt(s.total_amount)}. This was marked "Settled already (offline)". Reopening returns it to Pending Approvals so you can approve or settle it correctly.\n\nWhy are you reopening? (optional)`,
+      placeholder: 'e.g. Marked settled by mistake',
+      confirmText: 'Reopen',
+      required: false,
+    });
+    if (reason === null) return;
+    showLoading('Reopening…');
+    try {
+      await api(`/expense/api/admin/submissions/${s.id}/reopen-offline`, {
+        method: 'POST',
+        body: JSON.stringify({ note: (reason || '').trim() }),
       });
       toast('Reopened · back in Pending Approvals', 'success');
       await Promise.all([loadPending(), loadSubmissions()]);
