@@ -73,6 +73,13 @@ async def lifespan(app: FastAPI):
                 print(f"[startup] Maintenance register imported: {n} events")
         except Exception as e:
             print(f"[startup] Maintenance register seed skipped: {e}")
+        try:
+            from .maint_types_seed import seed_reading_types
+            n = seed_reading_types()
+            if n:
+                print(f"[startup] Reading machine-types configured: {n} changes")
+        except Exception as e:
+            print(f"[startup] Reading machine-types seed skipped: {e}")
 
     sched = None
     if IS_VERCEL:

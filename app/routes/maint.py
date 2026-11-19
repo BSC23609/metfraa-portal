@@ -613,6 +613,8 @@ def _reading_compute(db: Session, asset_id: int):
     rows = db.query(MaintReading).filter(MaintReading.asset_id == asset_id).all()
     rows.sort(key=lambda r: (r.reading_date, r.start_time or "", r.id))
     prev = {}
+    prev_raw = {}   # last raw value seen per code (for prev_of / delta_of / running_of)
+    run = {}        # running cumulative per running_of param
     out = []
     for r in rows:
         raw = {k: _num(v) for k, v in (r.values or {}).items()}
@@ -643,11 +645,27 @@ def _reading_compute(db: Session, asset_id: int):
                 day[c] = round(base * (p.get("factor") or 1), 2) if base is not None else None
             elif p.get("duration"):
                 day[c] = _clock_minutes(r.start_time, r.end_time)
+            elif p.get("prev_of"):
+                day[c] = prev_raw.get(p["prev_of"])
+            elif p.get("delta_of"):
+                b = p["delta_of"]
+                cur, pv = raw.get(b), prev_raw.get(b)
+                day[c] = round(cur - pv, 2) if (cur is not None and pv is not None) else None
+            elif p.get("running_of"):
+                b = p["running_of"]
+                cur, pv = raw.get(b), prev_raw.get(b)
+                d = (cur - pv) if (cur is not None and pv is not None) else None
+                if d is not None:
+                    run[c] = round(run.get(c, 0.0) + d, 2)
+                day[c] = run.get(c)
             else:
                 day[c] = None
         for p in params:
             if p.get("cumulative") and raw.get(p["code"]) is not None:
                 prev[p["code"]] = raw[p["code"]]
+        for k, v in raw.items():
+            if v is not None:
+                prev_raw[k] = v
         out.append({"id": r.id, "asset_id": r.asset_id,
                     "reading_date": _iso(r.reading_date), "start_time": r.start_time,
                     "end_time": r.end_time, "values": r.values or {}, "day": day,
