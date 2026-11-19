@@ -30,9 +30,12 @@
       <button @click="tab='breakdown'"
               :class="tab==='breakdown' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">Register</button>
-      <button @click="tab='readings'; loadLatestReadings()"
+      <button @click="tab='readings'; rAssetId=''; readings=[]; loadLatestReadings()"
               :class="tab==='readings' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">Readings</button>
+      <button @click="tab='power'; rAssetId=''; readings=[]; loadLatestReadings()"
+              :class="tab==='power' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">Power Reading</button>
       <button @click="tab='pm'; loadPlans()"
               :class="tab==='pm' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">PM Due</button>
@@ -468,12 +471,12 @@
   </div>
 
   <!-- ===================== READINGS ===================== -->
-  <div x-show="tab==='readings'" x-cloak>
+  <div x-show="tab==='readings' || tab==='power'" x-cloak>
     <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-4 mb-5">
       <label class="lbl-f">Machine</label>
       <select x-model="rAssetId" @change="onPickAsset()" class="inp max-w-md">
-        <option value="">Select a metered machine…</option>
-        <template x-for="a in meteredAssets" :key="a.id"><option :value="a.id" x-text="a.asset_code + ' — ' + a.description"></option></template>
+        <option value="">Select a machine…</option>
+        <template x-for="a in readingAssets" :key="a.id"><option :value="a.id" x-text="a.asset_code + ' — ' + a.description"></option></template>
       </select>
       <p x-show="rAssetId && rParams.length===0" class="text-sm text-metfraa-gray-500 mt-2">This machine type has no reading fields.</p>
     </div>
@@ -482,7 +485,7 @@
     <div x-show="!rAssetId" class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden mb-5">
       <div class="px-5 py-3 border-b border-metfraa-gray-200 flex items-center justify-between">
         <h3 class="display font-bold text-metfraa-ink">Latest reading — all machines</h3>
-        <span class="text-xs text-metfraa-gray-400" x-text="latestReadings.length + ' machines'"></span>
+        <span class="text-xs text-metfraa-gray-400" x-text="shownLatest.length + ' machines'"></span>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
@@ -492,7 +495,7 @@
             <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Values</th>
           </tr></thead>
           <tbody>
-            <template x-for="row in latestReadings" :key="row.asset_id">
+            <template x-for="row in shownLatest" :key="row.asset_id">
               <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50 cursor-pointer" @click="rAssetId=String(row.asset_id); onPickAsset()">
                 <td class="px-3 py-2"><span class="mono font-semibold" x-text="row.asset_code"></span> <span class="text-metfraa-gray-600" x-text="row.description || ''"></span></td>
                 <td class="px-3 py-2 mono" :class="row.last ? '' : 'text-metfraa-gray-400'" x-text="row.last ? row.last.reading_date : 'No readings yet'"></td>
@@ -512,7 +515,7 @@
                 </td>
               </tr>
             </template>
-            <tr x-show="latestReadings.length===0"><td colspan="3" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No metered machines.</td></tr>
+            <tr x-show="shownLatest.length===0"><td colspan="3" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No machines.</td></tr>
           </tbody>
         </table>
       </div>
@@ -1583,6 +1586,9 @@ function maintApp() {
     },
     get rMeter() { const a = this.rAsset; const t = a && this.typeById(a.type_id); return t && t.meter_param; },
     get meteredAssets() { return this.assets.filter(a => { const t = this.typeById(a.type_id); return t && t.reading_params && t.reading_params.length; }); },
+    _isPowerType(t) { return !!(t && (t.meter_param === 'present_kwh' || (t.reading_params || []).some(p => p.code === 'present_kwh'))); },
+    get readingAssets() { return this.meteredAssets.filter(a => this._isPowerType(this.typeById(a.type_id)) === (this.tab === 'power')); },
+    get shownLatest() { const ids = new Set(this.readingAssets.map(a => a.id)); return this.latestReadings.filter(r => ids.has(r.asset_id)); },
     blankReading() { return { id: null, reading_date: new Date().toISOString().slice(0,10), start_time: '', end_time: '', values: {}, remarks: '' }; },
     async loadLatestReadings() {
       try {
