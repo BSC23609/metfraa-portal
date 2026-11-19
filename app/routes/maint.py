@@ -724,6 +724,64 @@ def api_readings_diagnostic(code: str = "", user: Employee = Depends(get_current
     return {"assets": rows}
 
 
+_POWER_CODES = {"present_kwh", "previous_kwh", "difference", "cumulative"}
+
+
+@router.get("/api/readings/excel")
+def api_readings_excel(asset_id: int, view: str = "production",
+                       date_from: str = "", date_to: str = "",
+                       user: Employee = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    """Download the reading history (production or power view) as Excel,
+    optionally limited to a date range."""
+    _guard(db, user)
+    import io
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    a = db.get(MaintAsset, asset_id)
+    out, params = _reading_compute(db, asset_id)
+    if view == "power":
+        cols = [p for p in params if p.get("code") in _POWER_CODES]
+    else:
+        cols = [p for p in params if p.get("code") not in _POWER_CODES]
+
+    def _keep(d):
+        d = d or ""
+        if date_from and d < date_from:
+            return False
+        if date_to and d > date_to:
+            return False
+        return True
+    rows = [r for r in out if _keep(r["reading_date"])]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = ("Power" if view == "power" else "Production") + " readings"
+    headers = ["Date", "Time"] + [
+        (p.get("label") or p["code"]) + (f" ({p['unit']})" if p.get("unit") else "")
+        for p in cols]
+    ws.append(headers)
+    navy = PatternFill("solid", fgColor="0A2B66")
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = navy
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    for r in rows:
+        t = (r.get("start_time") or "") + (("-" + r["end_time"]) if r.get("end_time") else "")
+        line = [r["reading_date"], t] + [r["day"].get(p["code"]) for p in cols]
+        ws.append(line)
+    for i, h in enumerate(headers, 1):
+        ws.column_dimensions[get_column_letter(i)].width = max(12, len(str(h)) + 2)
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    name = f"{(a.asset_code if a else 'machine')}_{view}_readings.xlsx"
+    return Response(content=buf.getvalue(), media_type=_XLSX_MIME,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @router.get("/api/readings/latest")
 def api_readings_latest(user: Employee = Depends(get_current_user),
                         db: Session = Depends(get_db)):
