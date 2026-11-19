@@ -691,6 +691,39 @@ def api_readings(asset_id: int, user: Employee = Depends(get_current_user),
     return list(reversed(out))
 
 
+@router.get("/api/readings/diagnostic")
+def api_readings_diagnostic(code: str = "", user: Employee = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """Read-only: what readings/fields each machine actually has in the DB.
+    ?code=M061 narrows to one asset; otherwise shows all with any readings."""
+    q = db.query(MaintAsset)
+    if code:
+        q = q.filter(MaintAsset.asset_code.in_([c.strip() for c in code.split(",")]))
+    rows = []
+    for a in q.order_by(MaintAsset.asset_code).all():
+        reads = (db.query(MaintReading).filter(MaintReading.asset_id == a.id)
+                 .order_by(MaintReading.reading_date).all())
+        keys = []
+        for r in reads:
+            for k in (r.values or {}):
+                if k not in keys:
+                    keys.append(k)
+        if not code and not reads:
+            continue
+        t = a.machine_type
+        rows.append({
+            "asset_code": a.asset_code, "description": a.description,
+            "type_key": t.key if t else None,
+            "type_param_codes": [p.get("code") for p in (t.reading_params if t else [])],
+            "reading_count": len(reads),
+            "value_keys_in_data": keys,
+            "first_date": _iso(reads[0].reading_date) if reads else None,
+            "last_date": _iso(reads[-1].reading_date) if reads else None,
+            "last_values": (reads[-1].values if reads else None),
+        })
+    return {"assets": rows}
+
+
 @router.get("/api/readings/latest")
 def api_readings_latest(user: Employee = Depends(get_current_user),
                         db: Session = Depends(get_db)):
