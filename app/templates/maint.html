@@ -33,9 +33,6 @@
       <button @click="tab='readings'; rAssetId=''; readings=[]; loadLatestReadings()"
               :class="tab==='readings' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">Readings</button>
-      <button @click="tab='power'; rAssetId=''; readings=[]; loadLatestReadings()"
-              :class="tab==='power' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
-              class="px-4 py-2.5 text-sm font-semibold border-b-2">Power Reading</button>
       <button @click="tab='pm'; loadPlans()"
               :class="tab==='pm' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">PM Due</button>
@@ -471,12 +468,12 @@
   </div>
 
   <!-- ===================== READINGS ===================== -->
-  <div x-show="tab==='readings' || tab==='power'" x-cloak>
+  <div x-show="tab==='readings'" x-cloak>
     <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-4 mb-5">
       <label class="lbl-f">Machine</label>
       <select x-model="rAssetId" @change="onPickAsset()" class="inp max-w-md">
         <option value="">Select a machine…</option>
-        <template x-for="a in readingAssets" :key="a.id"><option :value="a.id" x-text="a.asset_code + ' — ' + a.description"></option></template>
+        <template x-for="a in meteredAssets" :key="a.id"><option :value="a.id" x-text="a.asset_code + ' — ' + a.description"></option></template>
       </select>
       <p x-show="rAssetId && rParams.length===0" class="text-sm text-metfraa-gray-500 mt-2">This machine type has no reading fields.</p>
     </div>
@@ -485,7 +482,7 @@
     <div x-show="!rAssetId" class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden mb-5">
       <div class="px-5 py-3 border-b border-metfraa-gray-200 flex items-center justify-between">
         <h3 class="display font-bold text-metfraa-ink">Latest reading — all machines</h3>
-        <span class="text-xs text-metfraa-gray-400" x-text="shownLatest.length + ' machines'"></span>
+        <span class="text-xs text-metfraa-gray-400" x-text="latestReadings.length + ' machines'"></span>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
@@ -495,7 +492,7 @@
             <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Values</th>
           </tr></thead>
           <tbody>
-            <template x-for="row in shownLatest" :key="row.asset_id">
+            <template x-for="row in latestReadings" :key="row.asset_id">
               <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50 cursor-pointer" @click="rAssetId=String(row.asset_id); onPickAsset()">
                 <td class="px-3 py-2"><span class="mono font-semibold" x-text="row.asset_code"></span> <span class="text-metfraa-gray-600" x-text="row.description || ''"></span></td>
                 <td class="px-3 py-2 mono" :class="row.last ? '' : 'text-metfraa-gray-400'" x-text="row.last ? row.last.reading_date : 'No readings yet'"></td>
@@ -515,7 +512,7 @@
                 </td>
               </tr>
             </template>
-            <tr x-show="shownLatest.length===0"><td colspan="3" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No machines.</td></tr>
+            <tr x-show="latestReadings.length===0"><td colspan="3" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No machines.</td></tr>
           </tbody>
         </table>
       </div>
@@ -580,13 +577,23 @@
         </div>
       </div>
       <div class="lg:col-span-3 bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
-        <div class="px-5 py-4 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Readings history</h3></div>
+        <div class="px-5 py-4 border-b border-metfraa-gray-200 flex items-center justify-between flex-wrap gap-2">
+          <h3 class="display font-bold text-metfraa-ink" x-text="historyView==='power' ? 'Power history' : 'Production history'"></h3>
+          <div class="inline-flex rounded-lg ring-1 ring-metfraa-gray-200 overflow-hidden text-xs font-bold">
+            <button @click="historyView='production'"
+                    :class="historyView==='production' ? 'bg-metfraa-blue text-white' : 'bg-white text-metfraa-gray-600 hover:bg-metfraa-gray-50'"
+                    class="px-3 py-1.5">Production History</button>
+            <button @click="historyView='power'"
+                    :class="historyView==='power' ? 'bg-metfraa-blue text-white' : 'bg-white text-metfraa-gray-600 hover:bg-metfraa-gray-50'"
+                    class="px-3 py-1.5 border-l border-metfraa-gray-200">Power History</button>
+          </div>
+        </div>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
               <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Date</th>
               <th class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-metfraa-gray-500">Time</th>
-              <template x-for="p in rParams" :key="p.code"><th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500" x-text="p.label + (p.cumulative ? ' /day' : '')"></th></template>
+              <template x-for="p in historyParams" :key="p.code"><th class="px-3 py-2 text-right text-xs font-bold uppercase tracking-wider text-metfraa-gray-500" x-text="p.label + (p.cumulative ? ' /day' : '')"></th></template>
               <th class="px-3 py-2"></th>
             </tr></thead>
             <tbody>
@@ -594,14 +601,15 @@
                 <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
                   <td class="px-3 py-2 mono" x-text="rd.reading_date"></td>
                   <td class="px-3 py-2 mono text-metfraa-gray-500" x-text="(rd.start_time||'') + (rd.end_time ? '–'+rd.end_time : '')"></td>
-                  <template x-for="p in rParams" :key="p.code"><td class="px-3 py-2 text-right mono" :class="p.cumulative||p.derived ? 'font-semibold' : 'text-metfraa-gray-500'" x-text="fmtCell(p, rd.day ? rd.day[p.code] : null)"></td></template>
+                  <template x-for="p in historyParams" :key="p.code"><td class="px-3 py-2 text-right mono" :class="p.cumulative||p.derived ? 'font-semibold' : 'text-metfraa-gray-500'" x-text="fmtCell(p, rd.day ? rd.day[p.code] : null)"></td></template>
                   <td class="px-3 py-2 text-right whitespace-nowrap">
                     <button @click="editReading(rd)" class="text-xs font-semibold text-metfraa-blue hover:underline">Edit</button>
                     <button @click="deleteReading(rd)" class="text-xs font-semibold text-red-600 hover:underline ml-3">Delete</button>
                   </td>
                 </tr>
               </template>
-              <tr x-show="readings.length===0"><td :colspan="rParams.length+3" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No readings yet for this machine.</td></tr>
+              <tr x-show="readings.length===0"><td :colspan="historyParams.length+3" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm">No readings yet for this machine.</td></tr>
+              <tr x-show="readings.length && historyParams.length===0"><td colspan="3" class="px-3 py-10 text-center text-metfraa-gray-500 text-sm" x-text="historyView==='power' ? 'This machine has no power (kWh) fields.' : 'This machine has no production fields.'"></td></tr>
             </tbody>
           </table>
         </div>
@@ -1184,7 +1192,7 @@ function maintApp() {
     events: [], eForm: {}, eSaving: false, spareOptions: [],
     ocrBusy: false, ocrMode: 'reading', ocrQueue: [],
     bCategory: 'Breakdown', bStatus: '', bAsset: '',
-    readings: [], rMonthly: [], rAssetId: '', rForm: {}, rSaving: false, latestReadings: [],
+    readings: [], rMonthly: [], rAssetId: '', rForm: {}, rSaving: false, latestReadings: [], historyView: 'production',
     pmPlans: [], pmForm: {}, pmModal: false, pmSaving: false, pmDueOnly: false,
     holidays: [], holidaysModal: false, hForm: { holiday_date: '', name: '' },
     quarterGroups: [
@@ -1586,9 +1594,13 @@ function maintApp() {
     },
     get rMeter() { const a = this.rAsset; const t = a && this.typeById(a.type_id); return t && t.meter_param; },
     get meteredAssets() { return this.assets.filter(a => { const t = this.typeById(a.type_id); return t && t.reading_params && t.reading_params.length; }); },
-    _isPowerType(t) { return !!(t && (t.meter_param === 'present_kwh' || (t.reading_params || []).some(p => p.code === 'present_kwh'))); },
-    get readingAssets() { return this.meteredAssets.filter(a => this._isPowerType(this.typeById(a.type_id)) === (this.tab === 'power')); },
-    get shownLatest() { const ids = new Set(this.readingAssets.map(a => a.id)); return this.latestReadings.filter(r => ids.has(r.asset_id)); },
+    // Readings history view: 'production' = operational fields, 'power' = kWh fields.
+    _POWER_CODES: ['present_kwh', 'previous_kwh', 'difference', 'cumulative'],
+    get powerParams() { return (this.rParams || []).filter(p => this._POWER_CODES.includes(p.code)); },
+    get productionParams() { return (this.rParams || []).filter(p => !this._POWER_CODES.includes(p.code)); },
+    get hasPower() { return this.powerParams.length > 0; },
+    get hasProduction() { return this.productionParams.length > 0; },
+    get historyParams() { return this.historyView === 'power' ? this.powerParams : this.productionParams; },
     blankReading() { return { id: null, reading_date: new Date().toISOString().slice(0,10), start_time: '', end_time: '', values: {}, remarks: '' }; },
     async loadLatestReadings() {
       try {
@@ -1596,7 +1608,7 @@ function maintApp() {
         if (r.ok) { const d = await r.json(); this.latestReadings = d.rows || []; }
       } catch (e) {}
     },
-    async onPickAsset() { this.rForm = this.blankReading(); this.readings = []; this.rMonthly = []; if (this.rAssetId) await this.loadReadings(); },
+    async onPickAsset() { this.rForm = this.blankReading(); this.readings = []; this.rMonthly = []; if (this.rAssetId) await this.loadReadings(); this.historyView = (this.hasProduction ? 'production' : 'power'); },
     async loadReadings() {
       const [a, b] = await Promise.all([
         fetch(`/maint/api/readings?asset_id=${this.rAssetId}`),
