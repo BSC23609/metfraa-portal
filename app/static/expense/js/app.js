@@ -4822,15 +4822,25 @@
   async function regenerateReport(report) {
     const ok = await confirmModal({
       title: 'Rebuild the PDF?',
-      body: `Regenerate ${report.employee_name}'s consolidated report for ${report.period} from scratch. This uses the current approved submissions and keeps your HR sign-off. Won't send any new emails.`,
+      body: `Regenerate ${report.employee_name}'s consolidated report for ${report.period}. This refreshes it to ALL currently approved claims for the month and rebuilds the PDF with the correct total and status. Won't send any new emails.`,
       confirmText: 'Rebuild',
     });
     if (!ok) return;
     showLoading('Rebuilding PDF…');
     try {
       const res = await api(`/expense/api/admin/consolidated/${report.id}/regenerate-pdf`, { method: 'POST' });
-      toast(`PDF rebuilt · ${res.page_count} pages`, 'success');
+      const amt = (res.total_amount != null) ? ' · INR ' + Number(res.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '';
+      const cnt = (res.submission_count != null) ? ' · ' + res.submission_count + ' claims' : '';
+      toast('PDF rebuilt' + amt + cnt, 'success');
       await loadConsolidated();
+      if (res.needs_resend) {
+        const go = await confirmModal({
+          title: 'Resend to accounts?',
+          body: `This report changed (now INR ${Number(res.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}, ${res.submission_count} claims). Accounts already received the old version — resend the updated report now?`,
+          confirmText: 'Resend to accounts',
+        });
+        if (go) await resendEmail(report);
+      }
     } catch (err) {
       toast(err.message || 'Rebuild failed', 'error');
     } finally { hideLoading(); }

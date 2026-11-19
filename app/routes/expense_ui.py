@@ -2322,6 +2322,11 @@ async def api_reject_consolidated(report_id: int, request: Request, bg: Backgrou
 @router.post("/api/admin/consolidated/{report_id}/regenerate-pdf")
 def api_regenerate_pdf(report_id: int, request: Request,
                        user=Depends(get_optional_user), db: Session = Depends(get_db)):
+    """Refresh the report to the CURRENT approved/settled claims for its
+    employee+period, then rebuild the PDF. This catches up a report whose claims
+    (or management sign-off) changed after it was first built — e.g. claims
+    approved after the report was already sent, which otherwise stay out of the
+    stored PDF while the live total grows."""
     blocked = _admin_guard(request, user, db)
     if blocked:
         return blocked
@@ -2329,13 +2334,31 @@ def api_regenerate_pdf(report_id: int, request: Request,
          .filter(ExpenseConsolidatedReport.id == report_id).first())
     if not r:
         return _err(404, "Not found")
-    if r.status != "pending_mgmt":
-        return _err(400, f"Can only regenerate while pending_mgmt — report is {r.status}")
+    if r.status not in ("pending_mgmt", "approved"):
+        return _err(400, "Can only regenerate while pending management or after "
+                         f"approval — report is {r.status}")
+
+    old_total, old_count = r.total_amount, r.submission_count
+    included = [s for s in db.query(ExpenseSubmission)
+                .filter(ExpenseSubmission.period == r.period,
+                        ExpenseSubmission.employee_id == r.employee_id).all()
+                if s.status in ("approved", "settled")]
+    rollup = next((x for x in _rollup_for_period(db, r.period)
+                   if x["employee_id"] == r.employee_id), None)
+    r.total_amount = rollup["approved_total"] if rollup else sum(
+        float(s.total_amount or 0) for s in included)
+    r.submission_count = len(included)
+    r.submission_ids = [s.id for s in included]
+
     url = _build_consolidated(db, r)
     db.commit()
     if not url:
         return _err(502, "PDF generation failed — see server logs.")
-    return {"ok": True, "pdf_path": url, "pdf_page_count": r.pdf_page_count}
+    changed = (old_total != r.total_amount) or (old_count != r.submission_count)
+    return {"ok": True, "pdf_path": url, "pdf_page_count": r.pdf_page_count,
+            "total_amount": r.total_amount, "submission_count": r.submission_count,
+            "changed": changed,
+            "needs_resend": bool(changed and r.status == "approved")}
 
 
 @router.post("/api/admin/consolidated/{report_id}/resend-email")
