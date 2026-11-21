@@ -36,6 +36,9 @@
       <button @click="tab='pm'; loadPlans()"
               :class="tab==='pm' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">PM Due</button>
+      <button @click="tab='pmcheck'; loadPmMachines()"
+              :class="tab==='pmcheck' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">PM Checklist</button>
       <button @click="tab='eb'; loadEb()"
               :class="tab==='eb' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">EB / Power</button>
@@ -759,6 +762,117 @@
     </div>
   </div>
 
+  <!-- ===================== PM CHECKLIST ===================== -->
+  <div x-show="tab==='pmcheck'" x-cloak>
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-5">
+      <!-- left: fill form -->
+      <div class="lg:col-span-3 bg-white rounded-xl shadow-sm border border-metfraa-gray-200 p-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <h3 class="display font-bold text-metfraa-ink">Preventive maintenance check sheet</h3>
+          <a x-show="pmCheckId" :href="pmCheckId ? '/maint/api/pm-checklist/'+pmCheckId+'/excel' : '#'" class="inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 no-print">⬇ Excel</a>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <label class="block"><span class="lbl-f">Machine *</span>
+            <select x-model="pmMachine" @change="loadPmTemplate()" class="inp">
+              <option value="">Select machine…</option>
+              <template x-for="m in pmMachines" :key="m.machine"><option :value="m.machine" x-text="m.machine + ' (' + m.item_count + ')'"></option></template>
+            </select></label>
+          <label class="block"><span class="lbl-f">Machine unit (optional)</span>
+            <select x-model="pmForm.asset_id" class="inp">
+              <option :value="null">— not linked —</option>
+              <template x-for="a in pmAssets" :key="a.id"><option :value="a.id" x-text="a.asset_code + ' — ' + a.description"></option></template>
+            </select></label>
+          <label class="block"><span class="lbl-f">Date *</span><input type="date" x-model="pmForm.check_date" class="inp"></label>
+          <label class="block"><span class="lbl-f">Frequency</span>
+            <select x-model="pmForm.frequency" class="inp"><option value="M">Monthly</option><option value="Y">Yearly</option></select></label>
+        </div>
+
+        <div x-show="pmItems.length" class="overflow-x-auto border border-metfraa-gray-200 rounded-lg mb-3">
+          <table class="w-full text-sm">
+            <thead><tr class="text-left bg-metfraa-gray-50 border-b border-metfraa-gray-200">
+              <th class="px-2 py-2 text-xs font-bold text-metfraa-gray-500">#</th>
+              <th class="px-2 py-2 text-xs font-bold text-metfraa-gray-500">Check point</th>
+              <th class="px-2 py-2 text-xs font-bold text-metfraa-gray-500">Standard</th>
+              <th class="px-2 py-2 text-xs font-bold text-metfraa-gray-500">Status</th>
+              <th class="px-2 py-2 text-xs font-bold text-metfraa-gray-500">Remark</th>
+            </tr></thead>
+            <tbody>
+              <template x-for="(row, i) in pmItems" :key="i">
+                <tr class="border-b border-metfraa-gray-100">
+                  <td class="px-2 py-1.5 text-metfraa-gray-500" x-text="row.sn || (i+1)"></td>
+                  <td class="px-2 py-1.5 text-metfraa-ink" x-text="row.check_point"></td>
+                  <td class="px-2 py-1.5 text-metfraa-gray-500 text-xs" x-text="row.standard"></td>
+                  <td class="px-2 py-1.5">
+                    <select x-model="row.status" class="text-xs rounded-lg border-metfraa-gray-300 py-1"
+                            :class="row.status==='OK' ? 'text-green-700' : (row.status==='NOT_OK' ? 'text-red-700' : 'text-metfraa-gray-500')">
+                      <option value="OK">OK</option>
+                      <option value="NOT_OK">Not OK</option>
+                      <option value="NA">N/A</option>
+                    </select>
+                  </td>
+                  <td class="px-2 py-1.5"><input type="text" x-model="row.remark" placeholder="—" class="w-full text-xs rounded-lg border-metfraa-gray-300 py-1"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        <div x-show="pmItems.length" class="flex items-center gap-2 mb-3">
+          <button @click="pmMarkAll('OK')" class="text-xs font-semibold text-green-700 hover:underline">Mark all OK</button>
+          <span class="text-metfraa-gray-300">·</span>
+          <span class="text-xs text-metfraa-gray-500"><span x-text="pmOkCount"></span> / <span x-text="pmItems.length"></span> OK</span>
+        </div>
+
+        <div x-show="pmItems.length" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="block"><span class="lbl-f">Inspected by (operator)</span><input type="text" x-model="pmForm.inspected_by" class="inp"></label>
+          <label class="block"><span class="lbl-f">Verified by (eng./incharge)</span><input type="text" x-model="pmForm.verified_by" class="inp"></label>
+          <label class="block"><span class="lbl-f">Reviewed by</span><input type="text" x-model="pmForm.reviewed_by" class="inp"></label>
+          <label class="block"><span class="lbl-f">Approved by</span><input type="text" x-model="pmForm.approved_by" class="inp"></label>
+          <label class="block sm:col-span-2"><span class="lbl-f">Remarks</span><input type="text" x-model="pmForm.remarks" class="inp"></label>
+          <label class="flex items-center gap-2 text-sm text-metfraa-gray-700 sm:col-span-2">
+            <input type="checkbox" x-model="pmForm.log_event" class="rounded border-metfraa-gray-300 text-metfraa-blue">
+            Log a Scheduled PM entry in the Register (needs a machine unit)
+          </label>
+        </div>
+        <div x-show="pmItems.length" class="mt-4">
+          <button @click="savePmCheck()" :disabled="pmSaving" class="w-full px-4 py-2.5 rounded-lg bg-metfraa-blue text-white font-bold disabled:opacity-50">
+            <span x-show="!pmSaving" x-text="pmCheckId ? 'Saved ✓ — save again as new' : 'Save check sheet'"></span><span x-show="pmSaving">Saving…</span>
+          </button>
+          <p x-show="pmMsg" class="text-xs font-semibold mt-2" :class="pmMsgOk ? 'text-green-600' : 'text-red-600'" x-text="pmMsg"></p>
+        </div>
+        <p x-show="pmMachine && !pmItems.length" class="text-sm text-metfraa-gray-500">No check points for this machine.</p>
+      </div>
+
+      <!-- right: history -->
+      <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
+        <div class="px-4 py-3 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Completed checks</h3></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-left bg-metfraa-gray-50 border-b border-metfraa-gray-200">
+              <th class="px-3 py-2 text-xs font-bold text-metfraa-gray-500">Date</th>
+              <th class="px-3 py-2 text-xs font-bold text-metfraa-gray-500">Machine</th>
+              <th class="px-3 py-2 text-xs font-bold text-metfraa-gray-500">OK</th>
+              <th class="px-3 py-2"></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="h in pmHistory" :key="h.id">
+                <tr class="border-b border-metfraa-gray-100">
+                  <td class="px-3 py-2 mono" x-text="h.check_date"></td>
+                  <td class="px-3 py-2"><span x-text="h.machine"></span><span class="text-metfraa-gray-400 text-xs" x-show="h.asset_code" x-text="' · '+h.asset_code"></span></td>
+                  <td class="px-3 py-2 mono" x-text="h.ok_count + '/' + h.item_count"></td>
+                  <td class="px-3 py-2 text-right whitespace-nowrap">
+                    <a :href="'/maint/api/pm-checklist/'+h.id+'/excel'" class="text-xs font-semibold text-green-700 hover:underline">Excel</a>
+                    <button @click="deletePmCheck(h)" class="text-xs font-semibold text-red-600 hover:underline ml-2">Delete</button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="pmHistory.length===0"><td colspan="4" class="px-3 py-8 text-center text-metfraa-gray-500 text-sm">No checks recorded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== EB / POWER ===================== -->
   <div x-show="tab==='eb'" x-cloak>
     <div class="grid grid-cols-1 lg:grid-cols-5 gap-5">
@@ -1220,6 +1334,8 @@ function maintApp() {
     dash: {},
     logSaving: false,
     ebReadings: [], ebMonthly: [], ebForm: {}, ebSaving: false,
+    pmMachines: [], pmMachine: '', pmItems: [], pmAssets: [], pmForm: {},
+    pmHistory: [], pmSaving: false, pmCheckId: null, pmMsg: '', pmMsgOk: false,
     pdfUrl: '', pdfTitle: '', pdfUploadUrl: '', pdfUploading: false,
     _reportCharts: [],
     reviewReport: {}, reviewSending: false, reviewMsg: '', reviewMsgOk: false,
@@ -1526,6 +1642,67 @@ function maintApp() {
       }
     },
     async loadEvents() { const r = await fetch('/maint/api/events'); if (r.ok) this.events = await r.json(); },
+    // ---------------- PM Checklist ----------------
+    get pmOkCount() { return this.pmItems.filter(r => r.status === 'OK').length; },
+    _blankPmForm() {
+      const today = new Date().toISOString().slice(0, 10);
+      return { asset_id: null, check_date: today, frequency: 'M', inspected_by: '',
+               verified_by: '', reviewed_by: '', approved_by: '', remarks: '', log_event: true };
+    },
+    async loadPmMachines() {
+      if (!this.pmForm.check_date) this.pmForm = this._blankPmForm();
+      try { const r = await fetch('/maint/api/pm-checklist/machines'); if (r.ok) this.pmMachines = await r.json(); } catch (e) {}
+    },
+    async loadPmTemplate() {
+      this.pmItems = []; this.pmAssets = []; this.pmCheckId = null; this.pmMsg = '';
+      this.pmForm = this._blankPmForm();
+      if (!this.pmMachine) { this.pmHistory = []; return; }
+      try {
+        const r = await fetch('/maint/api/pm-checklist/template?machine=' + encodeURIComponent(this.pmMachine));
+        if (r.ok) {
+          const d = await r.json();
+          this.pmItems = (d.items || []).map(i => ({ sn: i.sn, check_point: i.check_point, standard: i.standard, frequency: i.frequency, status: 'OK', remark: '' }));
+          this.pmAssets = d.assets || [];
+          if (this.pmAssets.length === 1) this.pmForm.asset_id = this.pmAssets[0].id;
+        }
+      } catch (e) {}
+      await this.loadPmHistory();
+    },
+    async loadPmHistory() {
+      if (!this.pmMachine) { this.pmHistory = []; return; }
+      try { const r = await fetch('/maint/api/pm-checklist/history?machine=' + encodeURIComponent(this.pmMachine)); if (r.ok) this.pmHistory = await r.json(); } catch (e) {}
+    },
+    pmMarkAll(s) { this.pmItems.forEach(r => r.status = s); },
+    async savePmCheck() {
+      if (!this.pmMachine || !this.pmForm.check_date) { this.pmMsgOk = false; this.pmMsg = 'Machine and date are required'; return; }
+      this.pmSaving = true; this.pmMsg = '';
+      try {
+        const body = {
+          machine: this.pmMachine,
+          asset_id: this.pmForm.asset_id ? +this.pmForm.asset_id : null,
+          check_date: this.pmForm.check_date, frequency: this.pmForm.frequency,
+          results: this.pmItems.map(r => ({ sn: r.sn, check_point: r.check_point, standard: r.standard, frequency: r.frequency, status: r.status, remark: r.remark || '' })),
+          inspected_by: this.pmForm.inspected_by, verified_by: this.pmForm.verified_by,
+          reviewed_by: this.pmForm.reviewed_by, approved_by: this.pmForm.approved_by,
+          remarks: this.pmForm.remarks, log_event: !!this.pmForm.log_event,
+        };
+        const r = await fetch('/maint/api/pm-checklist/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Save failed');
+        this.pmCheckId = d.id; this.pmMsgOk = true;
+        this.pmMsg = 'Saved ✓' + (this.pmForm.log_event && body.asset_id ? ' — logged in Register' : '');
+        await this.loadPmHistory();
+        if (typeof this.loadEvents === 'function') this.loadEvents();
+      } catch (e) { this.pmMsgOk = false; this.pmMsg = e.message || 'Save failed'; }
+      finally { this.pmSaving = false; }
+    },
+    async deletePmCheck(h) {
+      if (!confirm('Delete the PM check for ' + h.machine + ' on ' + h.check_date + '?')) return;
+      try {
+        const r = await fetch('/maint/api/pm-checklist/' + h.id, { method: 'DELETE' });
+        if (r.ok) { if (this.pmCheckId === h.id) this.pmCheckId = null; await this.loadPmHistory(); }
+      } catch (e) {}
+    },
     registerExcel() {
       const q = new URLSearchParams();
       if (this.bCategory) q.set('category', this.bCategory);

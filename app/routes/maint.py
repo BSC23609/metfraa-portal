@@ -24,7 +24,7 @@ from ..services import wati as _wati
 from ..models import (Employee, MaintAsset, MaintEvent, MaintMachineType,
                       MaintHoliday, MaintPMPlan, MaintReading,
                       MaintEbReading, MaintReminderLog, PlantLabour,
-                      MaintSparePart)
+                      MaintSparePart, MaintPmChecklistItem, MaintPmCheck)
 
 router = APIRouter(prefix="/maint", tags=["maint"])
 log = logging.getLogger("maint")
@@ -1735,6 +1735,182 @@ def api_eb_excel(user: Employee = Depends(get_current_user), db: Session = Depen
                      r["freq_hz"], r["v_ry"], r["v_yb"], r["v_br"], r["v_rn"], r["v_yn"],
                      r["v_bn"], r["remarks"]])
     return _xlsx_download(_build_xlsx("EB Power", headers, rows), "eb_power_readings.xlsx")
+
+
+# ===================== Preventive Maintenance checklists =====================
+import re as _re  # noqa: E402
+
+
+def _norm_machine(s):
+    return _re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _assets_for_machine(db, machine):
+    """Assets whose description looks like this machine (for optional linking)."""
+    nm = _norm_machine(machine)
+    out = []
+    for a in db.query(MaintAsset).filter(MaintAsset.active == True).all():  # noqa: E712
+        nd = _norm_machine(a.description)
+        if nm and (nm in nd or nd in nm):
+            out.append({"id": a.id, "asset_code": a.asset_code, "description": a.description})
+    return out
+
+
+def _pm_check_json(c: MaintPmCheck, full=False):
+    d = {
+        "id": c.id, "machine": c.machine, "asset_id": c.asset_id,
+        "asset_code": c.asset.asset_code if c.asset else None,
+        "check_date": _iso(c.check_date), "frequency": c.frequency,
+        "inspected_by": c.inspected_by, "verified_by": c.verified_by,
+        "reviewed_by": c.reviewed_by, "approved_by": c.approved_by,
+        "remarks": c.remarks, "created_by": c.created_by,
+        "item_count": len(c.results or []),
+        "ok_count": sum(1 for r in (c.results or []) if (r.get("status") == "OK")),
+    }
+    if full:
+        d["results"] = c.results or []
+    return d
+
+
+@router.get("/api/pm-checklist/machines")
+def api_pm_machines(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    machines = [m for (m,) in db.query(MaintPmChecklistItem.machine)
+                .filter(MaintPmChecklistItem.active == True)  # noqa: E712
+                .distinct().all()]
+    out = []
+    for m in sorted(machines):
+        cnt = (db.query(MaintPmChecklistItem)
+               .filter(MaintPmChecklistItem.machine == m,
+                       MaintPmChecklistItem.active == True).count())  # noqa: E712
+        last = (db.query(MaintPmCheck).filter(MaintPmCheck.machine == m)
+                .order_by(MaintPmCheck.check_date.desc(), MaintPmCheck.id.desc()).first())
+        out.append({"machine": m, "item_count": cnt,
+                    "last_check_date": _iso(last.check_date) if last else None,
+                    "check_count": db.query(MaintPmCheck).filter(MaintPmCheck.machine == m).count()})
+    return out
+
+
+@router.get("/api/pm-checklist/template")
+def api_pm_template(machine: str, user: Employee = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    _guard(db, user)
+    items = (db.query(MaintPmChecklistItem)
+             .filter(MaintPmChecklistItem.machine == machine,
+                     MaintPmChecklistItem.active == True)  # noqa: E712
+             .order_by(MaintPmChecklistItem.sort_order, MaintPmChecklistItem.sn).all())
+    return {
+        "machine": machine,
+        "items": [{"sn": i.sn, "check_point": i.check_point, "standard": i.standard,
+                   "frequency": i.frequency} for i in items],
+        "assets": _assets_for_machine(db, machine),
+    }
+
+
+class PmCheckIn(BaseModel):
+    machine: str
+    asset_id: int | None = None
+    check_date: str
+    frequency: str | None = "M"
+    results: list = []
+    inspected_by: str | None = None
+    verified_by: str | None = None
+    reviewed_by: str | None = None
+    approved_by: str | None = None
+    remarks: str | None = None
+    log_event: bool = True
+
+
+@router.post("/api/pm-checklist/save")
+def api_pm_save(payload: PmCheckIn, user: Employee = Depends(get_current_user),
+                db: Session = Depends(get_db)):
+    _guard(db, user)
+    if not payload.machine:
+        raise HTTPException(400, "Machine required")
+    dd = _pdate(payload.check_date) or _ist_today()
+    c = MaintPmCheck(
+        machine=payload.machine, asset_id=payload.asset_id, check_date=dd,
+        frequency=(payload.frequency or "M"), results=payload.results or [],
+        inspected_by=payload.inspected_by, verified_by=payload.verified_by,
+        reviewed_by=payload.reviewed_by, approved_by=payload.approved_by,
+        remarks=payload.remarks, created_by=getattr(user, "name", None))
+    db.add(c)
+    db.flush()
+    # Optionally log a Scheduled PM event against the chosen asset for the register.
+    if payload.log_event and payload.asset_id and db.get(MaintAsset, payload.asset_id):
+        done = sum(1 for r in (payload.results or []) if r.get("status") in ("OK", "NA"))
+        total = len(payload.results or [])
+        e = MaintEvent(
+            asset_id=payload.asset_id, event_date=dd, category="Scheduled PM",
+            status="Completed", complaint=f"PM checklist — {payload.machine}",
+            action=f"PM checklist completed ({done}/{total} OK)",
+            operator=payload.inspected_by, repaired_by=payload.verified_by,
+            remarks=payload.remarks)
+        db.add(e)
+        db.flush()
+        c.event_id = e.id
+    db.commit()
+    db.refresh(c)
+    return _pm_check_json(c, full=True)
+
+
+@router.get("/api/pm-checklist/history")
+def api_pm_history(machine: str | None = None, asset_id: int | None = None, limit: int = 200,
+                   user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    qy = db.query(MaintPmCheck)
+    if machine:
+        qy = qy.filter(MaintPmCheck.machine == machine)
+    if asset_id:
+        qy = qy.filter(MaintPmCheck.asset_id == asset_id)
+    rows = qy.order_by(MaintPmCheck.check_date.desc(), MaintPmCheck.id.desc()).limit(limit).all()
+    return [_pm_check_json(c) for c in rows]
+
+
+@router.get("/api/pm-checklist/{check_id}")
+def api_pm_detail(check_id: int, user: Employee = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    _guard(db, user)
+    c = db.get(MaintPmCheck, check_id)
+    if not c:
+        raise HTTPException(404, "Not found")
+    return _pm_check_json(c, full=True)
+
+
+@router.delete("/api/pm-checklist/{check_id}")
+def api_pm_delete(check_id: int, user: Employee = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    _guard(db, user)
+    c = db.get(MaintPmCheck, check_id)
+    if not c:
+        raise HTTPException(404, "Not found")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/api/pm-checklist/{check_id}/excel")
+def api_pm_excel(check_id: int, user: Employee = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    _guard(db, user)
+    c = db.get(MaintPmCheck, check_id)
+    if not c:
+        raise HTTPException(404, "Not found")
+    headers = ["S.N.", "Check Point", "Standard", "Freq", "Status", "Remark"]
+    rows = []
+    for i, r in enumerate(c.results or [], 1):
+        rows.append([r.get("sn") or i, r.get("check_point"), r.get("standard"),
+                     r.get("frequency") or "", r.get("status"), r.get("remark")])
+    rows.append([])
+    rows.append(["Machine", c.machine, "", "", "Date", _iso(c.check_date)])
+    rows.append(["Inspected by (operator)", c.inspected_by, "", "",
+                 "Verified by (eng./incharge)", c.verified_by])
+    rows.append(["Reviewed by", c.reviewed_by, "", "", "Approved by", c.approved_by])
+    if c.remarks:
+        rows.append(["Remarks", c.remarks])
+    data = _build_xlsx("PM Checklist", headers, rows)
+    fname = f"PM_{_norm_machine(c.machine)}_{_iso(c.check_date)}.xlsx"
+    return _xlsx_download(data, fname)
 
 
 @router.get("/api/eb-monthly")

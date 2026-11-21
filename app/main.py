@@ -80,6 +80,13 @@ async def lifespan(app: FastAPI):
                 print(f"[startup] Reading machine-types configured: {n} changes")
         except Exception as e:
             print(f"[startup] Reading machine-types seed skipped: {e}")
+        try:
+            from .maint_pm_checklist_seed import seed_pm_checklists
+            n = seed_pm_checklists()
+            if n:
+                print(f"[startup] PM checklist items seeded: {n}")
+        except Exception as e:
+            print(f"[startup] PM checklist seed skipped: {e}")
 
     sched = None
     if IS_VERCEL:

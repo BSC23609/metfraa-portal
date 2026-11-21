@@ -203,6 +203,38 @@ SPARES_MIGRATIONS = [
 ]
 STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + SPARES_MIGRATIONS
 
+# Preventive Maintenance check-sheets. Mirror models.MaintPmChecklistItem / MaintPmCheck.
+PM_CHECKLIST_MIGRATIONS = [
+    "CREATE TABLE IF NOT EXISTS maint_pm_checklist_items ("
+    " id SERIAL PRIMARY KEY,"
+    " machine VARCHAR(120) NOT NULL,"
+    " sn INTEGER,"
+    " check_point TEXT NOT NULL,"
+    " standard VARCHAR(255),"
+    " frequency VARCHAR(4) DEFAULT 'M',"
+    " sort_order INTEGER NOT NULL DEFAULT 0,"
+    " active BOOLEAN NOT NULL DEFAULT TRUE)",
+    "CREATE INDEX IF NOT EXISTS idx_pm_checklist_machine ON maint_pm_checklist_items(machine)",
+    "CREATE TABLE IF NOT EXISTS maint_pm_checks ("
+    " id SERIAL PRIMARY KEY,"
+    " machine VARCHAR(120) NOT NULL,"
+    " asset_id INTEGER REFERENCES maint_assets(id),"
+    " check_date DATE NOT NULL,"
+    " frequency VARCHAR(4) DEFAULT 'M',"
+    " results JSON,"
+    " inspected_by VARCHAR(120),"
+    " verified_by VARCHAR(120),"
+    " reviewed_by VARCHAR(120),"
+    " approved_by VARCHAR(120),"
+    " remarks TEXT,"
+    " event_id INTEGER REFERENCES maint_events(id),"
+    " created_by VARCHAR(120),"
+    " created_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_pm_checks_machine ON maint_pm_checks(machine)",
+    "CREATE INDEX IF NOT EXISTS idx_pm_checks_date ON maint_pm_checks(check_date)",
+]
+STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + PM_CHECKLIST_MIGRATIONS
+
 
 def run_startup_migrations() -> None:
     """Apply pending column additions. Runs on every startup — safe.

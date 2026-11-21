@@ -1341,3 +1341,42 @@ class MaintSparePart(Base):
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MaintPmChecklistItem(Base):
+    """A single check point in a machine's Preventive Maintenance check sheet
+    (the template). Keyed by machine name so every unit of that machine shares
+    one checklist."""
+    __tablename__ = "maint_pm_checklist_items"
+
+    id = Column(Integer, primary_key=True)
+    machine = Column(String(120), nullable=False, index=True)   # e.g. "ARC WELDING"
+    sn = Column(Integer, nullable=True)                          # printed S.N.
+    check_point = Column(Text, nullable=False)
+    standard = Column(String(255), nullable=True)
+    frequency = Column(String(4), nullable=True, default="M")    # M / Y
+    sort_order = Column(Integer, nullable=False, default=0)
+    active = Column(Boolean, default=True, nullable=False)
+
+
+class MaintPmCheck(Base):
+    """A filled-in PM check sheet for one machine on one date."""
+    __tablename__ = "maint_pm_checks"
+
+    id = Column(Integer, primary_key=True)
+    machine = Column(String(120), nullable=False, index=True)
+    asset_id = Column(Integer, ForeignKey("maint_assets.id"), nullable=True)
+    check_date = Column(Date, nullable=False, index=True)
+    frequency = Column(String(4), nullable=True, default="M")
+    # [{sn, check_point, standard, status: OK|NOT_OK|NA, remark}]
+    results = Column(JSON, nullable=True)
+    inspected_by = Column(String(120), nullable=True)   # operator
+    verified_by = Column(String(120), nullable=True)    # engineer / incharge
+    reviewed_by = Column(String(120), nullable=True)
+    approved_by = Column(String(120), nullable=True)
+    remarks = Column(Text, nullable=True)
+    event_id = Column(Integer, ForeignKey("maint_events.id"), nullable=True)
+    created_by = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    asset = relationship("MaintAsset")
