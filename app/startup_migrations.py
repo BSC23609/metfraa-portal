@@ -199,6 +199,8 @@ SPARES_MIGRATIONS = [
     "ALTER TABLE maint_spare_parts ADD COLUMN IF NOT EXISTS store_location VARCHAR(255)",
     "ALTER TABLE maint_events ADD COLUMN IF NOT EXISTS parts_detail JSON",
     "ALTER TABLE maint_events ADD COLUMN IF NOT EXISTS ref_no VARCHAR(40)",
+    "ALTER TABLE maint_events ADD COLUMN IF NOT EXISTS start_time VARCHAR(8)",
+    "ALTER TABLE maint_events ADD COLUMN IF NOT EXISTS end_time VARCHAR(8)",
     "CREATE INDEX IF NOT EXISTS idx_maint_events_ref ON maint_events(ref_no)",
 ]
 STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + SPARES_MIGRATIONS

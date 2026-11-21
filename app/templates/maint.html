@@ -274,6 +274,10 @@
             </div>
           </div>
           <div><label class="lbl-f">Date *</label><input type="date" x-model="eForm.event_date" class="inp" /></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="lbl-f">Start time</label><input type="time" x-model="eForm.start_time" class="inp" /></div>
+            <div><label class="lbl-f">End time</label><input type="time" x-model="eForm.end_time" class="inp" /></div>
+          </div>
           <div>
             <label class="lbl-f">Status</label>
             <select x-show="eForm.category==='Breakdown'" x-model="eForm.status" class="inp">
@@ -1536,6 +1540,7 @@ function maintApp() {
     blankEvent() {
       return { id: null, asset_id: '', event_date: new Date().toISOString().slice(0,10),
         category: 'Scheduled PM', status: 'Completed', reported_at: '', restored_at: '',
+        start_time: '', end_time: '',
         complaint: '', cause: '', action: '', parts: '', cost: null, meter_at_event: null,
         operator: '', repaired_by: '', remarks: '', partsUsed: 'no', partRows: [] };
     },
@@ -1713,6 +1718,7 @@ function maintApp() {
     editEvent(e) {
       this.eForm = { id: e.id, asset_id: e.asset_id, event_date: e.event_date, category: e.category,
         status: e.status || (e.category === 'Breakdown' ? 'Open' : 'Completed'), reported_at: e.reported_at || '', restored_at: e.restored_at || '',
+        start_time: e.start_time || '', end_time: e.end_time || '',
         complaint: e.complaint || '', cause: e.cause || '', action: e.action || '', parts: e.parts || '',
         cost: e.cost, meter_at_event: e.meter_at_event,
         operator: e.operator || e.attended_by_name || '', repaired_by: e.repaired_by || e.verified_by_name || '',

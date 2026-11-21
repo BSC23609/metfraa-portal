@@ -371,6 +371,7 @@ def _event_json(e: MaintEvent):
         "event_date": _iso(e.event_date), "category": e.category, "status": e.status,
         "reported_at": e.reported_at.isoformat(timespec="minutes") if e.reported_at else None,
         "restored_at": e.restored_at.isoformat(timespec="minutes") if e.restored_at else None,
+        "start_time": e.start_time, "end_time": e.end_time,
         "downtime_hrs": e.downtime_hrs, "complaint": e.complaint, "cause": e.cause,
         "ref_no": e.ref_no,
         "action": e.action, "parts": e.parts, "parts_detail": e.parts_detail or [],
@@ -391,6 +392,8 @@ class EventIn(BaseModel):
     status: str | None = None
     reported_at: str | None = None
     restored_at: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
     complaint: str | None = None
     cause: str | None = None
     action: str | None = None
@@ -479,6 +482,8 @@ def _apply_event(e: MaintEvent, p: EventIn):
     e.verified_by_id = p.verified_by_id
     e.operator = (p.operator or "").strip() or None
     e.repaired_by = (p.repaired_by or "").strip() or None
+    e.start_time = (p.start_time or "").strip() or None
+    e.end_time = (p.end_time or "").strip() or None
     e.remarks = p.remarks
 
 

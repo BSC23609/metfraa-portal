@@ -1237,6 +1237,8 @@ class MaintEvent(Base):
     status = Column(String(16), nullable=True)       # Open / Under repair / Closed (breakdowns)
     reported_at = Column(DateTime, nullable=True)
     restored_at = Column(DateTime, nullable=True)
+    start_time = Column(String(8), nullable=True)    # HH:MM work start
+    end_time = Column(String(8), nullable=True)      # HH:MM work end
     downtime_hrs = Column(Float, nullable=True)
     complaint = Column(Text, nullable=True)
     cause = Column(Text, nullable=True)
