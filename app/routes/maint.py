@@ -1632,6 +1632,111 @@ def api_eb_readings(user: Employee = Depends(get_current_user), db: Session = De
     return list(reversed(_eb_compute(db)))   # newest first for display
 
 
+# ----------------------------------------------------------- Excel exports
+def _build_xlsx(title, headers, rows):
+    """Bytes of a styled single-sheet workbook (navy header, frozen top row)."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = (title or "Sheet")[:31]
+    ws.append(headers)
+    navy = PatternFill("solid", fgColor="0A2B66")
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = navy
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    for r in rows:
+        ws.append(r)
+    for i, h in enumerate(headers, 1):
+        w = len(str(h))
+        for r in rows:
+            if i - 1 < len(r) and r[i - 1] is not None:
+                w = max(w, len(str(r[i - 1])))
+        ws.column_dimensions[get_column_letter(i)].width = min(45, max(12, w + 2))
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _xlsx_download(data, filename):
+    return Response(content=data, media_type=_XLSX_MIME,
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/api/assets/excel")
+def api_assets_excel(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    headers = ["Asset Code", "Description", "Category", "Machine Type", "Serial / Model",
+               "Manufacturer", "Location", "Capacity", "Unit", "Mfg Year", "Supplier",
+               "Acquisition Date", "Acquisition Value", "Warranty Until", "Installed", "Active"]
+    rows = []
+    for a in db.query(MaintAsset).order_by(MaintAsset.asset_code).all():
+        j = _asset_json(a)
+        rows.append([j["asset_code"], j["description"], j["category"], j["type_name"],
+                     j["serial_model_no"], j["manufacturer"], j["location"], j["capacity"],
+                     j["capacity_unit"], j["mfg_year"], j["supplier"], j["acquisition_date"],
+                     j["acquisition_value"], j["warranty_until"], j["date_installed"],
+                     "Yes" if j["active"] else "No"])
+    return _xlsx_download(_build_xlsx("Assets", headers, rows), "maintenance_assets.xlsx")
+
+
+@router.get("/api/register/excel")
+def api_register_excel(category: str = "", status: str = "", asset_id: int | None = None,
+                       user: Employee = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    """Register (events) export. category = '' (all) | 'Breakdown' | 'Preventive'."""
+    _guard(db, user)
+    qy = db.query(MaintEvent)
+    if asset_id:
+        qy = qy.filter(MaintEvent.asset_id == asset_id)
+    cat = (category or "").strip().lower()
+    if cat == "breakdown":
+        qy = qy.filter(MaintEvent.category == "Breakdown")
+    elif cat in ("preventive", "preventive maintenance", "pm"):
+        qy = qy.filter(MaintEvent.category.in_(["Scheduled PM", "Unscheduled PM"]))
+    if status:
+        qy = qy.filter(MaintEvent.status == status)
+    evs = qy.order_by(MaintEvent.event_date.desc(), MaintEvent.id.desc()).all()
+
+    headers = ["Ref No", "Date", "Asset Code", "Asset", "Category", "Status",
+               "Reported At", "Restored At", "Downtime (hrs)", "Complaint / Task",
+               "Cause", "Action Taken", "Parts Used", "Cost", "Operator",
+               "Repaired By", "Attended By", "Verified By", "Remarks"]
+    rows = []
+    for e in evs:
+        j = _event_json(e)
+        rows.append([j["ref_no"], j["event_date"], j["asset_code"], j["asset_description"],
+                     j["category"], j["status"], j["reported_at"], j["restored_at"],
+                     j["downtime_hrs"], j["complaint"], j["cause"], j["action"], j["parts"],
+                     j["cost"], j["operator"], j["repaired_by"], j["attended_by_name"],
+                     j["verified_by_name"], j["remarks"]])
+    label = cat or "all"
+    return _xlsx_download(_build_xlsx("Register", headers, rows),
+                          f"maintenance_register_{label}.xlsx")
+
+
+@router.get("/api/eb-excel")
+def api_eb_excel(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
+    _guard(db, user)
+    headers = ["Date", "Time", "Active (MWh)", "Apparent (MVAh)", "Rate / unit",
+               "Daily kWh", "Daily kVAh", "Power Factor", "Daily Cost", "Cumulative Cost",
+               "MD (kW)", "MD (kVA)", "Freq (Hz)", "V-RY", "V-YB", "V-BR",
+               "V-RN", "V-YN", "V-BN", "Remarks"]
+    rows = []
+    for r in _eb_compute(db):   # oldest first
+        rows.append([r["reading_date"], r["reading_time"], r["active_mwh"], r["apparent_mvah"],
+                     r["rate_per_unit"], r["daily_kwh"], r["daily_kvah"], r["power_factor"],
+                     r["daily_cost"], r["cumulative_cost"], r["md_kw"], r["md_kva"],
+                     r["freq_hz"], r["v_ry"], r["v_yb"], r["v_br"], r["v_rn"], r["v_yn"],
+                     r["v_bn"], r["remarks"]])
+    return _xlsx_download(_build_xlsx("EB Power", headers, rows), "eb_power_readings.xlsx")
+
+
 @router.get("/api/eb-monthly")
 def api_eb_monthly(user: Employee = Depends(get_current_user), db: Session = Depends(get_db)):
     _guard(db, user)

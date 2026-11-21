@@ -322,3 +322,40 @@ def api_report_send(user: Employee = Depends(get_current_user),
 
     result = _reorder_report(db, force=True)
     return {"ok": True, "result": result, "status": _report_status(db)}
+
+
+@router.get("/api/excel")
+def api_excel(q: str | None = None, reorder: int = 0,
+              user: Employee = Depends(get_current_user),
+              db: Session = Depends(get_db)):
+    """Download the spare-parts inventory as Excel (respects search / reorder filter)."""
+    _guard(db, user)
+    from fastapi import Response
+    from .maint import _build_xlsx, _XLSX_MIME
+
+    query = db.query(MaintSparePart).filter(MaintSparePart.active == True)  # noqa: E712
+    if q:
+        like = f"%{q.strip()}%"
+        query = query.filter(or_(
+            MaintSparePart.part_name.ilike(like),
+            MaintSparePart.part_code.ilike(like),
+            MaintSparePart.machine.ilike(like),
+            MaintSparePart.manufacturer.ilike(like),
+            MaintSparePart.supplier.ilike(like),
+            MaintSparePart.store_location.ilike(like),
+        ))
+    rows_json = [_json(p) for p in query.order_by(MaintSparePart.part_name).all()]
+    if reorder:
+        rows_json = [r for r in rows_json if r["reorder_status"] == "REORDER NOW"]
+
+    headers = ["Part Code", "Part Name", "Machine", "Manufacturer", "Unit",
+               "Opening Qty", "Qty In", "Qty Out", "Current Stock", "Min Stock",
+               "Status", "Unit Price", "Stock Value", "Supplier", "Store Location",
+               "Last Purchase Date"]
+    rows = [[r["part_code"], r["part_name"], r["machine"], r["manufacturer"], r["unit"],
+             r["opening_qty"], r["qty_in"], r["qty_out"], r["current_stock"],
+             r["min_stock_level"], r["reorder_status"], r["unit_price"], r["stock_value"],
+             r["supplier"], r["store_location"], r["last_purchase_date"]] for r in rows_json]
+    data = _build_xlsx("Spare Parts", headers, rows)
+    return Response(content=data, media_type=_XLSX_MIME,
+                    headers={"Content-Disposition": 'attachment; filename="spare_parts_inventory.xlsx"'})

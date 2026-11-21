@@ -181,6 +181,7 @@
         </label>
         <div class="ml-auto flex items-center gap-3">
           <span class="text-xs text-metfraa-gray-500"><span x-text="filtered.length"></span> of <span x-text="assets.length"></span></span>
+          <a href="/maint/api/assets/excel" class="inline-flex items-center gap-1 text-sm font-semibold px-3 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700">⬇ Excel</a>
           <button @click="openNew()"
                   class="bg-metfraa-blue hover:bg-metfraa-blue-dark text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-sm">
             + Add asset
@@ -421,6 +422,7 @@
           <template x-for="a in assets" :key="a.id"><option :value="a.id" x-text="a.asset_code"></option></template></select>
       </div>
       <div class="ml-auto flex items-center gap-3">
+        <button @click="registerExcel()" class="inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700">⬇ Excel</button>
         <button x-show="bCategory==='Breakdown'" @click="viewPdf('/maint/api/breakdown/pdf'+bdQuery(), 'Breakdown Register', '/maint/api/breakdown/pdf/upload'+bdQuery())" class="text-xs font-semibold px-3 py-1.5 rounded-lg ring-1 ring-metfraa-blue text-metfraa-blue hover:bg-metfraa-blue/5">Register PDF</button>
         <span class="text-xs font-semibold px-3 py-1.5 rounded-lg"
           :class="bCategory==='Preventive' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'">
@@ -842,7 +844,10 @@
           </div>
         </div>
         <div class="bg-white rounded-xl shadow-sm border border-metfraa-gray-200 overflow-hidden">
-          <div class="px-5 py-3 border-b border-metfraa-gray-200"><h3 class="display font-bold text-metfraa-ink">Daily readings</h3></div>
+          <div class="px-5 py-3 border-b border-metfraa-gray-200 flex items-center justify-between">
+            <h3 class="display font-bold text-metfraa-ink">Daily readings</h3>
+            <a href="/maint/api/eb-excel" class="inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700">⬇ Excel</a>
+          </div>
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead><tr class="text-left border-b border-metfraa-gray-200 bg-metfraa-gray-50">
@@ -1521,6 +1526,13 @@ function maintApp() {
       }
     },
     async loadEvents() { const r = await fetch('/maint/api/events'); if (r.ok) this.events = await r.json(); },
+    registerExcel() {
+      const q = new URLSearchParams();
+      if (this.bCategory) q.set('category', this.bCategory);
+      if (this.bStatus) q.set('status', this.bStatus);
+      if (this.bAsset) q.set('asset_id', this.bAsset);
+      window.open('/maint/api/register/excel' + (q.toString() ? '?' + q.toString() : ''), '_blank');
+    },
     editEvent(e) {
       this.eForm = { id: e.id, asset_id: e.asset_id, event_date: e.event_date, category: e.category,
         status: e.status || (e.category === 'Breakdown' ? 'Open' : 'Completed'), reported_at: e.reported_at || '', restored_at: e.restored_at || '',
