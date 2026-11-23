@@ -237,6 +237,30 @@ PM_CHECKLIST_MIGRATIONS = [
 ]
 STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + PM_CHECKLIST_MIGRATIONS
 
+# Spare parts purchase indents. Mirror models.MaintIndent.
+INDENT_MIGRATIONS = [
+    "CREATE TABLE IF NOT EXISTS maint_indents ("
+    " id SERIAL PRIMARY KEY,"
+    " indent_no VARCHAR(40) UNIQUE,"
+    " date_of_request DATE,"
+    " department VARCHAR(160),"
+    " requested_by VARCHAR(200),"
+    " contact VARCHAR(200),"
+    " purpose VARCHAR(80),"
+    " purpose_other VARCHAR(200),"
+    " required_by DATE,"
+    " items JSON,"
+    " remarks TEXT,"
+    " status VARCHAR(30) NOT NULL DEFAULT 'Open',"
+    " notified BOOLEAN NOT NULL DEFAULT FALSE,"
+    " notified_at TIMESTAMP,"
+    " created_by VARCHAR(120),"
+    " created_at TIMESTAMP DEFAULT now(),"
+    " updated_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_indent_no ON maint_indents(indent_no)",
+]
+STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + INDENT_MIGRATIONS
+
 
 def run_startup_migrations() -> None:
     """Apply pending column additions. Runs on every startup — safe.

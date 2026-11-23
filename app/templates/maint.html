@@ -45,6 +45,9 @@
       <button @click="tab='spares'"
               :class="tab==='spares' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">Spare Parts</button>
+      <button @click="tab='indent'"
+              :class="tab==='indent' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
+              class="px-4 py-2.5 text-sm font-semibold border-b-2">Purchase Indent</button>
       <button @click="tab='report'; renderReport()"
               :class="tab==='report' ? 'text-metfraa-blue border-metfraa-blue' : 'text-metfraa-gray-500 border-transparent hover:text-metfraa-ink'"
               class="px-4 py-2.5 text-sm font-semibold border-b-2">Report</button>
@@ -1138,6 +1141,10 @@
 
   <div x-show="tab==='spares'" x-cloak>
     {% include "_spares_panel.html" %}
+  </div>
+
+  <div x-show="tab==='indent'" x-cloak>
+    {% include "_indent_panel.html" %}
   </div>
 
   <!-- ===================== REPORT ===================== -->

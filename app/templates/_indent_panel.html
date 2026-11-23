@@ -1,0 +1,210 @@
+<div x-data="indentApp()" x-init="init()" x-cloak>
+
+  <!-- toolbar -->
+  <div class="flex items-center gap-3 mb-4 flex-wrap">
+    <input x-model="q" @input.debounce.300ms="load()" placeholder="Search indent no, department, requester…"
+           class="flex-1 min-w-[12rem] text-sm rounded-lg border-metfraa-gray-300">
+    <span class="text-xs text-metfraa-gray-500" x-text="rows.length + ' indents'"></span>
+    <div class="flex-1"></div>
+    <button @click="openNew()" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold">+ New indent</button>
+  </div>
+
+  <p class="text-[11px] text-metfraa-gray-400 mb-3">
+    On creating an indent a notification email is sent automatically to:
+    <span class="font-semibold text-metfraa-gray-600" x-text="(recipients||[]).join(', ')"></span>
+  </p>
+
+  <!-- list -->
+  <div class="bg-white rounded-xl border border-metfraa-gray-200 overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-xs uppercase tracking-wide text-metfraa-gray-500 border-b border-metfraa-gray-200">
+          <th class="py-2.5 px-3">Indent No.</th>
+          <th class="py-2.5 px-3">Date</th>
+          <th class="py-2.5 px-3">Department</th>
+          <th class="py-2.5 px-3">Requested by</th>
+          <th class="py-2.5 px-3">Purpose</th>
+          <th class="py-2.5 px-3">Req. by</th>
+          <th class="py-2.5 px-3 text-center">Items</th>
+          <th class="py-2.5 px-3">Mail</th>
+          <th class="py-2.5 px-3 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="r in rows" :key="r.id">
+          <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
+            <td class="py-2 px-3 font-semibold text-metfraa-ink" x-text="r.indent_no"></td>
+            <td class="py-2 px-3 text-metfraa-gray-600" x-text="r.date_of_request || '—'"></td>
+            <td class="py-2 px-3 text-metfraa-gray-600" x-text="r.department || '—'"></td>
+            <td class="py-2 px-3 text-metfraa-gray-600" x-text="r.requested_by || '—'"></td>
+            <td class="py-2 px-3 text-metfraa-gray-600" x-text="(r.purpose==='Other' && r.purpose_other) ? ('Other: '+r.purpose_other) : (r.purpose || '—')"></td>
+            <td class="py-2 px-3 text-metfraa-gray-600" x-text="r.required_by || '—'"></td>
+            <td class="py-2 px-3 text-center" x-text="r.item_count"></td>
+            <td class="py-2 px-3">
+              <span x-show="r.notified" class="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700">✓ sent</span>
+              <span x-show="!r.notified" class="text-[11px] text-metfraa-gray-400">—</span>
+            </td>
+            <td class="py-2 px-3 text-right whitespace-nowrap">
+              <button @click="openEdit(r)" class="text-xs font-semibold text-metfraa-blue hover:underline">View</button>
+              <a :href="'/indent/api/'+r.id+'/excel'" class="text-xs font-semibold text-green-700 hover:underline ml-2">Excel</a>
+              <button @click="resend(r)" class="text-xs font-semibold text-amber-700 hover:underline ml-2">Resend</button>
+              <button @click="del(r)" class="text-xs font-semibold text-red-600 hover:underline ml-2">Delete</button>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="rows.length===0"><td colspan="9" class="py-10 text-center text-metfraa-gray-400 text-sm">No indents yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- form modal -->
+  <div x-show="showForm" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto p-4" @click.self="showForm=false">
+    <div class="bg-white rounded-xl w-full max-w-5xl my-6 p-5 shadow-xl">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="display text-xl text-metfraa-ink" x-text="form.id ? ('Indent '+form.indent_no) : 'New spare parts indent'"></h3>
+        <button @click="showForm=false" class="text-metfraa-gray-400 text-2xl leading-none">&times;</button>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+        <label class="block"><span class="lbl">Date of request</span>
+          <input type="date" x-model="form.date_of_request" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Department / Section</span>
+          <input x-model="form.department" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Requested by (Name &amp; Emp. ID)</span>
+          <input x-model="form.requested_by" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Contact No. / Email</span>
+          <input x-model="form.contact" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Purpose</span>
+          <select x-model="form.purpose" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300">
+            <option value="">—</option>
+            <template x-for="p in purposes" :key="p"><option :value="p" x-text="p"></option></template>
+          </select></label>
+        <label class="block" x-show="form.purpose==='Other'"><span class="lbl">Other (specify)</span>
+          <input x-model="form.purpose_other" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Required by (date)</span>
+          <input type="date" x-model="form.required_by" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+      </div>
+
+      <!-- line items -->
+      <div class="flex items-center justify-between mb-2">
+        <span class="lbl">Items</span>
+        <button @click="addRow()" class="text-xs font-semibold text-metfraa-blue hover:underline">+ Add row</button>
+      </div>
+      <div class="overflow-x-auto border border-metfraa-gray-200 rounded-lg mb-4">
+        <table class="w-full text-xs">
+          <thead><tr class="bg-metfraa-gray-50 text-left text-metfraa-gray-500 border-b border-metfraa-gray-200">
+            <th class="px-2 py-1.5 w-8">#</th>
+            <th class="px-2 py-1.5">Part / Description</th>
+            <th class="px-2 py-1.5">Part No.</th>
+            <th class="px-2 py-1.5">Make / Spec</th>
+            <th class="px-2 py-1.5">Name of m/c</th>
+            <th class="px-2 py-1.5 w-16">Unit</th>
+            <th class="px-2 py-1.5 w-16">Qty</th>
+            <th class="px-2 py-1.5 w-16">Stock</th>
+            <th class="px-2 py-1.5">Remarks</th>
+            <th class="px-2 py-1.5"></th>
+          </tr></thead>
+          <tbody>
+            <template x-for="(row, idx) in form.items" :key="idx">
+              <tr class="border-b border-metfraa-gray-100 align-top">
+                <td class="px-2 py-1.5 text-metfraa-gray-500" x-text="idx+1"></td>
+                <td class="px-2 py-1.5">
+                  <input list="spareList" x-model="row.part_name" @change="fillFromSpare(row)" placeholder="type or pick…" class="w-40 text-xs rounded border-metfraa-gray-300 py-1">
+                </td>
+                <td class="px-2 py-1.5"><input x-model="row.part_no" class="w-24 text-xs rounded border-metfraa-gray-300 py-1"></td>
+                <td class="px-2 py-1.5"><input x-model="row.make" class="w-28 text-xs rounded border-metfraa-gray-300 py-1"></td>
+                <td class="px-2 py-1.5"><input x-model="row.machine" class="w-28 text-xs rounded border-metfraa-gray-300 py-1"></td>
+                <td class="px-2 py-1.5"><input x-model="row.unit" class="w-14 text-xs rounded border-metfraa-gray-300 py-1"></td>
+                <td class="px-2 py-1.5"><input x-model="row.qty" type="number" min="0" class="w-14 text-xs rounded border-metfraa-gray-300 py-1"></td>
+                <td class="px-2 py-1.5"><input x-model="row.stock" type="number" min="0" class="w-14 text-xs rounded border-metfraa-gray-300 py-1"></td>
+                <td class="px-2 py-1.5"><input x-model="row.remarks" class="w-28 text-xs rounded border-metfraa-gray-300 py-1"></td>
+                <td class="px-2 py-1.5"><button @click="form.items.splice(idx,1)" class="text-red-500 hover:text-red-700">✕</button></td>
+              </tr>
+            </template>
+            <tr x-show="form.items.length===0"><td colspan="10" class="px-2 py-6 text-center text-metfraa-gray-400">No items — click “+ Add row”.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <datalist id="spareList">
+        <template x-for="s in spares" :key="s.id"><option :value="s.part_name"></option></template>
+      </datalist>
+
+      <label class="block mb-4"><span class="lbl">Remarks (overall)</span>
+        <input x-model="form.remarks" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+
+      <p x-show="formErr" class="text-xs font-semibold text-red-600 mb-2" x-text="formErr"></p>
+      <p class="text-[11px] text-metfraa-gray-400 mb-3" x-show="!form.id">On save, a notification email goes to: <span x-text="(recipients||[]).join(', ')"></span></p>
+      <div class="flex items-center justify-end gap-2">
+        <button @click="showForm=false" class="px-4 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-semibold">Cancel</button>
+        <button @click="save()" :disabled="saving" class="px-5 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
+          <span x-show="!saving" x-text="form.id ? 'Update indent' : 'Create & notify'"></span><span x-show="saving">Saving…</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function indentApp() {
+      return {
+        rows: [], recipients: [], purposes: [], spares: [], q: '',
+        showForm: false, saving: false, formErr: '', form: {},
+        init() { this.load(); this.loadSpares(); },
+        blank() {
+          const today = new Date().toISOString().slice(0, 10);
+          return { id: null, indent_no: '', date_of_request: today, department: '', requested_by: '',
+                   contact: '', purpose: '', purpose_other: '', required_by: '', remarks: '', items: [] };
+        },
+        async load() {
+          try {
+            const r = await fetch('/indent/api/list' + (this.q ? '?q=' + encodeURIComponent(this.q) : ''));
+            if (r.ok) { const d = await r.json(); this.rows = d.indents || []; this.recipients = d.recipients || []; this.purposes = d.purposes || []; }
+          } catch (e) {}
+        },
+        async loadSpares() {
+          try { const r = await fetch('/spares/api/list'); if (r.ok) { const d = await r.json(); this.spares = d.parts || d.rows || d || []; } } catch (e) {}
+        },
+        addRow() { this.form.items.push({ part_name: '', part_no: '', make: '', machine: '', unit: '', qty: '', stock: '', remarks: '' }); },
+        fillFromSpare(row) {
+          const s = this.spares.find(x => (x.part_name || '').toLowerCase() === (row.part_name || '').toLowerCase());
+          if (!s) return;
+          if (!row.part_no) row.part_no = s.part_code || '';
+          if (!row.make) row.make = s.manufacturer || '';
+          if (!row.machine) row.machine = s.machine || '';
+          if (!row.unit) row.unit = s.unit || '';
+          if (row.stock === '' || row.stock == null) row.stock = (s.current_stock != null ? s.current_stock : '');
+        },
+        openNew() { this.form = this.blank(); this.addRow(); this.formErr = ''; this.showForm = true; },
+        async openEdit(r) {
+          this.formErr = '';
+          try { const res = await fetch('/indent/api/' + r.id); if (res.ok) { const d = await res.json(); d.items = (d.items || []).map(x => ({ ...x })); this.form = d; this.showForm = true; } } catch (e) {}
+        },
+        async save() {
+          if (!this.form.items.length || !this.form.items.some(i => (i.part_name || '').trim())) { this.formErr = 'Add at least one item with a part name'; return; }
+          this.saving = true; this.formErr = '';
+          try {
+            const body = { ...this.form, items: this.form.items.filter(i => (i.part_name || '').trim()) };
+            const res = await fetch('/indent/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const d = await res.json();
+            if (!res.ok) throw new Error(d.detail || 'Save failed');
+            this.showForm = false;
+            await this.load();
+            if (typeof toast === 'function') {
+              toast(d.indent.indent_no + (d.emailed ? ' created — email sent' : ' created (email not sent — check SMTP)'), d.emailed ? 'success' : 'error');
+            }
+          } catch (e) { this.formErr = e.message || 'Save failed'; }
+          finally { this.saving = false; }
+        },
+        async resend(r) {
+          try { const res = await fetch('/indent/api/' + r.id + '/notify', { method: 'POST' }); const d = await res.json();
+            if (typeof toast === 'function') toast(d.emailed ? 'Email re-sent' : 'Email not sent — check SMTP', d.emailed ? 'success' : 'error');
+            await this.load();
+          } catch (e) {}
+        },
+        async del(r) {
+          if (!confirm('Delete indent ' + r.indent_no + '?')) return;
+          try { await fetch('/indent/api/' + r.id + '/delete', { method: 'POST' }); await this.load(); } catch (e) {}
+        },
+      };
+    }
+  </script>
+</div>

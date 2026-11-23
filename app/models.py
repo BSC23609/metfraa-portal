@@ -1382,3 +1382,27 @@ class MaintPmCheck(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     asset = relationship("MaintAsset")
+
+
+class MaintIndent(Base):
+    """A Spare Parts Purchase Indent request (header + line items)."""
+    __tablename__ = "maint_indents"
+
+    id = Column(Integer, primary_key=True)
+    indent_no = Column(String(40), unique=True, index=True)
+    date_of_request = Column(Date, nullable=True)
+    department = Column(String(160), nullable=True)
+    requested_by = Column(String(200), nullable=True)   # Name & Emp. ID
+    contact = Column(String(200), nullable=True)         # Contact No. / Email
+    purpose = Column(String(80), nullable=True)          # Breakdown / Preventive / …
+    purpose_other = Column(String(200), nullable=True)
+    required_by = Column(Date, nullable=True)
+    # [{sn, part_name, part_no, make, machine, unit, qty, stock, remarks}]
+    items = Column(JSON, nullable=True)
+    remarks = Column(Text, nullable=True)
+    status = Column(String(30), nullable=False, default="Open")
+    notified = Column(Boolean, default=False, nullable=False)
+    notified_at = Column(DateTime, nullable=True)
+    created_by = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
