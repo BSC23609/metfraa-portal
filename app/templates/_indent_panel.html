@@ -10,7 +10,7 @@
   </div>
 
   <p class="text-[11px] text-metfraa-gray-400 mb-3">
-    On creating an indent a notification email is sent automatically —
+    New indents are saved as a draft first. After you verify a draft, use <b>Send</b> to email it —
     <span class="text-metfraa-gray-600"><b>To:</b> <span x-text="(to||[]).join(', ')"></span></span>
     <span class="text-metfraa-gray-600 ml-2"><b>Cc:</b> <span x-text="(cc||[]).join(', ')"></span></span>
   </p>
@@ -43,12 +43,13 @@
             <td class="py-2 px-3 text-center" x-text="r.item_count"></td>
             <td class="py-2 px-3">
               <span x-show="r.notified" class="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700">✓ sent</span>
-              <span x-show="!r.notified" class="text-[11px] text-metfraa-gray-400">—</span>
+              <span x-show="!r.notified" class="inline-flex items-center text-[11px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">Draft</span>
             </td>
             <td class="py-2 px-3 text-right whitespace-nowrap">
               <button @click="openEdit(r)" class="text-xs font-semibold text-metfraa-blue hover:underline">View</button>
               <a :href="'/indent/api/'+r.id+'/excel'" class="text-xs font-semibold text-green-700 hover:underline ml-2">Excel</a>
-              <button @click="resend(r)" class="text-xs font-semibold text-amber-700 hover:underline ml-2">Resend</button>
+              <button x-show="!r.notified" @click="send(r)" class="text-xs font-bold text-white bg-metfraa-blue px-2.5 py-1 rounded ml-2 hover:opacity-90">Send</button>
+              <button x-show="r.notified" @click="resend(r)" class="text-xs font-semibold text-amber-700 hover:underline ml-2">Resend</button>
               <button @click="del(r)" class="text-xs font-semibold text-red-600 hover:underline ml-2">Delete</button>
             </td>
           </tr>
@@ -69,12 +70,12 @@
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
         <label class="block"><span class="lbl">Date of request</span>
           <input type="date" x-model="form.date_of_request" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
-        <label class="block"><span class="lbl">Department / Section</span>
-          <input x-model="form.department" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
-        <label class="block"><span class="lbl">Requested by (Name &amp; Emp. ID)</span>
-          <input x-model="form.requested_by" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
-        <label class="block"><span class="lbl">Contact No. / Email</span>
-          <input x-model="form.contact" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Department / Section <span class="text-red-500">*</span></span>
+          <input x-model="form.department" required class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Requested by (Name &amp; Emp. ID) <span class="text-red-500">*</span></span>
+          <input x-model="form.requested_by" required class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <label class="block"><span class="lbl">Contact No. / Email <span class="text-red-500">*</span></span>
+          <input x-model="form.contact" required class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
         <label class="block"><span class="lbl">Purpose</span>
           <select x-model="form.purpose" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300">
             <option value="">—</option>
@@ -116,7 +117,12 @@
                 <td class="px-2 py-1.5"><input x-model="row.make" class="w-28 text-xs rounded border-metfraa-gray-300 py-1"></td>
                 <td class="px-2 py-1.5"><input x-model="row.machine" class="w-28 text-xs rounded border-metfraa-gray-300 py-1"></td>
                 <td class="px-2 py-1.5"><input x-model="row.unit" class="w-14 text-xs rounded border-metfraa-gray-300 py-1"></td>
-                <td class="px-2 py-1.5"><input x-model="row.qty" type="number" min="0" class="w-14 text-xs rounded border-metfraa-gray-300 py-1"></td>
+                <td class="px-2 py-1.5">
+                  <select x-model="row.qty" class="w-16 text-xs rounded border-metfraa-gray-300 py-1">
+                    <option value="">—</option>
+                    <template x-for="n in qtyOptions" :key="n"><option :value="n" x-text="n"></option></template>
+                  </select>
+                </td>
                 <td class="px-2 py-1.5"><input x-model="row.stock" type="number" min="0" class="w-14 text-xs rounded border-metfraa-gray-300 py-1"></td>
                 <td class="px-2 py-1.5"><input x-model="row.remarks" class="w-28 text-xs rounded border-metfraa-gray-300 py-1"></td>
                 <td class="px-2 py-1.5"><button @click="form.items.splice(idx,1)" class="text-red-500 hover:text-red-700">✕</button></td>
@@ -134,11 +140,11 @@
         <input x-model="form.remarks" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
 
       <p x-show="formErr" class="text-xs font-semibold text-red-600 mb-2" x-text="formErr"></p>
-      <p class="text-[11px] text-metfraa-gray-400 mb-3" x-show="!form.id">On save, a notification email goes — <b>To:</b> <span x-text="(to||[]).join(', ')"></span> · <b>Cc:</b> <span x-text="(cc||[]).join(', ')"></span></p>
+      <p class="text-[11px] text-metfraa-gray-400 mb-3">Saved as a draft. It appears in the list below — verify it, then use <b>Send</b> to email it to <span x-text="(to||[]).join(', ')"></span> (Cc <span x-text="(cc||[]).join(', ')"></span>). No email is sent yet.</p>
       <div class="flex items-center justify-end gap-2">
         <button @click="showForm=false" class="px-4 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-semibold">Cancel</button>
         <button @click="save()" :disabled="saving" class="px-5 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
-          <span x-show="!saving" x-text="form.id ? 'Update indent' : 'Create & notify'"></span><span x-show="saving">Saving…</span>
+          <span x-show="!saving" x-text="form.id ? 'Update draft' : 'Save draft'"></span><span x-show="saving">Saving…</span>
         </button>
       </div>
     </div>
@@ -148,12 +154,14 @@
     function indentApp() {
       return {
         rows: [], to: [], cc: [], purposes: [], spares: [], q: '',
+        qtyOptions: Array.from({ length: 100 }, (_, i) => i + 1),
         showForm: false, saving: false, formErr: '', form: {},
         init() { this.load(); this.loadSpares(); },
         blank() {
           const today = new Date().toISOString().slice(0, 10);
-          return { id: null, indent_no: '', date_of_request: today, department: '', requested_by: '',
-                   contact: '', purpose: '', purpose_other: '', required_by: '', remarks: '', items: [] };
+          return { id: null, indent_no: '', date_of_request: today, department: 'Maintenance',
+                   requested_by: 'Ajoy Kumar Khatua & MET79', contact: '9002039036',
+                   purpose: '', purpose_other: '', required_by: '', remarks: '', items: [] };
         },
         async load() {
           try {
@@ -180,6 +188,9 @@
           try { const res = await fetch('/indent/api/' + r.id); if (res.ok) { const d = await res.json(); d.items = (d.items || []).map(x => ({ ...x })); this.form = d; this.showForm = true; } } catch (e) {}
         },
         async save() {
+          if (!(this.form.department || '').trim()) { this.formErr = 'Department / Section is required'; return; }
+          if (!(this.form.requested_by || '').trim()) { this.formErr = 'Requested by (Name & Emp. ID) is required'; return; }
+          if (!(this.form.contact || '').trim()) { this.formErr = 'Contact No. / Email is required'; return; }
           if (!this.form.items.length || !this.form.items.some(i => (i.part_name || '').trim())) { this.formErr = 'Add at least one item with a part name'; return; }
           this.saving = true; this.formErr = '';
           try {
@@ -190,10 +201,19 @@
             this.showForm = false;
             await this.load();
             if (typeof toast === 'function') {
-              toast(d.indent.indent_no + (d.emailed ? ' created — email sent' : ' created (email not sent — check SMTP)'), d.emailed ? 'success' : 'error');
+              toast(d.indent.indent_no + ' saved as draft — verify it, then press Send to email it', 'success');
             }
           } catch (e) { this.formErr = e.message || 'Save failed'; }
           finally { this.saving = false; }
+        },
+        async send(r) {
+          if (!confirm('Send indent ' + r.indent_no + ' now?\nAn email will go to the stores / purchase recipients.')) return;
+          try {
+            const res = await fetch('/indent/api/' + r.id + '/notify', { method: 'POST' });
+            const d = await res.json();
+            if (typeof toast === 'function') toast(d.emailed ? (r.indent_no + ' sent — email delivered') : 'Email not sent — check SMTP', d.emailed ? 'success' : 'error');
+            await this.load();
+          } catch (e) {}
         },
         async resend(r) {
           try { const res = await fetch('/indent/api/' + r.id + '/notify', { method: 'POST' }); const d = await res.json();

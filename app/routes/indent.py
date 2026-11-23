@@ -220,6 +220,7 @@ def api_save(payload: IndentIn, user: Employee = Depends(get_current_user),
     if new:
         i.indent_no = _next_indent_no(db)
         i.created_by = getattr(user, "name", None)
+        i.status = "draft"
         db.add(i)
     i.date_of_request = _pdate(payload.date_of_request) or (i.date_of_request or date.today())
     i.department = (payload.department or "").strip() or None
@@ -235,16 +236,10 @@ def api_save(payload: IndentIn, user: Employee = Depends(get_current_user),
     db.commit()
     db.refresh(i)
 
-    emailed = False
-    if new:
-        emailed = _send_indent_email(i)
-        if emailed:
-            i.notified = True
-            i.notified_at = datetime.utcnow()
-            db.commit()
-            db.refresh(i)
+    # Draft workflow: saving never emails. The indent lands in the list as a
+    # draft; the user verifies it and sends it from there (api_notify).
     to, cc = _notify_recipients()
-    return {"ok": True, "indent": _json(i), "emailed": emailed, "to": to, "cc": cc}
+    return {"ok": True, "indent": _json(i), "emailed": False, "to": to, "cc": cc}
 
 
 @router.post("/api/{iid}/notify")
