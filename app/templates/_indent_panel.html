@@ -116,13 +116,13 @@
                 <td class="px-2 py-1.5"><input x-model="row.part_no" class="w-24 text-xs rounded border-metfraa-gray-300 py-1"></td>
                 <td class="px-2 py-1.5"><input x-model="row.make" class="w-28 text-xs rounded border-metfraa-gray-300 py-1"></td>
                 <td class="px-2 py-1.5"><input x-model="row.machine" class="w-28 text-xs rounded border-metfraa-gray-300 py-1"></td>
-                <td class="px-2 py-1.5"><input x-model="row.unit" class="w-14 text-xs rounded border-metfraa-gray-300 py-1"></td>
                 <td class="px-2 py-1.5">
-                  <select x-model="row.qty" class="w-16 text-xs rounded border-metfraa-gray-300 py-1">
+                  <select x-model="row.unit" class="w-20 text-xs rounded border-metfraa-gray-300 py-1">
                     <option value="">—</option>
-                    <template x-for="n in qtyOptions" :key="n"><option :value="n" x-text="n"></option></template>
+                    <template x-for="u in unitOptions" :key="u"><option :value="u" x-text="u"></option></template>
                   </select>
                 </td>
+                <td class="px-2 py-1.5"><input x-model="row.qty" type="number" min="0" class="w-14 text-xs rounded border-metfraa-gray-300 py-1"></td>
                 <td class="px-2 py-1.5"><input x-model="row.stock" type="number" min="0" class="w-14 text-xs rounded border-metfraa-gray-300 py-1"></td>
                 <td class="px-2 py-1.5"><input x-model="row.remarks" class="w-28 text-xs rounded border-metfraa-gray-300 py-1"></td>
                 <td class="px-2 py-1.5"><button @click="form.items.splice(idx,1)" class="text-red-500 hover:text-red-700">✕</button></td>
@@ -154,7 +154,7 @@
     function indentApp() {
       return {
         rows: [], to: [], cc: [], purposes: [], spares: [], q: '',
-        qtyOptions: Array.from({ length: 100 }, (_, i) => i + 1),
+        unitOptions: ['Nos', 'Set', 'Pair', 'Mtr', 'Ft', 'Kg', 'Gram', 'Ltr', 'Roll', 'Box', 'Packet', 'Sheet', 'Can', 'Bottle', 'Tube'],
         showForm: false, saving: false, formErr: '', form: {},
         init() { this.load(); this.loadSpares(); },
         blank() {
