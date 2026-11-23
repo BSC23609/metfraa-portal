@@ -10,8 +10,9 @@
   </div>
 
   <p class="text-[11px] text-metfraa-gray-400 mb-3">
-    On creating an indent a notification email is sent automatically to:
-    <span class="font-semibold text-metfraa-gray-600" x-text="(recipients||[]).join(', ')"></span>
+    On creating an indent a notification email is sent automatically —
+    <span class="text-metfraa-gray-600"><b>To:</b> <span x-text="(to||[]).join(', ')"></span></span>
+    <span class="text-metfraa-gray-600 ml-2"><b>Cc:</b> <span x-text="(cc||[]).join(', ')"></span></span>
   </p>
 
   <!-- list -->
@@ -133,7 +134,7 @@
         <input x-model="form.remarks" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
 
       <p x-show="formErr" class="text-xs font-semibold text-red-600 mb-2" x-text="formErr"></p>
-      <p class="text-[11px] text-metfraa-gray-400 mb-3" x-show="!form.id">On save, a notification email goes to: <span x-text="(recipients||[]).join(', ')"></span></p>
+      <p class="text-[11px] text-metfraa-gray-400 mb-3" x-show="!form.id">On save, a notification email goes — <b>To:</b> <span x-text="(to||[]).join(', ')"></span> · <b>Cc:</b> <span x-text="(cc||[]).join(', ')"></span></p>
       <div class="flex items-center justify-end gap-2">
         <button @click="showForm=false" class="px-4 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-semibold">Cancel</button>
         <button @click="save()" :disabled="saving" class="px-5 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
@@ -146,7 +147,7 @@
   <script>
     function indentApp() {
       return {
-        rows: [], recipients: [], purposes: [], spares: [], q: '',
+        rows: [], to: [], cc: [], purposes: [], spares: [], q: '',
         showForm: false, saving: false, formErr: '', form: {},
         init() { this.load(); this.loadSpares(); },
         blank() {
@@ -157,7 +158,7 @@
         async load() {
           try {
             const r = await fetch('/indent/api/list' + (this.q ? '?q=' + encodeURIComponent(this.q) : ''));
-            if (r.ok) { const d = await r.json(); this.rows = d.indents || []; this.recipients = d.recipients || []; this.purposes = d.purposes || []; }
+            if (r.ok) { const d = await r.json(); this.rows = d.indents || []; this.to = d.to || []; this.cc = d.cc || []; this.purposes = d.purposes || []; }
           } catch (e) {}
         },
         async loadSpares() {

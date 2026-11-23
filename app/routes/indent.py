@@ -22,8 +22,9 @@ from ..models import Employee, MaintIndent
 
 router = APIRouter(prefix="/indent", tags=["indent"])
 
-DEFAULT_NOTIFY = ("Info@metfraa.com,Thangaraj@metfraa.com,"
-                  "Stores@metfraa.com,purchase.plant@metfraa.com")
+# To = who the indent is addressed to; CC = who is kept in the loop.
+DEFAULT_TO = "Stores@metfraa.com,purchase.plant@metfraa.com"
+DEFAULT_CC = "Info@metfraa.com,Thangaraj@metfraa.com"
 
 PURPOSES = ["Breakdown", "Preventive Maintenance", "Scheduled Overhaul",
             "Replacement", "Stock Replenishment", "Other"]
@@ -34,9 +35,23 @@ def _guard(db: Session, user: Employee):
         raise HTTPException(status_code=403, detail="Maintenance admin access required")
 
 
+def _split(raw):
+    return [e.strip() for e in (raw or "").replace(";", ",").split(",") if e.strip()]
+
+
+def _notify_to():
+    return _split(os.getenv("INDENT_NOTIFY_TO") or DEFAULT_TO)
+
+
+def _notify_cc():
+    return _split(os.getenv("INDENT_NOTIFY_CC") or DEFAULT_CC)
+
+
 def _notify_recipients():
-    raw = os.getenv("INDENT_NOTIFY_EMAILS") or DEFAULT_NOTIFY
-    return [e.strip() for e in raw.replace(";", ",").split(",") if e.strip()]
+    # Legacy env override still forces the whole To list if set.
+    legacy = os.getenv("INDENT_NOTIFY_EMAILS")
+    to = _split(legacy) if legacy else _notify_to()
+    return to, _notify_cc()
 
 
 def _iso(d):
@@ -130,22 +145,24 @@ def _esc(s):
 
 def _send_indent_email(i: MaintIndent) -> bool:
     from ..services.email_service import send_email_async
-    recipients = _notify_recipients()
-    if not recipients:
+    to_list, cc_list = _notify_recipients()
+    if not to_list and cc_list:          # ensure at least one To
+        to_list, cc_list = cc_list, []
+    if not to_list:
         return False
     subject = f"New Spare Parts Indent — {i.indent_no} ({len(i.items or [])} item/s)"
     html = _indent_html(i)
     text = f"Spare Parts Indent {i.indent_no} raised. {len(i.items or [])} item(s). Please see the portal."
-    to, cc = recipients[0], recipients[1:]
+    to = ", ".join(to_list)
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            asyncio.create_task(send_email_async(to, subject, html, text, cc=cc))
+            asyncio.create_task(send_email_async(to, subject, html, text, cc=cc_list))
             return True
     except RuntimeError:
         pass
     try:
-        return asyncio.run(send_email_async(to, subject, html, text, cc=cc))
+        return asyncio.run(send_email_async(to, subject, html, text, cc=cc_list))
     except Exception:
         return False
 
@@ -177,7 +194,8 @@ def api_list(q: str | None = None, user: Employee = Depends(get_current_user),
                            MaintIndent.department.ilike(like),
                            MaintIndent.requested_by.ilike(like)))
     rows = qy.order_by(MaintIndent.id.desc()).all()
-    return {"indents": [_json(i) for i in rows], "recipients": _notify_recipients(),
+    to, cc = _notify_recipients()
+    return {"indents": [_json(i) for i in rows], "to": to, "cc": cc,
             "purposes": PURPOSES}
 
 
@@ -225,8 +243,8 @@ def api_save(payload: IndentIn, user: Employee = Depends(get_current_user),
             i.notified_at = datetime.utcnow()
             db.commit()
             db.refresh(i)
-    return {"ok": True, "indent": _json(i), "emailed": emailed,
-            "recipients": _notify_recipients()}
+    to, cc = _notify_recipients()
+    return {"ok": True, "indent": _json(i), "emailed": emailed, "to": to, "cc": cc}
 
 
 @router.post("/api/{iid}/notify")
@@ -241,7 +259,8 @@ def api_notify(iid: int, user: Employee = Depends(get_current_user),
         i.notified = True
         i.notified_at = datetime.utcnow()
         db.commit()
-    return {"ok": True, "emailed": emailed, "recipients": _notify_recipients()}
+    to, cc = _notify_recipients()
+    return {"ok": True, "emailed": emailed, "to": to, "cc": cc}
 
 
 @router.post("/api/{iid}/delete")

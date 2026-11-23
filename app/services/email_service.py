@@ -47,7 +47,9 @@ async def send_email_async(
             except Exception as e:
                 print(f"[email] Failed to add attachment: {e}")
 
-    recipients = [to] + (cc or [])
+    # `to` may be a comma-separated list of addresses; every one must be in the
+    # SMTP envelope recipients (the header alone does not deliver).
+    recipients = [t.strip() for t in str(to).split(",") if t.strip()] + (cc or [])
 
     try:
         await aiosmtplib.send(
