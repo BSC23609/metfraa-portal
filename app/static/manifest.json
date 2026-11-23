@@ -11,23 +11,23 @@
   "theme_color": "#0a1628",
   "icons": [
     {
-      "src": "/static/icons/icon-192.png",
+      "src": "/static/icons/icon-192.png?v=2",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/static/icons/icon-512.png",
+      "src": "/static/icons/icon-512.png?v=2",
       "sizes": "512x512",
       "type": "image/png"
     },
     {
-      "src": "/static/icons/maskable-192.png",
+      "src": "/static/icons/maskable-192.png?v=2",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/static/icons/maskable-512.png",
+      "src": "/static/icons/maskable-512.png?v=2",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -39,7 +39,7 @@
       "url": "/dashboard",
       "icons": [
         {
-          "src": "/static/icons/icon-192.png",
+          "src": "/static/icons/icon-192.png?v=2",
           "sizes": "192x192"
         }
       ]
@@ -49,7 +49,7 @@
       "url": "/expense/",
       "icons": [
         {
-          "src": "/static/icons/icon-192.png",
+          "src": "/static/icons/icon-192.png?v=2",
           "sizes": "192x192"
         }
       ]
@@ -59,7 +59,7 @@
       "url": "/ehs/",
       "icons": [
         {
-          "src": "/static/icons/icon-192.png",
+          "src": "/static/icons/icon-192.png?v=2",
           "sizes": "192x192"
         }
       ]

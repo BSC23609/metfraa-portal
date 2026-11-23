@@ -2,7 +2,7 @@
    Network-first for everything (this app changes often and we've fought
    stale caches before); cache fallback only for static assets + an
    offline notice for pages. Bump VERSION to force-refresh all clients. */
-const VERSION = "portal-v1";
+const VERSION = "portal-v2";
 const STATIC_CACHE = `static-${VERSION}`;
 
 self.addEventListener("install", (e) => self.skipWaiting());
