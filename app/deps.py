@@ -35,8 +35,16 @@ def issue_session_token(employee: Employee) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
-def set_session_cookie(response: Response, token: str) -> None:
-    """Attach the session cookie to a response (login/change-password success)."""
+def set_session_cookie(response: Response, token: str, embedded: bool = False) -> None:
+    """Attach the session cookie to a response (login/change-password success).
+
+    embedded: opened in a tab inside the group hub. There the browser only keeps a SameSite=None,
+    Partitioned cookie, sent only while the hub is the page around the portal (no other site can use it).
+    """
+    if embedded:
+        response.headers.append("set-cookie", f"{SESSION_COOKIE}={token}; Max-Age={JWT_EXPIRY_HOURS * 3600}; "
+                                              "Path=/; HttpOnly; Secure; SameSite=None; Partitioned")
+        return
     response.set_cookie(
         SESSION_COOKIE,
         token,

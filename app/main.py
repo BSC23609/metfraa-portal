@@ -113,6 +113,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+
+@app.middleware("http")
+async def _hub_frame(request: Request, call_next):
+    # The group hub (app.thebharatsteelgroup.com) may show the portal in its own tabs; no other site may frame it.
+    resp = await call_next(request)
+    resp.headers["Content-Security-Policy"] = ("frame-ancestors 'self' https://app.thebharatsteelgroup.com "
+                                               "https://bsg-hub-one.vercel.app")
+    return resp
+
+
 _STATIC = pathlib.Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 # EHS parity assets — reference served these at /css /js /img; prefixed with /ehs.

@@ -261,7 +261,7 @@ def group_sso(
     target = next if (next.startswith("/") and not next.startswith("//")) else "/"
     response = RedirectResponse(url=target, status_code=303)
     response.headers["Referrer-Policy"] = "no-referrer"
-    set_session_cookie(response, issue_session_token(emp))
+    set_session_cookie(response, issue_session_token(emp), embedded=request.query_params.get("embed") == "1")
     return response
 
 
