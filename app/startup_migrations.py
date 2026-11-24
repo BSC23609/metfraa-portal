@@ -305,6 +305,49 @@ SALES_TRAINING_MIGRATIONS = [
 STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + SALES_TRAINING_MIGRATIONS
 
 
+DESIGN_TRAINING_MIGRATIONS = [
+    "CREATE TABLE IF NOT EXISTS design_lessons ("
+    " id SERIAL PRIMARY KEY,"
+    " code VARCHAR(40) UNIQUE,"
+    " track VARCHAR(80) NOT NULL,"
+    " track_order INTEGER NOT NULL DEFAULT 0,"
+    " sort_order INTEGER NOT NULL DEFAULT 0,"
+    " title VARCHAR(200) NOT NULL,"
+    " summary VARCHAR(300),"
+    " body TEXT,"
+    " est_minutes INTEGER DEFAULT 5,"
+    " level VARCHAR(24) DEFAULT 'All levels',"
+    " active BOOLEAN NOT NULL DEFAULT TRUE,"
+    " created_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_design_lesson_code ON design_lessons(code)",
+    "CREATE TABLE IF NOT EXISTS design_quiz_questions ("
+    " id SERIAL PRIMARY KEY,"
+    " code VARCHAR(40) UNIQUE,"
+    " sort_order INTEGER NOT NULL DEFAULT 0,"
+    " question TEXT NOT NULL,"
+    " options JSON,"
+    " correct_id VARCHAR(8) NOT NULL,"
+    " explanation TEXT,"
+    " active BOOLEAN NOT NULL DEFAULT TRUE)",
+    "CREATE TABLE IF NOT EXISTS design_lesson_progress ("
+    " id SERIAL PRIMARY KEY,"
+    " employee_id INTEGER NOT NULL REFERENCES employees(id),"
+    " lesson_id INTEGER NOT NULL REFERENCES design_lessons(id),"
+    " completed_at TIMESTAMP DEFAULT now(),"
+    " CONSTRAINT uq_design_progress UNIQUE (employee_id, lesson_id))",
+    "CREATE INDEX IF NOT EXISTS idx_design_progress_emp ON design_lesson_progress(employee_id)",
+    "CREATE TABLE IF NOT EXISTS design_quiz_attempts ("
+    " id SERIAL PRIMARY KEY,"
+    " employee_id INTEGER NOT NULL REFERENCES employees(id),"
+    " score INTEGER NOT NULL DEFAULT 0,"
+    " total INTEGER NOT NULL DEFAULT 0,"
+    " answers JSON,"
+    " attempted_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_design_attempt_emp ON design_quiz_attempts(employee_id)",
+]
+STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + DESIGN_TRAINING_MIGRATIONS
+
+
 def run_startup_migrations() -> None:
     """Apply pending column additions. Runs on every startup — safe.
 

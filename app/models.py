@@ -1462,3 +1462,59 @@ class SalesQuizAttempt(Base):
     total = Column(Integer, nullable=False, default=0)
     answers = Column(JSON, nullable=True)               # {question_code: chosen_id}
     attempted_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ---------------------------------------------------------------- Design Training
+class DesignLesson(Base):
+    """A lesson (chapter) in the Metfraa design-training course."""
+    __tablename__ = "design_lessons"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(40), unique=True, index=True)
+    track = Column(String(80), nullable=False)
+    track_order = Column(Integer, nullable=False, default=0)
+    sort_order = Column(Integer, nullable=False, default=0)
+    title = Column(String(200), nullable=False)
+    summary = Column(String(300), nullable=True)
+    body = Column(Text, nullable=True)
+    est_minutes = Column(Integer, nullable=True, default=5)
+    level = Column(String(24), nullable=True, default="All levels")
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DesignQuizQuestion(Base):
+    """A multiple-choice question in the design-training quiz."""
+    __tablename__ = "design_quiz_questions"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(40), unique=True, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    question = Column(Text, nullable=False)
+    options = Column(JSON, nullable=True)
+    correct_id = Column(String(8), nullable=False)
+    explanation = Column(Text, nullable=True)
+    active = Column(Boolean, nullable=False, default=True)
+
+
+class DesignLessonProgress(Base):
+    """Marks a design lesson as completed by an employee."""
+    __tablename__ = "design_lesson_progress"
+    __table_args__ = (UniqueConstraint("employee_id", "lesson_id", name="uq_design_progress"),)
+
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    lesson_id = Column(Integer, ForeignKey("design_lessons.id"), nullable=False, index=True)
+    completed_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DesignQuizAttempt(Base):
+    """One recorded attempt at the design-training quiz."""
+    __tablename__ = "design_quiz_attempts"
+
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    score = Column(Integer, nullable=False, default=0)
+    total = Column(Integer, nullable=False, default=0)
+    answers = Column(JSON, nullable=True)
+    attempted_at = Column(DateTime, default=datetime.utcnow)

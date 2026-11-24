@@ -1,21 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Sales Training — Metfraa{% endblock %}
+{% block title %}{{ page_title }}{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="salesTraining()" x-init="init()" x-cloak>
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="trainingModule()" x-init="init()" x-cloak>
 
   <div class="mb-6">
     <div class="lbl mb-2">Metfraa Portal</div>
-    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">Sales Training</h1>
+    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">{{ heading }}</h1>
     <div class="flex items-center gap-3 mt-3">
       <span class="h-px w-10 bg-metfraa-blue"></span>
-      <p class="text-sm text-metfraa-gray-500">Learn to sell Metfraa pre-engineered buildings — then test yourself.</p>
+      <p class="text-sm text-metfraa-gray-500">{{ subtitle }}</p>
     </div>
   </div>
 
   <!-- ===================== OVERVIEW ===================== -->
   <div x-show="view==='home'">
-    <!-- progress -->
     <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-5 mb-6">
       <div class="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -43,7 +42,6 @@
       </button>
     </div>
 
-    <!-- tracks -->
     <template x-for="(tr, ti) in tracks" :key="tr.track">
       <div class="mb-7">
         <div class="flex items-center gap-2 mb-3">
@@ -80,7 +78,7 @@
       <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-6">
         <div class="text-xs text-metfraa-gray-500 mb-1" x-text="lesson.track"></div>
         <h2 class="display text-2xl text-metfraa-ink mb-4" x-text="lesson.title"></h2>
-        <div class="prose-sales" x-html="lesson.body"></div>
+        <div class="prose-train" x-html="lesson.body"></div>
         <div class="mt-6 pt-4 border-t border-metfraa-gray-100 flex items-center justify-between gap-3 flex-wrap">
           <button x-show="!lesson.done" @click="markComplete()" class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Mark as complete</button>
           <span x-show="lesson.done" class="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700">✓ Completed
@@ -103,7 +101,7 @@
     <template x-if="!quizResult">
       <div>
         <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-5 mb-4">
-          <h2 class="display text-xl text-metfraa-ink">Sales Training Quiz</h2>
+          <h2 class="display text-xl text-metfraa-ink">{{ heading }} Quiz</h2>
           <p class="text-sm text-metfraa-gray-500 mt-1">Answer all <span x-text="quiz.length"></span> questions. You need <span x-text="passPct"></span>% to pass. You can retake it any time.</p>
         </div>
         <div class="space-y-4">
@@ -132,7 +130,6 @@
       </div>
     </template>
 
-    <!-- results -->
     <template x-if="quizResult">
       <div>
         <div class="rounded-xl p-6 mb-5 text-center"
@@ -175,16 +172,18 @@
 </div>
 
 <style>
-  .prose-sales h4 { font-weight:700; color:#0A2B66; margin:1.1rem 0 .4rem; font-size:.95rem; }
-  .prose-sales p  { color:#334155; font-size:.9rem; line-height:1.6; margin:.4rem 0; }
-  .prose-sales ul { list-style:disc; padding-left:1.2rem; margin:.4rem 0; }
-  .prose-sales li { color:#334155; font-size:.9rem; line-height:1.55; margin:.2rem 0; }
-  .prose-sales table { margin:.6rem 0; }
-  .prose-sales b { color:#1E1D1D; }
+  .prose-train h4 { font-weight:700; color:#0A2B66; margin:1.1rem 0 .4rem; font-size:.95rem; }
+  .prose-train p  { color:#334155; font-size:.9rem; line-height:1.6; margin:.4rem 0; }
+  .prose-train ul { list-style:disc; padding-left:1.2rem; margin:.4rem 0; }
+  .prose-train ol { list-style:decimal; padding-left:1.3rem; margin:.4rem 0; }
+  .prose-train li { color:#334155; font-size:.9rem; line-height:1.55; margin:.2rem 0; }
+  .prose-train table { margin:.6rem 0; }
+  .prose-train b { color:#1E1D1D; }
 </style>
 
 <script>
-  function salesTraining() {
+  function trainingModule() {
+    const API = "{{ api_base }}";
     return {
       view: 'home',
       tracks: [], total: 0, done: 0, best: null, quizCount: 0, passPct: 70,
@@ -193,7 +192,7 @@
       async init() { await this.refresh(); },
       async refresh() {
         try {
-          const r = await fetch('/sales-training/api/overview');
+          const r = await fetch(API + '/api/overview');
           if (r.ok) {
             const d = await r.json();
             this.tracks = d.tracks || []; this.total = d.total; this.done = d.done;
@@ -204,7 +203,7 @@
       },
       async openLesson(id) {
         try {
-          const r = await fetch('/sales-training/api/lesson/' + id);
+          const r = await fetch(API + '/api/lesson/' + id);
           if (!r.ok) return;
           this.lesson = await r.json();
           const i = this.flat.indexOf(id);
@@ -216,21 +215,21 @@
       },
       async markComplete() {
         try {
-          await fetch('/sales-training/api/lesson/' + this.lesson.id + '/complete', { method: 'POST' });
+          await fetch(API + '/api/lesson/' + this.lesson.id + '/complete', { method: 'POST' });
           this.lesson.done = true;
           if (typeof toast === 'function') toast('Lesson marked complete', 'success');
         } catch (e) {}
       },
       async markIncomplete() {
         try {
-          await fetch('/sales-training/api/lesson/' + this.lesson.id + '/uncomplete', { method: 'POST' });
+          await fetch(API + '/api/lesson/' + this.lesson.id + '/uncomplete', { method: 'POST' });
           this.lesson.done = false;
         } catch (e) {}
       },
       async startQuiz() {
         this.quizResult = null; this.answers = {}; this.resMap = {};
         try {
-          const r = await fetch('/sales-training/api/quiz');
+          const r = await fetch(API + '/api/quiz');
           if (r.ok) { const d = await r.json(); this.quiz = d.questions || []; this.passPct = d.pass_pct; }
           this.view = 'quiz'; window.scrollTo(0, 0);
         } catch (e) {}
@@ -238,7 +237,7 @@
       async submitQuiz() {
         this.submitting = true;
         try {
-          const r = await fetch('/sales-training/api/quiz/submit', {
+          const r = await fetch(API + '/api/quiz/submit', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ answers: this.answers })
           });
