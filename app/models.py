@@ -1518,3 +1518,85 @@ class DesignQuizAttempt(Base):
     total = Column(Integer, nullable=False, default=0)
     answers = Column(JSON, nullable=True)
     attempted_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ---------------------------------------------------------------- CRM
+class CrmLead(Base):
+    """A sales lead / opportunity in the CRM pipeline."""
+    __tablename__ = "crm_leads"
+
+    id = Column(Integer, primary_key=True)
+    company = Column(String(200), nullable=True)
+    contact_name = Column(String(160), nullable=True)
+    phone = Column(String(40), nullable=True)
+    email = Column(String(160), nullable=True)
+    designation = Column(String(120), nullable=True)
+    source = Column(String(40), nullable=True)            # Website / Referral / …
+    location = Column(String(160), nullable=True)
+    stage = Column(String(30), nullable=False, default="New")
+    owner = Column(String(120), nullable=True)            # salesperson
+    est_value = Column(Float, nullable=True)
+    next_follow_up = Column(Date, nullable=True)
+    notes = Column(Text, nullable=True)
+    lost_reason = Column(String(300), nullable=True)
+    created_by = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CrmEnquiry(Base):
+    """A building requirement (enquiry) raised against a lead."""
+    __tablename__ = "crm_enquiries"
+
+    id = Column(Integer, primary_key=True)
+    enquiry_no = Column(String(40), unique=True, index=True)
+    lead_id = Column(Integer, ForeignKey("crm_leads.id"), nullable=True, index=True)
+    date = Column(Date, nullable=True)
+    building_use = Column(String(160), nullable=True)      # warehouse / factory / …
+    length_m = Column(Float, nullable=True)
+    width_m = Column(Float, nullable=True)
+    eave_height_m = Column(Float, nullable=True)
+    bay_spacing_m = Column(Float, nullable=True)
+    clear_span = Column(Boolean, default=False)
+    crane = Column(Boolean, default=False)
+    crane_capacity = Column(String(60), nullable=True)
+    mezzanine = Column(Boolean, default=False)
+    cladding = Column(String(200), nullable=True)
+    location = Column(String(160), nullable=True)
+    required_by = Column(Date, nullable=True)
+    budget = Column(Float, nullable=True)
+    status = Column(String(30), nullable=False, default="Open")   # Open / Quoted / Closed
+    notes = Column(Text, nullable=True)
+    created_by = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CrmQuotation(Base):
+    """A quotation (header + line items) raised for a lead / enquiry."""
+    __tablename__ = "crm_quotations"
+
+    id = Column(Integer, primary_key=True)
+    quote_no = Column(String(40), unique=True, index=True)
+    lead_id = Column(Integer, ForeignKey("crm_leads.id"), nullable=True, index=True)
+    enquiry_id = Column(Integer, ForeignKey("crm_enquiries.id"), nullable=True, index=True)
+    date = Column(Date, nullable=True)
+    valid_until = Column(Date, nullable=True)
+    customer_company = Column(String(200), nullable=True)
+    customer_name = Column(String(160), nullable=True)
+    customer_address = Column(Text, nullable=True)
+    customer_contact = Column(String(160), nullable=True)   # phone / email
+    project = Column(String(200), nullable=True)
+    # [{sn, description, qty, unit, rate, amount}]
+    items = Column(JSON, nullable=True)
+    discount = Column(Float, nullable=True, default=0)       # flat amount
+    gst_pct = Column(Float, nullable=True, default=18)
+    subtotal = Column(Float, nullable=True, default=0)
+    gst_amount = Column(Float, nullable=True, default=0)
+    total = Column(Float, nullable=True, default=0)
+    terms = Column(Text, nullable=True)
+    status = Column(String(30), nullable=False, default="Draft")  # Draft/Sent/Accepted/Rejected
+    sent_at = Column(DateTime, nullable=True)
+    sent_to = Column(String(200), nullable=True)
+    created_by = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

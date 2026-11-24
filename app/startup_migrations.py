@@ -348,6 +348,79 @@ DESIGN_TRAINING_MIGRATIONS = [
 STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + DESIGN_TRAINING_MIGRATIONS
 
 
+CRM_MIGRATIONS = [
+    "CREATE TABLE IF NOT EXISTS crm_leads ("
+    " id SERIAL PRIMARY KEY,"
+    " company VARCHAR(200),"
+    " contact_name VARCHAR(160),"
+    " phone VARCHAR(40),"
+    " email VARCHAR(160),"
+    " designation VARCHAR(120),"
+    " source VARCHAR(40),"
+    " location VARCHAR(160),"
+    " stage VARCHAR(30) NOT NULL DEFAULT 'New',"
+    " owner VARCHAR(120),"
+    " est_value DOUBLE PRECISION,"
+    " next_follow_up DATE,"
+    " notes TEXT,"
+    " lost_reason VARCHAR(300),"
+    " created_by VARCHAR(120),"
+    " created_at TIMESTAMP DEFAULT now(),"
+    " updated_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_crm_lead_stage ON crm_leads(stage)",
+    "CREATE TABLE IF NOT EXISTS crm_enquiries ("
+    " id SERIAL PRIMARY KEY,"
+    " enquiry_no VARCHAR(40) UNIQUE,"
+    " lead_id INTEGER REFERENCES crm_leads(id),"
+    " date DATE,"
+    " building_use VARCHAR(160),"
+    " length_m DOUBLE PRECISION,"
+    " width_m DOUBLE PRECISION,"
+    " eave_height_m DOUBLE PRECISION,"
+    " bay_spacing_m DOUBLE PRECISION,"
+    " clear_span BOOLEAN DEFAULT FALSE,"
+    " crane BOOLEAN DEFAULT FALSE,"
+    " crane_capacity VARCHAR(60),"
+    " mezzanine BOOLEAN DEFAULT FALSE,"
+    " cladding VARCHAR(200),"
+    " location VARCHAR(160),"
+    " required_by DATE,"
+    " budget DOUBLE PRECISION,"
+    " status VARCHAR(30) NOT NULL DEFAULT 'Open',"
+    " notes TEXT,"
+    " created_by VARCHAR(120),"
+    " created_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_crm_enq_lead ON crm_enquiries(lead_id)",
+    "CREATE TABLE IF NOT EXISTS crm_quotations ("
+    " id SERIAL PRIMARY KEY,"
+    " quote_no VARCHAR(40) UNIQUE,"
+    " lead_id INTEGER REFERENCES crm_leads(id),"
+    " enquiry_id INTEGER REFERENCES crm_enquiries(id),"
+    " date DATE,"
+    " valid_until DATE,"
+    " customer_company VARCHAR(200),"
+    " customer_name VARCHAR(160),"
+    " customer_address TEXT,"
+    " customer_contact VARCHAR(160),"
+    " project VARCHAR(200),"
+    " items JSON,"
+    " discount DOUBLE PRECISION DEFAULT 0,"
+    " gst_pct DOUBLE PRECISION DEFAULT 18,"
+    " subtotal DOUBLE PRECISION DEFAULT 0,"
+    " gst_amount DOUBLE PRECISION DEFAULT 0,"
+    " total DOUBLE PRECISION DEFAULT 0,"
+    " terms TEXT,"
+    " status VARCHAR(30) NOT NULL DEFAULT 'Draft',"
+    " sent_at TIMESTAMP,"
+    " sent_to VARCHAR(200),"
+    " created_by VARCHAR(120),"
+    " created_at TIMESTAMP DEFAULT now(),"
+    " updated_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_crm_quote_lead ON crm_quotations(lead_id)",
+]
+STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + CRM_MIGRATIONS
+
+
 def run_startup_migrations() -> None:
     """Apply pending column additions. Runs on every startup — safe.
 

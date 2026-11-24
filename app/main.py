@@ -33,6 +33,7 @@ from .routes import spares as spares_routes
 from .routes import indent as indent_routes
 from .routes import sales_training as sales_training_routes
 from .routes import design_training as design_training_routes
+from .routes import crm as crm_routes
 from .routes import gatepass_public as gatepass_public_routes
 from .routes import tgt26 as tgt26_routes
 from .routes import ehs as ehs_routes
@@ -182,6 +183,7 @@ app.include_router(spares_routes.router)
 app.include_router(indent_routes.router)
 app.include_router(sales_training_routes.router)
 app.include_router(design_training_routes.router)
+app.include_router(crm_routes.router)
 # Root-mounted: WhatsApp button URLs may only vary in the last path segment.
 app.include_router(gatepass_public_routes.router)
 app.include_router(tgt26_routes.router)   # Team Get Together 2026 passes (same rationale)
