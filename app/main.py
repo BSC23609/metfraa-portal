@@ -31,6 +31,7 @@ from .routes import project_ops as project_ops_routes
 from .routes import maint as maint_routes
 from .routes import spares as spares_routes
 from .routes import indent as indent_routes
+from .routes import sales_training as sales_training_routes
 from .routes import gatepass_public as gatepass_public_routes
 from .routes import tgt26 as tgt26_routes
 from .routes import ehs as ehs_routes
@@ -88,6 +89,13 @@ async def lifespan(app: FastAPI):
                 print(f"[startup] PM checklist items seeded: {n}")
         except Exception as e:
             print(f"[startup] PM checklist seed skipped: {e}")
+        try:
+            from .sales_training_seed import seed_sales_training
+            n = seed_sales_training()
+            if n:
+                print(f"[startup] Sales training content seeded: {n}")
+        except Exception as e:
+            print(f"[startup] Sales training seed skipped: {e}")
 
     sched = None
     if IS_VERCEL:
@@ -164,6 +172,7 @@ app.include_router(project_ops_routes.router)
 app.include_router(maint_routes.router)
 app.include_router(spares_routes.router)
 app.include_router(indent_routes.router)
+app.include_router(sales_training_routes.router)
 # Root-mounted: WhatsApp button URLs may only vary in the last path segment.
 app.include_router(gatepass_public_routes.router)
 app.include_router(tgt26_routes.router)   # Team Get Together 2026 passes (same rationale)

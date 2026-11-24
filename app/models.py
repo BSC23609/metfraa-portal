@@ -1406,3 +1406,59 @@ class MaintIndent(Base):
     created_by = Column(String(120), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ---------------------------------------------------------------- Sales Training
+class SalesLesson(Base):
+    """A single lesson (chapter) in the Metfraa sales-training module."""
+    __tablename__ = "sales_lessons"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(40), unique=True, index=True)   # stable seed key
+    track = Column(String(80), nullable=False)           # Foundations / Product & Value / Selling Metfraa
+    track_order = Column(Integer, nullable=False, default=0)
+    sort_order = Column(Integer, nullable=False, default=0)
+    title = Column(String(200), nullable=False)
+    summary = Column(String(300), nullable=True)
+    body = Column(Text, nullable=True)                   # HTML
+    est_minutes = Column(Integer, nullable=True, default=5)
+    level = Column(String(24), nullable=True, default="All levels")  # New hire / All levels / Experienced
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SalesQuizQuestion(Base):
+    """A multiple-choice question in the sales-training quiz."""
+    __tablename__ = "sales_quiz_questions"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(40), unique=True, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    question = Column(Text, nullable=False)
+    options = Column(JSON, nullable=True)                # [{id, text}, …]
+    correct_id = Column(String(8), nullable=False)
+    explanation = Column(Text, nullable=True)
+    active = Column(Boolean, nullable=False, default=True)
+
+
+class SalesLessonProgress(Base):
+    """Marks a lesson as completed by an employee."""
+    __tablename__ = "sales_lesson_progress"
+    __table_args__ = (UniqueConstraint("employee_id", "lesson_id", name="uq_sales_progress"),)
+
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    lesson_id = Column(Integer, ForeignKey("sales_lessons.id"), nullable=False, index=True)
+    completed_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SalesQuizAttempt(Base):
+    """One recorded attempt at the sales-training quiz."""
+    __tablename__ = "sales_quiz_attempts"
+
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    score = Column(Integer, nullable=False, default=0)
+    total = Column(Integer, nullable=False, default=0)
+    answers = Column(JSON, nullable=True)               # {question_code: chosen_id}
+    attempted_at = Column(DateTime, default=datetime.utcnow)

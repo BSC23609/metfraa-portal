@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}Sales Training — Metfraa{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="salesTraining()" x-init="init()" x-cloak>
+
+  <div class="mb-6">
+    <div class="lbl mb-2">Metfraa Portal</div>
+    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">Sales Training</h1>
+    <div class="flex items-center gap-3 mt-3">
+      <span class="h-px w-10 bg-metfraa-blue"></span>
+      <p class="text-sm text-metfraa-gray-500">Learn to sell Metfraa pre-engineered buildings — then test yourself.</p>
+    </div>
+  </div>
+
+  <!-- ===================== OVERVIEW ===================== -->
+  <div x-show="view==='home'">
+    <!-- progress -->
+    <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-5 mb-6">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <div class="text-sm font-semibold text-metfraa-ink"><span x-text="done"></span> of <span x-text="total"></span> lessons completed</div>
+          <div class="w-56 h-2 bg-metfraa-gray-100 rounded-full mt-2 overflow-hidden">
+            <div class="h-2 bg-metfraa-blue rounded-full transition-all" :style="`width:${total? Math.round(done*100/total):0}%`"></div>
+          </div>
+        </div>
+        <div class="text-right">
+          <template x-if="best">
+            <div>
+              <div class="text-xs text-metfraa-gray-500">Best quiz score</div>
+              <div class="text-lg font-bold" :class="best.passed ? 'text-emerald-700' : 'text-amber-700'">
+                <span x-text="best.pct"></span>% <span class="text-xs font-semibold" x-text="best.passed ? '· Passed' : '· Keep going'"></span>
+              </div>
+            </div>
+          </template>
+          <template x-if="!best">
+            <div class="text-xs text-metfraa-gray-400">Quiz not attempted yet</div>
+          </template>
+        </div>
+      </div>
+      <button @click="startQuiz()" class="mt-4 px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">
+        Take the quiz (<span x-text="quizCount"></span> questions · pass <span x-text="passPct"></span>%)
+      </button>
+    </div>
+
+    <!-- tracks -->
+    <template x-for="(tr, ti) in tracks" :key="tr.track">
+      <div class="mb-7">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="flex items-center justify-center w-6 h-6 rounded-full bg-metfraa-blue text-white text-xs font-bold" x-text="ti+1"></span>
+          <h2 class="display text-lg font-semibold text-metfraa-ink" x-text="tr.track"></h2>
+        </div>
+        <div class="space-y-2">
+          <template x-for="ls in tr.lessons" :key="ls.id">
+            <button @click="openLesson(ls.id)"
+              class="w-full text-left bg-white rounded-lg ring-1 ring-metfraa-gray-200 hover:ring-metfraa-blue p-4 flex items-start gap-3 transition">
+              <span class="mt-0.5 shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold"
+                    :class="ls.done ? 'bg-emerald-500 text-white' : 'ring-1 ring-metfraa-gray-300 text-transparent'">✓</span>
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm font-semibold text-metfraa-ink" x-text="ls.title"></span>
+                <span class="block text-xs text-metfraa-gray-500 mt-0.5" x-text="ls.summary"></span>
+              </span>
+              <span class="shrink-0 text-right">
+                <span class="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                      :class="ls.level==='New hire' ? 'bg-sky-50 text-sky-700' : (ls.level==='Experienced' ? 'bg-purple-50 text-purple-700' : 'bg-metfraa-gray-100 text-metfraa-gray-600')"
+                      x-text="ls.level"></span>
+                <span class="block text-[10px] text-metfraa-gray-400 mt-1" x-text="(ls.est_minutes||5)+' min'"></span>
+              </span>
+            </button>
+          </template>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- ===================== LESSON ===================== -->
+  <div x-show="view==='lesson'">
+    <button @click="view='home'; refresh()" class="text-sm font-semibold text-metfraa-blue mb-4">&larr; Back to all lessons</button>
+    <template x-if="lesson">
+      <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-6">
+        <div class="text-xs text-metfraa-gray-500 mb-1" x-text="lesson.track"></div>
+        <h2 class="display text-2xl text-metfraa-ink mb-4" x-text="lesson.title"></h2>
+        <div class="prose-sales" x-html="lesson.body"></div>
+        <div class="mt-6 pt-4 border-t border-metfraa-gray-100 flex items-center justify-between gap-3 flex-wrap">
+          <button x-show="!lesson.done" @click="markComplete()" class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Mark as complete</button>
+          <span x-show="lesson.done" class="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700">✓ Completed
+            <button @click="markIncomplete()" class="text-xs font-normal text-metfraa-gray-400 underline ml-2">undo</button>
+          </span>
+          <div class="flex gap-2">
+            <button x-show="prevId" @click="openLesson(prevId)" class="px-4 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-semibold">&larr; Previous</button>
+            <button x-show="nextId" @click="openLesson(nextId)" class="px-4 py-2 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-semibold">Next &rarr;</button>
+            <button x-show="!nextId" @click="startQuiz()" class="px-4 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-semibold">Go to quiz &rarr;</button>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- ===================== QUIZ ===================== -->
+  <div x-show="view==='quiz'">
+    <button @click="view='home'; refresh()" class="text-sm font-semibold text-metfraa-blue mb-4">&larr; Back to lessons</button>
+
+    <template x-if="!quizResult">
+      <div>
+        <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-5 mb-4">
+          <h2 class="display text-xl text-metfraa-ink">Sales Training Quiz</h2>
+          <p class="text-sm text-metfraa-gray-500 mt-1">Answer all <span x-text="quiz.length"></span> questions. You need <span x-text="passPct"></span>% to pass. You can retake it any time.</p>
+        </div>
+        <div class="space-y-4">
+          <template x-for="(q, qi) in quiz" :key="q.code">
+            <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-5">
+              <div class="text-sm font-semibold text-metfraa-ink mb-3"><span x-text="qi+1"></span>. <span x-text="q.question"></span></div>
+              <div class="space-y-2">
+                <template x-for="opt in q.options" :key="opt.id">
+                  <label class="flex items-start gap-2.5 p-2.5 rounded-lg ring-1 cursor-pointer transition"
+                         :class="answers[q.code]===opt.id ? 'ring-metfraa-blue bg-blue-50/40' : 'ring-metfraa-gray-200 hover:ring-metfraa-gray-300'">
+                    <input type="radio" :name="q.code" :value="opt.id" x-model="answers[q.code]" class="mt-0.5 text-metfraa-blue">
+                    <span class="text-sm text-metfraa-ink" x-text="opt.text"></span>
+                  </label>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="mt-5 flex items-center gap-3">
+          <button @click="submitQuiz()" :disabled="submitting || Object.keys(answers).length < quiz.length"
+                  class="px-6 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold disabled:opacity-50">
+            <span x-show="!submitting">Submit answers</span><span x-show="submitting">Checking…</span>
+          </button>
+          <span class="text-xs text-metfraa-gray-500"><span x-text="Object.keys(answers).length"></span> / <span x-text="quiz.length"></span> answered</span>
+        </div>
+      </div>
+    </template>
+
+    <!-- results -->
+    <template x-if="quizResult">
+      <div>
+        <div class="rounded-xl p-6 mb-5 text-center"
+             :class="quizResult.passed ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'bg-amber-50 ring-1 ring-amber-200'">
+          <div class="text-4xl font-bold" :class="quizResult.passed ? 'text-emerald-700' : 'text-amber-700'"><span x-text="quizResult.pct"></span>%</div>
+          <div class="text-sm font-semibold mt-1" :class="quizResult.passed ? 'text-emerald-700' : 'text-amber-700'"
+               x-text="quizResult.passed ? 'Passed — well done!' : 'Not passed yet — review and retake'"></div>
+          <div class="text-xs text-metfraa-gray-500 mt-1"><span x-text="quizResult.score"></span> of <span x-text="quizResult.total"></span> correct</div>
+        </div>
+        <div class="space-y-3">
+          <template x-for="(q, qi) in quiz" :key="q.code">
+            <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-4">
+              <div class="flex items-start gap-2">
+                <span class="shrink-0 mt-0.5" x-html="resMap[q.code] && resMap[q.code].correct ? '<span class=\'text-emerald-600 font-bold\'>✓</span>' : '<span class=\'text-red-500 font-bold\'>✗</span>'"></span>
+                <div class="flex-1">
+                  <div class="text-sm font-semibold text-metfraa-ink"><span x-text="qi+1"></span>. <span x-text="q.question"></span></div>
+                  <div class="text-xs mt-1.5">
+                    <span class="text-metfraa-gray-500">Your answer:</span>
+                    <span :class="resMap[q.code] && resMap[q.code].correct ? 'text-emerald-700 font-semibold' : 'text-red-600 font-semibold'"
+                          x-text="optText(q, answers[q.code]) || '—'"></span>
+                  </div>
+                  <div class="text-xs mt-1" x-show="resMap[q.code] && !resMap[q.code].correct">
+                    <span class="text-metfraa-gray-500">Correct:</span>
+                    <span class="text-emerald-700 font-semibold" x-text="optText(q, resMap[q.code].correct_id)"></span>
+                  </div>
+                  <div class="text-xs text-metfraa-gray-600 mt-1.5 bg-metfraa-gray-50 rounded p-2" x-show="resMap[q.code] && resMap[q.code].explanation" x-text="resMap[q.code] && resMap[q.code].explanation"></div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="mt-5 flex gap-3">
+          <button @click="startQuiz()" class="px-5 py-2.5 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Retake quiz</button>
+          <button @click="view='home'; refresh()" class="px-5 py-2.5 rounded-lg ring-1 ring-metfraa-gray-300 text-sm font-semibold">Back to lessons</button>
+        </div>
+      </div>
+    </template>
+  </div>
+
+</div>
+
+<style>
+  .prose-sales h4 { font-weight:700; color:#0A2B66; margin:1.1rem 0 .4rem; font-size:.95rem; }
+  .prose-sales p  { color:#334155; font-size:.9rem; line-height:1.6; margin:.4rem 0; }
+  .prose-sales ul { list-style:disc; padding-left:1.2rem; margin:.4rem 0; }
+  .prose-sales li { color:#334155; font-size:.9rem; line-height:1.55; margin:.2rem 0; }
+  .prose-sales table { margin:.6rem 0; }
+  .prose-sales b { color:#1E1D1D; }
+</style>
+
+<script>
+  function salesTraining() {
+    return {
+      view: 'home',
+      tracks: [], total: 0, done: 0, best: null, quizCount: 0, passPct: 70,
+      lesson: null, flat: [], prevId: null, nextId: null,
+      quiz: [], answers: {}, submitting: false, quizResult: null, resMap: {},
+      async init() { await this.refresh(); },
+      async refresh() {
+        try {
+          const r = await fetch('/sales-training/api/overview');
+          if (r.ok) {
+            const d = await r.json();
+            this.tracks = d.tracks || []; this.total = d.total; this.done = d.done;
+            this.best = d.best; this.quizCount = d.quiz_count; this.passPct = d.pass_pct;
+            this.flat = []; this.tracks.forEach(t => t.lessons.forEach(l => this.flat.push(l.id)));
+          }
+        } catch (e) {}
+      },
+      async openLesson(id) {
+        try {
+          const r = await fetch('/sales-training/api/lesson/' + id);
+          if (!r.ok) return;
+          this.lesson = await r.json();
+          const i = this.flat.indexOf(id);
+          this.prevId = i > 0 ? this.flat[i - 1] : null;
+          this.nextId = (i >= 0 && i < this.flat.length - 1) ? this.flat[i + 1] : null;
+          this.view = 'lesson';
+          window.scrollTo(0, 0);
+        } catch (e) {}
+      },
+      async markComplete() {
+        try {
+          await fetch('/sales-training/api/lesson/' + this.lesson.id + '/complete', { method: 'POST' });
+          this.lesson.done = true;
+          if (typeof toast === 'function') toast('Lesson marked complete', 'success');
+        } catch (e) {}
+      },
+      async markIncomplete() {
+        try {
+          await fetch('/sales-training/api/lesson/' + this.lesson.id + '/uncomplete', { method: 'POST' });
+          this.lesson.done = false;
+        } catch (e) {}
+      },
+      async startQuiz() {
+        this.quizResult = null; this.answers = {}; this.resMap = {};
+        try {
+          const r = await fetch('/sales-training/api/quiz');
+          if (r.ok) { const d = await r.json(); this.quiz = d.questions || []; this.passPct = d.pass_pct; }
+          this.view = 'quiz'; window.scrollTo(0, 0);
+        } catch (e) {}
+      },
+      async submitQuiz() {
+        this.submitting = true;
+        try {
+          const r = await fetch('/sales-training/api/quiz/submit', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ answers: this.answers })
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error('submit failed');
+          this.quizResult = d;
+          this.resMap = {};
+          (d.results || []).forEach(x => { this.resMap[x.code] = x; });
+          window.scrollTo(0, 0);
+        } catch (e) { if (typeof toast === 'function') toast('Could not submit — try again', 'error'); }
+        finally { this.submitting = false; }
+      },
+      optText(q, oid) {
+        const o = (q.options || []).find(x => x.id === oid);
+        return o ? o.text : '';
+      },
+    };
+  }
+</script>
+{% endblock %}
