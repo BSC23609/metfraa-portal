@@ -417,6 +417,16 @@ CRM_MIGRATIONS = [
     " created_at TIMESTAMP DEFAULT now(),"
     " updated_at TIMESTAMP DEFAULT now())",
     "CREATE INDEX IF NOT EXISTS idx_crm_quote_lead ON crm_quotations(lead_id)",
+    "CREATE TABLE IF NOT EXISTS crm_enquiry_docs ("
+    " id SERIAL PRIMARY KEY,"
+    " enquiry_id INTEGER NOT NULL REFERENCES crm_enquiries(id),"
+    " filename VARCHAR(300) NOT NULL,"
+    " mime_type VARCHAR(100) DEFAULT 'application/octet-stream',"
+    " size_bytes INTEGER DEFAULT 0,"
+    " content BYTEA NOT NULL,"
+    " uploaded_by VARCHAR(120),"
+    " uploaded_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_crm_doc_enq ON crm_enquiry_docs(enquiry_id)",
 ]
 STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + CRM_MIGRATIONS
 

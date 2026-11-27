@@ -1600,3 +1600,18 @@ class CrmQuotation(Base):
     created_by = Column(String(120), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CrmEnquiryDoc(Base):
+    """A document attached to a CRM enquiry (bytes stored in Postgres,
+    following the ExpensePendingUpload pattern — Vercel has no writable disk)."""
+    __tablename__ = "crm_enquiry_docs"
+
+    id = Column(Integer, primary_key=True)
+    enquiry_id = Column(Integer, ForeignKey("crm_enquiries.id"), nullable=False, index=True)
+    filename = Column(String(300), nullable=False)
+    mime_type = Column(String(100), default="application/octet-stream")
+    size_bytes = Column(Integer, default=0)
+    content = Column(LargeBinary, nullable=False)
+    uploaded_by = Column(String(120), nullable=True)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)

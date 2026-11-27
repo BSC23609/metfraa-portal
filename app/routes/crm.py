@@ -6,9 +6,10 @@ line items, GST and terms, exported as a branded PDF and emailed to the
 customer.
 """
 import asyncio
+import os
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -17,7 +18,11 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import CrmEnquiry, CrmLead, CrmQuotation, Employee
+from ..models import CrmEnquiry, CrmEnquiryDoc, CrmLead, CrmQuotation, Employee
+
+# Per-file cap. Vercel Hobby limits a request body to ~4.5 MB, so documents
+# are uploaded one per request and capped a little under that.
+DOC_MAX_MB = int(os.getenv("CRM_DOC_MAX_MB", "4"))
 
 router = APIRouter(prefix="/crm", tags=["crm"])
 templates = Jinja2Templates(directory="app/templates")
@@ -269,6 +274,7 @@ def api_enquiries(q: str | None = None, lead_id: int | None = None,
         lead = db.get(CrmLead, e.lead_id) if e.lead_id else None
         d["lead_company"] = lead.company if lead else None
         d["lead_contact"] = lead.contact_name if lead else None
+        d["doc_count"] = db.query(CrmEnquiryDoc).filter(CrmEnquiryDoc.enquiry_id == e.id).count()
         out.append(d)
     return {"enquiries": out}
 
@@ -313,7 +319,72 @@ def api_enquiry_delete(eid: int, user: Employee = Depends(get_current_user),
     if not e:
         raise HTTPException(404, "Enquiry not found")
     db.query(CrmQuotation).filter(CrmQuotation.enquiry_id == eid).update({CrmQuotation.enquiry_id: None})
+    db.query(CrmEnquiryDoc).filter(CrmEnquiryDoc.enquiry_id == eid).delete()
     db.delete(e)
+    db.commit()
+    return {"ok": True}
+
+
+# -------------------------------------------------- enquiry documents
+def _doc_json(d: CrmEnquiryDoc):
+    return {"id": d.id, "filename": d.filename, "mime_type": d.mime_type,
+            "size_bytes": d.size_bytes, "uploaded_by": d.uploaded_by,
+            "uploaded_at": _iso(d.uploaded_at)}
+
+
+@router.get("/api/enquiry/{eid}/docs")
+def api_enquiry_docs(eid: int, user: Employee = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    rows = (db.query(CrmEnquiryDoc).filter(CrmEnquiryDoc.enquiry_id == eid)
+            .order_by(CrmEnquiryDoc.id).all())
+    return {"docs": [_doc_json(d) for d in rows]}
+
+
+@router.post("/api/enquiry/{eid}/docs")
+async def api_enquiry_docs_upload(eid: int, files: list[UploadFile] = File(default=[]),
+                                  user: Employee = Depends(get_current_user),
+                                  db: Session = Depends(get_db)):
+    e = db.get(CrmEnquiry, eid)
+    if not e:
+        raise HTTPException(404, "Enquiry not found")
+    if not files:
+        raise HTTPException(400, "No files received")
+    saved = []
+    for f in files[:20]:
+        data = await f.read()
+        if not data:
+            continue
+        if len(data) > DOC_MAX_MB * 1024 * 1024:
+            raise HTTPException(413, f"{f.filename or 'file'} is too large. Max {DOC_MAX_MB} MB per file.")
+        row = CrmEnquiryDoc(enquiry_id=eid, filename=(f.filename or "document")[:300],
+                            mime_type=f.content_type or "application/octet-stream",
+                            size_bytes=len(data), content=data,
+                            uploaded_by=getattr(user, "name", None))
+        db.add(row)
+        db.flush()
+        saved.append(_doc_json(row))
+    db.commit()
+    return {"ok": True, "docs": saved}
+
+
+@router.get("/api/enquiry/doc/{doc_id}")
+def api_enquiry_doc_download(doc_id: int, user: Employee = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    d = db.get(CrmEnquiryDoc, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    safe = (d.filename or "document").replace('"', "")
+    return Response(content=bytes(d.content), media_type=d.mime_type or "application/octet-stream",
+                    headers={"Content-Disposition": f'inline; filename="{safe}"'})
+
+
+@router.post("/api/enquiry/doc/{doc_id}/delete")
+def api_enquiry_doc_delete(doc_id: int, user: Employee = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    d = db.get(CrmEnquiryDoc, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    db.delete(d)
     db.commit()
     return {"ok": True}
 
