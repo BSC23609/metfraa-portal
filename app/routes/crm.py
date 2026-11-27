@@ -16,13 +16,22 @@ from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import engine, get_db
 from ..deps import get_current_user
 from ..models import CrmEnquiry, CrmEnquiryDoc, CrmLead, CrmQuotation, Employee
 
 # Per-file cap. Vercel Hobby limits a request body to ~4.5 MB, so documents
 # are uploaded one per request and capped a little under that.
 DOC_MAX_MB = int(os.getenv("CRM_DOC_MAX_MB", "4"))
+
+
+def _ensure_doc_table():
+    """Create crm_enquiry_docs on first use so the feature works even when the
+    INIT_DB migration step hasn't been run on Vercel. Idempotent and cheap."""
+    try:
+        CrmEnquiryDoc.__table__.create(bind=engine, checkfirst=True)
+    except Exception:
+        pass
 
 router = APIRouter(prefix="/crm", tags=["crm"])
 templates = Jinja2Templates(directory="app/templates")
@@ -274,7 +283,11 @@ def api_enquiries(q: str | None = None, lead_id: int | None = None,
         lead = db.get(CrmLead, e.lead_id) if e.lead_id else None
         d["lead_company"] = lead.company if lead else None
         d["lead_contact"] = lead.contact_name if lead else None
-        d["doc_count"] = db.query(CrmEnquiryDoc).filter(CrmEnquiryDoc.enquiry_id == e.id).count()
+        try:
+            d["doc_count"] = db.query(CrmEnquiryDoc).filter(CrmEnquiryDoc.enquiry_id == e.id).count()
+        except Exception:
+            db.rollback()
+            d["doc_count"] = 0
         out.append(d)
     return {"enquiries": out}
 
@@ -335,6 +348,7 @@ def _doc_json(d: CrmEnquiryDoc):
 @router.get("/api/enquiry/{eid}/docs")
 def api_enquiry_docs(eid: int, user: Employee = Depends(get_current_user),
                      db: Session = Depends(get_db)):
+    _ensure_doc_table()
     rows = (db.query(CrmEnquiryDoc).filter(CrmEnquiryDoc.enquiry_id == eid)
             .order_by(CrmEnquiryDoc.id).all())
     return {"docs": [_doc_json(d) for d in rows]}
@@ -344,6 +358,7 @@ def api_enquiry_docs(eid: int, user: Employee = Depends(get_current_user),
 async def api_enquiry_docs_upload(eid: int, files: list[UploadFile] = File(default=[]),
                                   user: Employee = Depends(get_current_user),
                                   db: Session = Depends(get_db)):
+    _ensure_doc_table()
     e = db.get(CrmEnquiry, eid)
     if not e:
         raise HTTPException(404, "Enquiry not found")
