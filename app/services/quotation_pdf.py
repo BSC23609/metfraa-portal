@@ -23,7 +23,9 @@ GRAY = colors.HexColor("#64748B")
 LIGHT = colors.HexColor("#F1F5F9")
 LINE = colors.HexColor("#CBD5E1")
 
-_LOGO = pathlib.Path(__file__).resolve().parent.parent / "static" / "img" / "bsg_group_logo.png"
+_IMG = pathlib.Path(__file__).resolve().parent.parent / "static" / "img"
+_LOGO = _IMG / "bsg_group_logo.png"              # group logo (header left)
+_METFRAA_LOGO = _IMG / "metfraa_logo.png"        # company logo (header right)
 
 # Entity the quotation is signed by (header shows the group logo instead of
 # the company name).
@@ -79,25 +81,22 @@ def build_quotation_pdf(q) -> bytes:
 
     el = []
 
-    # ---- header: group logo | contact block (company name & phone removed)
-    comp_lines = [Paragraph(TAGLINE, h_tag)]
-    meta = []
-    if ADDRESS:
-        meta.append(ADDRESS)
-    meta.append(f"{EMAIL} &nbsp; | &nbsp; {WEB}")
-    if GSTIN:
-        meta.append(f"GSTIN: {GSTIN}")
-    comp_lines.append(Paragraph("<br/>".join(meta), small))
+    # ---- header: group logo (left) | Metfraa logo (right), no words
+    def _img(path, w, h):
+        if path.exists():
+            try:
+                return Image(str(path), width=w, height=h, kind="proportional")
+            except Exception:
+                return ""
+        return ""
 
-    logo_cell = ""
-    if _LOGO.exists():
-        try:
-            logo_cell = Image(str(_LOGO), width=58 * mm, height=22 * mm, kind="proportional")
-        except Exception:
-            logo_cell = ""
+    group_cell = _img(_LOGO, 58 * mm, 24 * mm)
+    metfraa_cell = _img(_METFRAA_LOGO, 48 * mm, 22 * mm)
 
-    head = Table([[logo_cell, comp_lines]], colWidths=[64 * mm, 116 * mm])
+    head = Table([[group_cell, metfraa_cell]], colWidths=[90 * mm, 90 * mm])
     head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                              ("ALIGN", (0, 0), (0, 0), "LEFT"),
+                              ("ALIGN", (1, 0), (1, 0), "RIGHT"),
                               ("LEFTPADDING", (0, 0), (-1, -1), 0),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
     el.append(head)
