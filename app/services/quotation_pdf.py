@@ -96,7 +96,7 @@ def build_quotation_pdf(q) -> bytes:
     head_title = ParagraphStyle("htitle", parent=ss["Normal"], fontName="Helvetica-Bold",
                                 fontSize=22, textColor=colors.black, alignment=TA_CENTER, leading=26)
 
-    head = Table([[group_cell, Paragraph("QUOTATION", head_title), metfraa_cell]],
+    head = Table([[metfraa_cell, Paragraph("QUOTATION", head_title), group_cell]],
                  colWidths=[66 * mm, 48 * mm, 66 * mm])
     head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                               ("ALIGN", (0, 0), (0, 0), "LEFT"),
