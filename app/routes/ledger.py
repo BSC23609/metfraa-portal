@@ -338,6 +338,18 @@ def ledger_qr(download: int = 0, user: Employee = Depends(get_current_user)):
                     headers={"Content-Disposition": f'{disp}; filename="metfraa-ledger-qr.png"'})
 
 
+@router.get("/ledger-qr.png")
+def ledger_qr_public(download: int = 0):
+    """Public (unauthenticated) QR for the ledger form — safe to expose because
+    it only encodes the already-public form link. WATI fetches this URL as the
+    template header image, so it must not require a login."""
+    data = _branded_qr_png(f"{PUBLIC_BASE}/crm/kyc")
+    disp = "attachment" if download else "inline"
+    return Response(content=data, media_type="image/png",
+                    headers={"Content-Disposition": f'{disp}; filename="metfraa-ledger-qr.png"',
+                             "Cache-Control": "public, max-age=86400"})
+
+
 def _row_json(db, f: CrmLedgerForm):
     return {
         "id": f.id, "ref": f.ref, "status": f.status, "status_label": STATUS_LABEL.get(f.status, f.status),
