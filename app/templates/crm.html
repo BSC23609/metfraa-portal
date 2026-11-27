@@ -6,10 +6,7 @@
 
   <div class="mb-6">
     <div class="lbl mb-2">Metfraa Portal</div>
-    <div class="flex items-center justify-between flex-wrap gap-2">
-      <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">CRM</h1>
-      <a href="/crm/ledger" class="text-sm font-semibold text-metfraa-blue hover:underline">Ledger forms (KYC) &rarr;</a>
-    </div>
+    <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">CRM</h1>
     <div class="flex items-center gap-3 mt-3">
       <span class="h-px w-10 bg-metfraa-blue"></span>
       <p class="text-sm text-metfraa-gray-500">Leads, enquiries &amp; quotations for Metfraa pre-engineered buildings.</p>
@@ -23,6 +20,11 @@
         :class="tab===t.id ? 'border-metfraa-blue text-metfraa-ink' : 'border-transparent text-metfraa-gray-500 hover:text-metfraa-ink'"
         class="px-4 py-2 text-sm font-bold border-b-2" x-text="t.label"></button>
     </template>
+    <a href="/crm/ledger"
+       class="px-4 py-2 text-sm font-bold border-b-2 border-transparent text-metfraa-gray-500 hover:text-metfraa-ink flex items-center gap-1.5">
+      Ledger forms
+      <span x-show="ledgerCount>0" class="text-[10px] font-bold text-white bg-red-500 rounded-full px-1.5 min-w-[18px] text-center" x-text="ledgerCount"></span>
+    </a>
   </div>
 
   <!-- ================= DASHBOARD ================= -->
@@ -449,7 +451,7 @@
   function crmApp() {
     return {
       tabs: [{id:'dashboard',label:'Dashboard'},{id:'leads',label:'Leads'},{id:'enquiries',label:'Enquiries'},{id:'quotations',label:'Quotations'}],
-      tab: 'dashboard', busy: false,
+      tab: 'dashboard', busy: false, ledgerCount: 0,
       meta: {stages:[],sources:[],building_uses:[],default_terms:'',me:''},
       summary: {}, maxStage: 1,
       leads: [], leadQ: '', leadStage: 'All', allLeads: [],
@@ -460,7 +462,8 @@
       showEnquiry:false, enq:{}, enqDocs:[], pendingDocs:[], uploadingDocs:false,
       showQuote:false, quote:{}, quoteErr:'',
 
-      async init(){ const r=await fetch('/crm/api/meta'); if(r.ok) this.meta=await r.json(); await this.loadSummary(); await this.loadAllLeads(); },
+      async init(){ const r=await fetch('/crm/api/meta'); if(r.ok) this.meta=await r.json(); await this.loadSummary(); await this.loadAllLeads(); this.loadLedgerCount(); },
+      async loadLedgerCount(){ try{ const r=await fetch('/crm/ledger/api/list?status=submitted'); if(r.ok){ const d=await r.json(); this.ledgerCount=(d.counts&&d.counts.submitted)||0; } }catch(e){} },
       onTab(){ if(this.tab==='dashboard') this.loadSummary(); if(this.tab==='leads') this.loadLeads(); if(this.tab==='enquiries') this.loadEnquiries(); if(this.tab==='quotations') this.loadQuotes(); },
       money(v){ const n=Number(v||0); return '₹'+n.toLocaleString('en-IN',{maximumFractionDigits:0}); },
       dims(e){ const p=[e.length_m,e.width_m,e.eave_height_m].map(x=>x||'–'); return (e.length_m||e.width_m||e.eave_height_m)? p.join(' × '):'—'; },
