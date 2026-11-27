@@ -31,8 +31,8 @@
       <div class="font-mono text-sm bg-metfraa-gray-50 rounded px-3 py-2 break-all" x-text="publicLink"></div>
       <div class="flex gap-2 mt-3 flex-wrap">
         <button @click="copy(publicLink)" class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-semibold">Copy link</button>
+        <button @click="downloadQR()" class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-semibold">Download QR</button>
         <a :href="'https://wa.me/?text='+encodeURIComponent('Please fill the Metfraa ledger form: '+publicLink)" target="_blank" class="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold">Share on WhatsApp</a>
-        <a href="/crm/ledger/api/excel" class="px-3 py-1.5 rounded-lg ring-1 ring-green-600 text-green-700 text-xs font-semibold">Excel</a>
       </div>
       <p class="text-xs text-metfraa-gray-400 mt-2">Anyone with this link can submit. For a specific customer, open a confirmed quotation in the CRM and use “Ledger form”.</p>
     </div>
@@ -47,6 +47,7 @@
       </button>
     </template>
     <input x-model="q" @input.debounce.300ms="load()" placeholder="Search company, GSTIN, ref" class="ml-auto text-sm rounded-lg border-metfraa-gray-300 min-w-[14rem]">
+    <a href="/crm/ledger/api/excel" class="px-3 py-1.5 rounded-lg ring-1 ring-green-600 text-green-700 text-xs font-semibold">Excel</a>
   </div>
 
   <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 overflow-x-auto">
@@ -141,6 +142,7 @@
       async saveStatus(){ await fetch('/crm/ledger/api/'+this.d.id+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:this.d.status,remarks:this.d.remarks||''})}); this.showDetail=false; if(window.toast)toast('Updated','success'); this.load(); },
       async del(r){ if(!confirm('Delete '+r.ref+'?'))return; await fetch('/crm/ledger/api/'+r.id+'/delete',{method:'POST'}); this.load(); },
       copy(t){ navigator.clipboard.writeText(t).then(()=>{ if(window.toast)toast('Copied','success'); }); },
+      downloadQR(){ try{ const box=document.getElementById('qrbox'); const cv=box.querySelector('canvas'); const img=box.querySelector('img'); let url=cv?cv.toDataURL('image/png'):(img?img.src:''); if(!url){ if(window.toast)toast('QR not ready','error'); return; } const a=document.createElement('a'); a.href=url; a.download='metfraa-ledger-qr.png'; document.body.appendChild(a); a.click(); a.remove(); }catch(e){ if(window.toast)toast('Could not download QR','error'); } },
     };
   }
 </script>
