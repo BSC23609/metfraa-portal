@@ -334,6 +334,14 @@ def manifest():
     return FileResponse(str(_STATIC / "manifest.json"), media_type="application/manifest+json")
 
 
+@app.get("/downloads", response_class=HTMLResponse)
+def downloads(request: Request, user: Employee | None = Depends(get_optional_user)):
+    """Download Center — company profiles + code books, for logged-in staff."""
+    if not user:
+        return RedirectResponse("/auth/login", status_code=303)
+    return templates.TemplateResponse(request, "downloads.html", {"user": user})
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

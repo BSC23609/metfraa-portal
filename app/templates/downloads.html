@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Download Center — Metfraa Portal{% endblock %}
+
+{% block content %}
+<style>
+  details > summary { list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details[open] .chev { transform: rotate(180deg); }
+</style>
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="codeBooks()" x-init="init()" x-cloak>
+
+  <div class="mb-6 flex items-start justify-between gap-4">
+    <div>
+      <div class="lbl mb-2">Metfraa Portal</div>
+      <h1 class="display display-xl text-4xl text-metfraa-ink leading-none">Download Center</h1>
+      <p class="text-sm text-metfraa-gray-500 mt-2">Company profiles and design code books — view in the browser or download.</p>
+    </div>
+    <a href="/" class="shrink-0 text-sm font-semibold text-metfraa-gray-500 hover:text-metfraa-blue">← Home</a>
+  </div>
+
+  <!-- ============================= Company profiles ============================= -->
+  <details open class="mb-4 bg-white rounded-xl ring-1 ring-metfraa-gray-200 overflow-hidden">
+    <summary class="cursor-pointer flex items-center justify-between gap-3 px-5 py-4">
+      <span class="flex items-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-metfraa-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+        <span class="font-bold text-metfraa-ink">Company profiles</span>
+      </span>
+      <svg class="chev h-4 w-4 text-metfraa-gray-400 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <div class="px-3 pb-3 border-t border-metfraa-gray-100">
+      {% set decks = [
+        ('Bharat Steel Chennai', [
+          ('Company Profile', 'bharat-steel-profile'),
+          ('Corporate Deck', 'bharat-steel-deck')]),
+        ('Metfraa Steel Buildings', [
+          ('About Metfraa', 'metfraa-about'),
+          ('Factory', 'metfraa-factory'),
+          ('PEB Fabrication', 'metfraa-peb-fabrication'),
+          ('Industrial Roofing', 'metfraa-industrial-roofing'),
+          ('Precision Retrofitting', 'metfraa-retrofitting')]),
+        ('Crayon Roofings', [
+          ('Company Profile', 'crayon-profile')]),
+      ] %}
+      {% for group, files in decks %}
+      <div class="px-2 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-metfraa-gray-400">{{ group }}</div>
+      {% for label, slug in files %}
+      <div class="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-metfraa-gray-50">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0 text-metfraa-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M7 3h7l5 5v13a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z"/><path stroke-linecap="round" stroke-linejoin="round" d="M14 3v5h5"/></svg>
+        <a href="/static/decks/{{ slug }}.pdf" target="_blank" rel="noopener" class="flex-1 text-sm font-medium text-metfraa-ink hover:text-metfraa-blue truncate">{{ label }}</a>
+        <a href="/static/decks/{{ slug }}.pdf" target="_blank" rel="noopener"
+           class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg ring-1 ring-metfraa-gray-200 text-xs font-semibold text-metfraa-gray-600 hover:text-metfraa-blue hover:ring-metfraa-blue">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.5 12S5.5 5.5 12 5.5 21.5 12 21.5 12 18.5 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.5"/></svg>View</a>
+        <a href="/static/decks/{{ slug }}.pdf" download
+           class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg ring-1 ring-metfraa-gray-200 text-xs font-semibold text-metfraa-gray-600 hover:text-metfraa-blue hover:ring-metfraa-blue">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>Download</a>
+      </div>
+      {% endfor %}
+      {% endfor %}
+    </div>
+  </details>
+
+  <!-- ============================= Code books ============================= -->
+  <details class="mb-4 bg-white rounded-xl ring-1 ring-metfraa-gray-200 overflow-hidden">
+    <summary class="cursor-pointer flex items-center justify-between gap-3 px-5 py-4">
+      <span class="flex items-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-metfraa-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5z"/><path stroke-linecap="round" stroke-linejoin="round" d="M8 8h5M8 12h8M8 16h8"/></svg>
+        <span class="font-bold text-metfraa-ink">Code books</span>
+        <span class="text-xs text-metfraa-gray-400" x-show="total" x-text="'('+total+')'"></span>
+      </span>
+      <svg class="chev h-4 w-4 text-metfraa-gray-400 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <div class="px-5 pb-5 border-t border-metfraa-gray-100 pt-4">
+      <p class="text-xs text-metfraa-gray-500 mb-3">Design standards &amp; reference codes — IS, ASCE, AISC. Visible to signed-in staff only.</p>
+
+      <!-- admin: add -->
+      <template x-if="canEdit">
+        <details class="mb-4 bg-metfraa-gray-50 rounded-xl ring-1 ring-metfraa-gray-200 p-4">
+          <summary class="cursor-pointer text-sm font-semibold text-metfraa-ink">+ Add code books</summary>
+          <div class="mt-3 space-y-4">
+            <div class="space-y-2">
+              <div class="text-xs font-semibold text-metfraa-ink">Upload PDFs <span class="font-normal text-metfraa-gray-400">— up to 4 MB each</span></div>
+              <div class="flex flex-wrap items-center gap-2">
+                <input type="text" x-model="upCategory" placeholder="Category (e.g. IS codes)" class="rounded-lg border-metfraa-gray-300 text-sm">
+                <label class="inline-flex items-center gap-2 cursor-pointer text-sm border border-metfraa-gray-300 rounded-lg px-3 py-2 bg-white hover:border-metfraa-blue">
+                  <span>Choose PDFs</span>
+                  <input type="file" accept="application/pdf" multiple class="hidden" @change="upload($event)">
+                </label>
+                <span x-show="uploading" class="text-xs text-metfraa-gray-500">Uploading…</span>
+              </div>
+              <template x-if="upResults.length">
+                <ul class="text-xs space-y-0.5">
+                  <template x-for="(r,i) in upResults" :key="i">
+                    <li :class="r.ok ? 'text-emerald-700' : 'text-red-600'"><span x-text="(r.ok?'✓ ':'✗ ')+r.name"></span><span x-show="!r.ok && r.msg" x-text="' — '+r.msg"></span></li>
+                  </template>
+                </ul>
+              </template>
+              <p class="text-[11px] text-metfraa-gray-400">Files bigger than 4 MB (ASCE, AISC, IS 800…) can’t be uploaded here on this plan — use the bulk script, then paste the lines it prints below.</p>
+            </div>
+            <div class="space-y-2 border-t border-metfraa-gray-200 pt-3">
+              <p class="text-xs text-metfraa-gray-500">Or paste one entry per line. Format: <code>Title | file path | Category</code> — the bulk script prints these ready to paste.</p>
+              <textarea x-model="addText" rows="4" placeholder="IS 800 (General Construction in Steel) | code-books/800.pdf | IS codes"
+                        class="w-full rounded-lg border-metfraa-gray-300 text-sm font-mono"></textarea>
+              <div class="flex items-center gap-3">
+                <button @click="add()" :disabled="busy" class="text-white text-sm font-bold px-4 py-2 rounded-lg disabled:opacity-50"
+                        style="background:#0A2B66"><span x-show="!busy">Add links</span><span x-show="busy">Adding…</span></button>
+                <span x-show="err" class="text-sm text-red-600" x-text="err"></span>
+              </div>
+            </div>
+          </div>
+        </details>
+      </template>
+
+      <div x-show="groups.length===0" class="text-sm text-metfraa-gray-400 text-center py-6">
+        No code books yet.<template x-if="canEdit"><span> Use “Add code books” above.</span></template>
+      </div>
+
+      <template x-for="g in groups" :key="g.category">
+        <div class="mb-5">
+          <div class="text-[11px] font-semibold uppercase tracking-wide text-metfraa-gray-400 mb-2" x-text="g.category"></div>
+          <div class="rounded-xl ring-1 ring-metfraa-gray-200 divide-y divide-metfraa-gray-100">
+            <template x-for="it in g.items" :key="it.id">
+              <div class="flex items-center gap-3 px-4 py-3">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0 text-metfraa-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M7 3h7l5 5v13a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z"/><path stroke-linecap="round" stroke-linejoin="round" d="M14 3v5h5"/></svg>
+                <a :href="it.view" target="_blank" rel="noopener" class="flex-1 text-sm font-medium text-metfraa-ink hover:text-metfraa-blue truncate" x-text="it.title"></a>
+                <a :href="it.view" target="_blank" rel="noopener" title="View"
+                   class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg ring-1 ring-metfraa-gray-200 text-xs font-semibold text-metfraa-gray-600 hover:text-metfraa-blue hover:ring-metfraa-blue">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.5 12S5.5 5.5 12 5.5 21.5 12 21.5 12 18.5 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.5"/></svg>View</a>
+                <a :href="it.download"
+                   class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg ring-1 ring-metfraa-gray-200 text-xs font-semibold text-metfraa-gray-600 hover:text-metfraa-blue hover:ring-metfraa-blue">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>Download</a>
+                <template x-if="canEdit">
+                  <button @click="del(it)" title="Remove" class="p-1 text-metfraa-gray-300 hover:text-red-500">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0v12a1 1 0 001 1h6a1 1 0 001-1V7"/></svg></button>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </details>
+</div>
+
+<script>
+  function codeBooks(){
+    return {
+      groups: [], canEdit: false, total: 0, addText: '', busy: false, err: '',
+      upCategory: '', uploading: false, upResults: [],
+      async init(){ await this.load(); },
+      async load(){
+        try{ const r = await fetch('/code-books/api/list'); if(r.ok){ const d = await r.json(); this.groups = d.groups||[]; this.canEdit = !!d.can_edit; this.total = d.total||0; } }catch(e){}
+      },
+      async upload(ev){
+        const files = Array.from(ev.target.files || []); if(!files.length) return;
+        this.uploading = true; this.upResults = [];
+        for(const f of files){
+          const fd = new FormData(); fd.append('file', f); fd.append('category', this.upCategory || 'Code Books');
+          try{
+            const r = await fetch('/code-books/api/upload', {method:'POST', body: fd});
+            const d = await r.json().catch(()=>({}));
+            this.upResults.push({name: f.name, ok: r.ok, msg: d.detail || ''});
+          }catch(e){ this.upResults.push({name: f.name, ok:false, msg:'upload failed'}); }
+        }
+        this.uploading = false; ev.target.value = ''; await this.load();
+      },
+      async add(){
+        if(!this.addText.trim()){ this.err='Paste at least one entry.'; return; }
+        this.busy = true; this.err = '';
+        try{
+          const r = await fetch('/code-books/api/add', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text: this.addText})});
+          const d = await r.json();
+          if(r.ok){ this.addText=''; if(window.toast) toast('Added '+d.added, 'success'); await this.load(); }
+          else { this.err = d.detail || 'Could not add.'; }
+        }catch(e){ this.err = 'Could not add.'; }
+        this.busy = false;
+      },
+      async del(it){
+        if(!confirm('Remove "'+it.title+'"?')) return;
+        try{ await fetch('/code-books/api/'+it.id+'/delete', {method:'POST'}); await this.load(); }catch(e){}
+      },
+    };
+  }
+</script>
+{% endblock %}

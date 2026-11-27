@@ -84,7 +84,7 @@ _ORDER = ["IS codes", "IS Codes", "American codes", "American Codes", "Code Book
 @router.get("", response_class=HTMLResponse)
 def page(request: Request, user: Employee = Depends(get_current_user)):
     _ensure()
-    return templates.TemplateResponse(request, "code_books.html", {"user": user})
+    return templates.TemplateResponse(request, "downloads.html", {"user": user})
 
 
 @router.get("/api/list")
