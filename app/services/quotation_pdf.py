@@ -22,6 +22,8 @@ INK = colors.HexColor("#1E1D1D")
 GRAY = colors.HexColor("#64748B")
 LIGHT = colors.HexColor("#F1F5F9")
 LINE = colors.HexColor("#CBD5E1")
+PANEL = colors.HexColor("#EEF3F9")
+ROWALT = colors.HexColor("#F7F9FC")
 
 _IMG = pathlib.Path(__file__).resolve().parent.parent / "static" / "img"
 _LOGO = _IMG / "bsg_group_logo.png"              # group logo (header left)
@@ -60,6 +62,54 @@ def _d(v):
     return v.strftime("%d-%m-%Y") if v else "-"
 
 
+_ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+         "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+         "Seventeen", "Eighteen", "Nineteen"]
+_TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
+
+
+def _two(n):
+    if n < 20:
+        return _ONES[n]
+    return (_TENS[n // 10] + (" " + _ONES[n % 10] if n % 10 else "")).strip()
+
+
+def _three(n):
+    h = n // 100
+    r = n % 100
+    out = (_ONES[h] + " Hundred" if h else "")
+    if r:
+        out = (out + " " + _two(r)).strip()
+    return out
+
+
+def _amount_in_words(amount):
+    """Indian-system rupees in words, e.g. 6,499,440 -> 'Rupees Sixty Four
+    Lakh Ninety Nine Thousand Four Hundred Forty Only'."""
+    try:
+        n = int(round(float(amount or 0)))
+    except (TypeError, ValueError):
+        return ""
+    if n == 0:
+        return "Rupees Zero Only"
+    crore = n // 10000000
+    n %= 10000000
+    lakh = n // 100000
+    n %= 100000
+    thousand = n // 1000
+    n %= 1000
+    parts = []
+    if crore:
+        parts.append(_two(crore) + " Crore")
+    if lakh:
+        parts.append(_two(lakh) + " Lakh")
+    if thousand:
+        parts.append(_two(thousand) + " Thousand")
+    if n:
+        parts.append(_three(n))
+    return "Rupees " + " ".join(p for p in parts if p).strip() + " Only"
+
+
 def build_quotation_pdf(q) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=14 * mm, bottomMargin=16 * mm,
@@ -79,9 +129,23 @@ def build_quotation_pdf(q) -> bytes:
     title = ParagraphStyle("title", parent=ss["Normal"], fontName="Helvetica-Bold",
                            fontSize=13, textColor=colors.white, alignment=TA_CENTER, leading=16)
 
+    W = 180 * mm  # content width
+
+    # styles for the fresh layout
+    lbl = ParagraphStyle("lbl", parent=ss["Normal"], fontName="Helvetica", fontSize=7.5,
+                         textColor=GRAY, leading=10)
+    lblr = ParagraphStyle("lblr", parent=lbl, alignment=TA_RIGHT)
+    val = ParagraphStyle("val", parent=ss["Normal"], fontSize=9, textColor=INK, leading=12)
+    valr = ParagraphStyle("valr", parent=val, alignment=TA_RIGHT)
+    valr_b = ParagraphStyle("valrb", parent=valr, fontName="Helvetica-Bold")
+    qt = ParagraphStyle("qt", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=26,
+                        textColor=NAVY, leading=28)
+    hcell = ParagraphStyle("hcell", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=8.5,
+                           textColor=colors.white, leading=11)
+    hcellr = ParagraphStyle("hcellr", parent=hcell, alignment=TA_RIGHT)
+
     el = []
 
-    # ---- header: group logo (left) | Metfraa logo (right), no words
     def _img(path, w, h):
         if path.exists():
             try:
@@ -90,68 +154,66 @@ def build_quotation_pdf(q) -> bytes:
                 return ""
         return ""
 
-    # Same box height for both so the two logos render at an equal size.
-    group_cell = _img(_LOGO, 60 * mm, 14 * mm)
-    metfraa_cell = _img(_METFRAA_LOGO, 60 * mm, 14 * mm)
-    head_title = ParagraphStyle("htitle", parent=ss["Normal"], fontName="Helvetica-Bold",
-                                fontSize=22, textColor=colors.black, alignment=TA_CENTER, leading=26)
-
-    head = Table([[metfraa_cell, group_cell]], colWidths=[90 * mm, 90 * mm])
+    # ---- masthead: Metfraa (primary, left) + Bharat Steel Group (right)
+    metfraa_cell = _img(_METFRAA_LOGO, 54 * mm, 15 * mm)
+    group_cell = _img(_LOGO, 44 * mm, 13 * mm)
+    head = Table([[metfraa_cell, group_cell]], colWidths=[108 * mm, 72 * mm])
     head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                               ("ALIGN", (0, 0), (0, 0), "LEFT"),
                               ("ALIGN", (1, 0), (1, 0), "RIGHT"),
                               ("LEFTPADDING", (0, 0), (-1, -1), 0),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
     el.append(head)
-    el.append(Spacer(1, 6))
-    el.append(Table([[""]], colWidths=[180 * mm],
-                    style=TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1.3, NAVY)])))
-    el.append(Spacer(1, 10))
+    el.append(Spacer(1, 12))
 
-    # ---- QUOTATION banner, centred above the details
-    el.append(Table([[Paragraph("QUOTATION", title)]], colWidths=[180 * mm],
-                    style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), NAVY),
-                                      ("TOPPADDING", (0, 0), (-1, -1), 6),
-                                      ("BOTTOMPADDING", (0, 0), (-1, -1), 6)])))
-    el.append(Spacer(1, 10))
+    # ---- title panel: big QUOTATION on the left, meta grid on the right
+    meta = Table([
+        [Paragraph("QUOTATION NO.", lblr), Paragraph(q.quote_no or "-", valr_b)],
+        [Paragraph("DATE", lblr), Paragraph(_d(q.date), valr)],
+        [Paragraph("VALID UNTIL", lblr), Paragraph(_d(q.valid_until), valr)],
+        [Paragraph("PREPARED BY", lblr), Paragraph(q.created_by or "-", valr)],
+    ], colWidths=[30 * mm, 38 * mm])
+    meta.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                              ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+                              ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+                              ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    panel = Table([[Paragraph("QUOTATION", qt), meta]], colWidths=[92 * mm, 88 * mm])
+    panel.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), PANEL),
+                               ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                               ("LEFTPADDING", (0, 0), (0, 0), 14),
+                               ("RIGHTPADDING", (-1, 0), (-1, 0), 14),
+                               ("TOPPADDING", (0, 0), (-1, -1), 10),
+                               ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                               ("LINEBEFORE", (0, 0), (0, 0), 3, NAVY)]))
+    el.append(panel)
+    el.append(Spacer(1, 14))
 
-    # ---- customer + meta two columns
-    cust = [Paragraph("TO", small),
-            Paragraph(q.customer_company or q.customer_name or "-", body_b)]
+    # ---- bill to
+    bt = [Paragraph("BILL TO", ParagraphStyle("bt", parent=lbl, fontName="Helvetica-Bold",
+                                              textColor=BLUE, fontSize=8)),
+          Paragraph(q.customer_company or q.customer_name or "-",
+                    ParagraphStyle("c", parent=val, fontName="Helvetica-Bold", fontSize=11, leading=14))]
+    line2 = []
     if q.customer_name and q.customer_company:
-        cust.append(Paragraph("Attn: " + q.customer_name, body))
+        line2.append("Attn: " + q.customer_name)
     if q.customer_address:
-        cust.append(Paragraph(q.customer_address.replace("\n", "<br/>"), body))
+        line2.append(q.customer_address.replace("\n", ", "))
     if q.customer_contact:
-        cust.append(Paragraph(q.customer_contact, body))
+        line2.append(q.customer_contact)
+    if line2:
+        bt.append(Paragraph("<br/>".join(line2), val))
     if q.project:
-        cust.append(Spacer(1, 3))
-        cust.append(Paragraph("<b>Project:</b> " + q.project, body))
+        bt.append(Spacer(1, 2))
+        bt.append(Paragraph('<font color="#64748B">Project:</font> <b>' + q.project + "</b>", val))
+    el.append(Table([[bt]], colWidths=[W], style=TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0)])))
+    el.append(Spacer(1, 12))
 
-    metatbl = Table([
-        [Paragraph("Quotation No.", small), Paragraph(q.quote_no or "-", body_b)],
-        [Paragraph("Date", small), Paragraph(_d(q.date), body)],
-        [Paragraph("Valid until", small), Paragraph(_d(q.valid_until), body)],
-        [Paragraph("Prepared by", small), Paragraph(q.created_by or "-", body)],
-    ], colWidths=[26 * mm, 42 * mm])
-    metatbl.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
-                                 ("TOPPADDING", (0, 0), (-1, -1), 1),
-                                 ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-                                 ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
-    top = Table([[cust, metatbl]], colWidths=[112 * mm, 68 * mm])
-    top.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
-    el.append(top)
-    el.append(Spacer(1, 10))
-
-    # ---- items table
-    header = ["#", "Description", "Qty", "Unit", "Rate", "Amount"]
-    data = [[Paragraph(f"<font color='white'><b>{h}</b></font>",
-                       ParagraphStyle("h", parent=cell,
-                                      alignment=TA_RIGHT if h in ("Qty", "Rate", "Amount") else TA_LEFT))]
-            for h in header]
-    data = [data[i][0] for i in range(len(header))]
-    rows = [data]
-    for n, it in enumerate(q.items or [], 1):
+    # ---- items table (slim header, horizontal separators only)
+    cw = [9 * mm, 85 * mm, 14 * mm, 15 * mm, 27 * mm, 30 * mm]
+    rows = [[Paragraph("#", hcell), Paragraph("DESCRIPTION", hcell), Paragraph("QTY", hcellr),
+             Paragraph("UNIT", hcell), Paragraph("RATE", hcellr), Paragraph("AMOUNT", hcellr)]]
+    items = q.items or []
+    for n, it in enumerate(items, 1):
         rows.append([
             Paragraph(str(it.get("sn") or n), cell),
             Paragraph(str(it.get("description") or ""), cell),
@@ -160,68 +222,79 @@ def build_quotation_pdf(q) -> bytes:
             Paragraph(_inr(it.get("rate")) if it.get("rate") not in (None, "") else "", cellr),
             Paragraph(_inr(it.get("amount")) if it.get("amount") not in (None, "") else "", cellr),
         ])
-    if not (q.items or []):
-        rows.append([Paragraph("-", cell)] + [Paragraph("", cell) for _ in range(5)])
-
-    tbl = Table(rows, colWidths=[8 * mm, 78 * mm, 14 * mm, 14 * mm, 30 * mm, 36 * mm], repeatRows=1)
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-        ("GRID", (0, 0), (-1, -1), 0.5, LINE),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, LIGHT]),
-    ]))
+    if not items:
+        rows.append([Paragraph("", cell) for _ in range(6)])
+    tbl = Table(rows, colWidths=cw, repeatRows=1)
+    st = [("BACKGROUND", (0, 0), (-1, 0), NAVY),
+          ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+          ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+          ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+          ("LINEBELOW", (0, 1), (-1, -2), 0.4, LINE),
+          ("LINEBELOW", (0, -1), (-1, -1), 0.8, NAVY)]
+    if len(rows) > 2:
+        st.append(("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, ROWALT]))
+    tbl.setStyle(TableStyle(st))
     el.append(tbl)
-    el.append(Spacer(1, 6))
+    el.append(Spacer(1, 10))
 
-    # ---- totals
-    tot_rows = [["Subtotal", _inr(q.subtotal)]]
+    # ---- amount in words (left) + totals (right)
+    words = _amount_in_words(q.total)
+    words_block = [Paragraph("AMOUNT IN WORDS", ParagraphStyle("w", parent=lbl,
+                             fontName="Helvetica-Bold", textColor=BLUE, fontSize=7.5)),
+                   Paragraph(words, ParagraphStyle("ww", parent=val, fontName="Helvetica-Bold",
+                             fontSize=9, leading=13))]
+
+    tot_rows = [[Paragraph("Subtotal", val), Paragraph(_inr(q.subtotal), valr)]]
     if (q.discount or 0):
-        tot_rows.append(["Discount", "- " + _inr(q.discount)])
-    tot_rows.append([f"GST ({(q.gst_pct or 0):g}%)", _inr(q.gst_amount)])
-    tot_rows.append(["Total", _inr(q.total)])
-    totals = Table([[Paragraph(a, body if a != "Total" else body_b),
-                     Paragraph(b, cellr if a != "Total" else ParagraphStyle("tb", parent=cellr, fontName="Helvetica-Bold"))]
-                    for a, b in tot_rows], colWidths=[30 * mm, 38 * mm])
+        tot_rows.append([Paragraph("Discount", val), Paragraph("- " + _inr(q.discount), valr)])
+    tot_rows.append([Paragraph(f"GST ({(q.gst_pct or 0):g}%)", val), Paragraph(_inr(q.gst_amount), valr)])
+    tot_rows.append([Paragraph('<font color="white"><b>TOTAL</b></font>', val),
+                     Paragraph('<font color="white"><b>' + _inr(q.total) + "</b></font>", valr)])
+    totals = Table(tot_rows, colWidths=[36 * mm, 42 * mm])
     totals.setStyle(TableStyle([
-        ("LINEABOVE", (0, -1), (-1, -1), 1, NAVY),
-        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("BACKGROUND", (0, -1), (-1, -1), LIGHT),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.4, LINE),
+        ("BACKGROUND", (0, -1), (-1, -1), NAVY),
     ]))
-    el.append(Table([["", totals]], colWidths=[112 * mm, 68 * mm],
-                    style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+    el.append(Table([[words_block, totals]], colWidths=[102 * mm, 78 * mm],
+                    style=TableStyle([("VALIGN", (0, 0), (0, 0), "TOP"),
+                                      ("VALIGN", (1, 0), (1, 0), "TOP"),
                                       ("LEFTPADDING", (0, 0), (-1, -1), 0),
                                       ("RIGHTPADDING", (0, 0), (-1, -1), 0)])))
-    el.append(Spacer(1, 12))
-
-    # ---- terms
-    if q.terms:
-        el.append(Paragraph("Terms &amp; Conditions", body_b))
-        el.append(Spacer(1, 2))
-        for line in str(q.terms).split("\n"):
-            line = line.strip()
-            if line:
-                el.append(Paragraph("• " + line, small))
     el.append(Spacer(1, 16))
 
-    # ---- signature
-    sign = Table([[Paragraph("For <b>" + GROUP + "</b>", body)],
-                  [Spacer(1, 22)],
-                  [Paragraph("Authorised Signatory", small)]], colWidths=[70 * mm])
-    el.append(Table([["", sign]], colWidths=[110 * mm, 70 * mm],
-                    style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
-                                      ("LEFTPADDING", (0, 0), (-1, -1), 0)])))
+    # ---- terms + signature side by side
+    terms_block = [Paragraph("TERMS &amp; CONDITIONS", ParagraphStyle("t", parent=lbl,
+                             fontName="Helvetica-Bold", textColor=BLUE, fontSize=8))]
+    if q.terms:
+        for ln in str(q.terms).split("\n"):
+            ln = ln.strip()
+            if ln:
+                terms_block.append(Paragraph("•&nbsp; " + ln, small))
+    sign_block = [Paragraph("For <b>" + GROUP + "</b>", val), Spacer(1, 24),
+                  Paragraph("Authorised Signatory", small)]
+    el.append(Table([[terms_block, sign_block]], colWidths=[108 * mm, 72 * mm],
+                    style=TableStyle([("VALIGN", (0, 0), (0, 0), "TOP"),
+                                      ("VALIGN", (1, 0), (1, 0), "TOP"),
+                                      ("ALIGN", (1, 0), (1, 0), "LEFT"),
+                                      ("LEFTPADDING", (0, 0), (0, 0), 0),
+                                      ("LEFTPADDING", (1, 0), (1, 0), 20)])))
 
-    def _footer(canvas, docu):
+    def _page(canvas, docu):
         canvas.saveState()
+        canvas.setFillColor(NAVY)
+        canvas.rect(0, A4[1] - 6 * mm, A4[0], 6 * mm, stroke=0, fill=1)
+        canvas.setFillColor(BLUE)
+        canvas.rect(0, A4[1] - 7.3 * mm, A4[0], 1.3 * mm, stroke=0, fill=1)
         canvas.setStrokeColor(LINE)
         canvas.line(15 * mm, 12 * mm, 195 * mm, 12 * mm)
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(GRAY)
-        canvas.drawString(15 * mm, 8 * mm, f"{EMAIL}  ·  {WEB}")
+        canvas.drawString(15 * mm, 8 * mm,
+                          "Metfraa Steel Buildings Pvt. Ltd.  ·  A Bharat Steel Group company  ·  " + EMAIL)
         canvas.drawRightString(195 * mm, 8 * mm, f"Page {docu.page}")
         canvas.restoreState()
 
-    doc.build(el, onFirstPage=_footer, onLaterPages=_footer)
+    doc.build(el, onFirstPage=_page, onLaterPages=_page)
     return buf.getvalue()
