@@ -91,8 +91,8 @@ def build_quotation_pdf(q) -> bytes:
         return ""
 
     # Same box height for both so the two logos render at an equal size.
-    group_cell = _img(_LOGO, 66 * mm, 18 * mm)
-    metfraa_cell = _img(_METFRAA_LOGO, 66 * mm, 18 * mm)
+    group_cell = _img(_LOGO, 60 * mm, 14 * mm)
+    metfraa_cell = _img(_METFRAA_LOGO, 60 * mm, 14 * mm)
     head_title = ParagraphStyle("htitle", parent=ss["Normal"], fontName="Helvetica-Bold",
                                 fontSize=22, textColor=colors.black, alignment=TA_CENTER, leading=26)
 
