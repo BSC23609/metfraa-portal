@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SAP Ledger Creation Data Sheet — Metfraa</title>
+  <title>Ledger Creation Data Sheet — Metfraa</title>
   <link rel="icon" href="/static/img/metfraa_logo.png">
   <script src="https://cdn.tailwindcss.com/3.4.5"></script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.1/cdn.min.js"></script>
@@ -22,7 +22,7 @@
   <div class="bg-white rounded-xl shadow-sm p-5 mb-4">
     <img src="/static/img/metfraa_logo.png" alt="Metfraa" class="h-9 mb-3">
     <div class="text-[11px] font-semibold tracking-wide text-[#0A2B66]">METFRAA STEEL BUILDINGS · LEDGER DATA</div>
-    <h1 class="text-2xl font-bold text-[#0A2B66] mt-1">SAP Ledger Creation Data Sheet</h1>
+    <h1 class="text-2xl font-bold text-[#0A2B66] mt-1">Ledger Creation Data Sheet</h1>
     <p class="text-sm text-slate-500 mt-1">Please fill in your company, billing, bank and shipping details so we can open your customer account. It takes about 5 minutes. Keep your GST certificate and a cancelled cheque ready to upload.</p>
     <p class="text-xs text-slate-400 mt-2"><span class="text-red-500">*</span> Required</p>
   </div>
@@ -62,7 +62,7 @@
         </template>
         <label class="flex items-center gap-2 text-sm border border-slate-200 rounded-lg px-3 py-2">
           <input type="checkbox" value="Other" x-model="f.type_of_buyer" class="rounded text-[#0A2B66]">Other:
-          <input x-model="f.type_of_buyer_other" class="flex-1 rounded border-slate-300 text-xs py-1"></label>
+          <input x-model="f.type_of_buyer_other" placeholder="Please specify" class="flex-1 rounded border-slate-300 text-xs py-1"></label>
       </div>
     </div>
 
@@ -76,17 +76,7 @@
         </template>
         <label class="flex items-center gap-2 text-sm px-1 py-1">
           <input type="radio" name="seg" value="Other" x-model="f.industry_segment" class="text-[#0A2B66]">Other:
-          <input x-model="f.industry_segment_other" class="flex-1 rounded border-slate-300 text-xs py-1"></label>
-      </div>
-    </div>
-
-    <!-- usage -->
-    <div class="bg-white rounded-xl shadow-sm p-5">
-      <div class="text-sm font-semibold req mb-2">Usage</div>
-      <div class="space-y-1">
-        <template x-for="u in usageOpts" :key="u">
-          <label class="flex items-center gap-2 text-sm"><input type="radio" name="usage" :value="u" x-model="f.usage" class="text-[#0A2B66]"><span x-text="u"></span></label>
-        </template>
+          <input x-model="f.industry_segment_other" placeholder="Please specify" class="flex-1 rounded border-slate-300 text-xs py-1"></label>
       </div>
     </div>
 

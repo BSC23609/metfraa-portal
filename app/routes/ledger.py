@@ -224,7 +224,7 @@ def public_submit(token: str, p: SubmitIn, db: Session = Depends(get_db)):
     required = {
         "Company Name": p.company_name, "Company Type": p.company_type,
         "Contact Number": p.contact_number, "Email": p.email,
-        "Customer Industry Segment": p.industry_segment, "Usage": p.usage,
+        "Customer Industry Segment": p.industry_segment,
         "Billing Address": p.billing_address, "Pincode": p.billing_pincode,
         "District": p.billing_district, "State": p.billing_state,
         "GST Number": p.billing_gstin, "Company Registration Type": p.company_reg_type,
