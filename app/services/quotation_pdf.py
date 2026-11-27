@@ -24,6 +24,7 @@ LIGHT = colors.HexColor("#F1F5F9")
 LINE = colors.HexColor("#CBD5E1")
 PANEL = colors.HexColor("#EEF3F9")
 ROWALT = colors.HexColor("#F7F9FC")
+GOLD = colors.HexColor("#B08D57")   # slim premium accent
 
 _IMG = pathlib.Path(__file__).resolve().parent.parent / "static" / "img"
 _LOGO = _IMG / "bsg_group_logo.png"              # group logo (header left)
@@ -129,19 +130,23 @@ def build_quotation_pdf(q) -> bytes:
     title = ParagraphStyle("title", parent=ss["Normal"], fontName="Helvetica-Bold",
                            fontSize=13, textColor=colors.white, alignment=TA_CENTER, leading=16)
 
-    W = 180 * mm  # content width
+    W = 180 * mm  # content width (same layout, elegant/premium styling)
 
-    # styles for the fresh layout
     lbl = ParagraphStyle("lbl", parent=ss["Normal"], fontName="Helvetica", fontSize=7.5,
                          textColor=GRAY, leading=10)
     lblr = ParagraphStyle("lblr", parent=lbl, alignment=TA_RIGHT)
-    val = ParagraphStyle("val", parent=ss["Normal"], fontSize=9, textColor=INK, leading=12)
+    val = ParagraphStyle("val", parent=ss["Normal"], fontSize=9, textColor=INK, leading=13)
     valr = ParagraphStyle("valr", parent=val, alignment=TA_RIGHT)
     valr_b = ParagraphStyle("valrb", parent=valr, fontName="Helvetica-Bold")
-    qt = ParagraphStyle("qt", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=26,
-                        textColor=NAVY, leading=28)
-    hcell = ParagraphStyle("hcell", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=8.5,
-                           textColor=colors.white, leading=11)
+    # serif title + refined small accent tags
+    qt = ParagraphStyle("qt", parent=ss["Normal"], fontName="Times-Bold", fontSize=30,
+                        textColor=NAVY, leading=32)
+
+    def _tag(txt):
+        return Paragraph(txt, ParagraphStyle("tag", parent=ss["Normal"], fontName="Helvetica-Bold",
+                                             fontSize=7.5, textColor=GOLD, leading=11))
+    hcell = ParagraphStyle("hcell", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=8,
+                           textColor=NAVY, leading=11)
     hcellr = ParagraphStyle("hcellr", parent=hcell, alignment=TA_RIGHT)
 
     el = []
@@ -164,9 +169,9 @@ def build_quotation_pdf(q) -> bytes:
                               ("LEFTPADDING", (0, 0), (-1, -1), 0),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
     el.append(head)
-    el.append(Spacer(1, 12))
+    el.append(Spacer(1, 16))
 
-    # ---- title panel: big QUOTATION on the left, meta grid on the right
+    # ---- title + meta, framed by hairlines (no fill), slim gold left accent
     meta = Table([
         [Paragraph("QUOTATION NO.", lblr), Paragraph(q.quote_no or "-", valr_b)],
         [Paragraph("DATE", lblr), Paragraph(_d(q.date), valr)],
@@ -177,22 +182,23 @@ def build_quotation_pdf(q) -> bytes:
                               ("TOPPADDING", (0, 0), (-1, -1), 1.5),
                               ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
-    panel = Table([[Paragraph("QUOTATION", qt), meta]], colWidths=[92 * mm, 88 * mm])
-    panel.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), PANEL),
-                               ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                               ("LEFTPADDING", (0, 0), (0, 0), 14),
-                               ("RIGHTPADDING", (-1, 0), (-1, 0), 14),
-                               ("TOPPADDING", (0, 0), (-1, -1), 10),
-                               ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-                               ("LINEBEFORE", (0, 0), (0, 0), 3, NAVY)]))
+    panel = Table([[Paragraph("Quotation", qt), meta]], colWidths=[92 * mm, 88 * mm])
+    panel.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                               ("LEFTPADDING", (0, 0), (0, 0), 10),
+                               ("RIGHTPADDING", (-1, 0), (-1, 0), 0),
+                               ("TOPPADDING", (0, 0), (-1, -1), 9),
+                               ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                               ("LINEBEFORE", (0, 0), (0, 0), 2.2, GOLD),
+                               ("LINEABOVE", (0, 0), (-1, 0), 0.6, NAVY),
+                               ("LINEBELOW", (0, -1), (-1, -1), 1.2, GOLD)]))
     el.append(panel)
-    el.append(Spacer(1, 14))
+    el.append(Spacer(1, 16))
 
     # ---- bill to
-    bt = [Paragraph("BILL TO", ParagraphStyle("bt", parent=lbl, fontName="Helvetica-Bold",
-                                              textColor=BLUE, fontSize=8)),
+    bt = [_tag("BILL TO"),
           Paragraph(q.customer_company or q.customer_name or "-",
-                    ParagraphStyle("c", parent=val, fontName="Helvetica-Bold", fontSize=11, leading=14))]
+                    ParagraphStyle("c", parent=val, fontName="Times-Bold", fontSize=13, leading=16,
+                                   textColor=NAVY))]
     line2 = []
     if q.customer_name and q.customer_company:
         line2.append("Attn: " + q.customer_name)
@@ -206,9 +212,9 @@ def build_quotation_pdf(q) -> bytes:
         bt.append(Spacer(1, 2))
         bt.append(Paragraph('<font color="#64748B">Project:</font> <b>' + q.project + "</b>", val))
     el.append(Table([[bt]], colWidths=[W], style=TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0)])))
-    el.append(Spacer(1, 12))
+    el.append(Spacer(1, 14))
 
-    # ---- items table (slim header, horizontal separators only)
+    # ---- items table (white header, hairline separators, no zebra)
     cw = [9 * mm, 85 * mm, 14 * mm, 15 * mm, 27 * mm, 30 * mm]
     rows = [[Paragraph("#", hcell), Paragraph("DESCRIPTION", hcell), Paragraph("QTY", hcellr),
              Paragraph("UNIT", hcell), Paragraph("RATE", hcellr), Paragraph("AMOUNT", hcellr)]]
@@ -225,55 +231,57 @@ def build_quotation_pdf(q) -> bytes:
     if not items:
         rows.append([Paragraph("", cell) for _ in range(6)])
     tbl = Table(rows, colWidths=cw, repeatRows=1)
-    st = [("BACKGROUND", (0, 0), (-1, 0), NAVY),
-          ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-          ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-          ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-          ("LINEBELOW", (0, 1), (-1, -2), 0.4, LINE),
-          ("LINEBELOW", (0, -1), (-1, -1), 0.8, NAVY)]
-    if len(rows) > 2:
-        st.append(("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, ROWALT]))
-    tbl.setStyle(TableStyle(st))
+    tbl.setStyle(TableStyle([
+        ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEABOVE", (0, 0), (-1, 0), 1.0, GOLD),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.8, NAVY),
+        ("LINEBELOW", (0, 1), (-1, -2), 0.35, LINE),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.8, NAVY),
+    ]))
     el.append(tbl)
-    el.append(Spacer(1, 10))
+    el.append(Spacer(1, 12))
 
-    # ---- amount in words (left) + totals (right)
-    words = _amount_in_words(q.total)
-    words_block = [Paragraph("AMOUNT IN WORDS", ParagraphStyle("w", parent=lbl,
-                             fontName="Helvetica-Bold", textColor=BLUE, fontSize=7.5)),
-                   Paragraph(words, ParagraphStyle("ww", parent=val, fontName="Helvetica-Bold",
-                             fontSize=9, leading=13))]
-
+    # ---- amount in words (left) + totals (right, no fill, gold-ruled total)
+    words_block = [_tag("AMOUNT IN WORDS"),
+                   Paragraph(_amount_in_words(q.total),
+                             ParagraphStyle("ww", parent=val, fontName="Times-Bold",
+                                            fontSize=10, leading=14, textColor=NAVY))]
     tot_rows = [[Paragraph("Subtotal", val), Paragraph(_inr(q.subtotal), valr)]]
     if (q.discount or 0):
         tot_rows.append([Paragraph("Discount", val), Paragraph("- " + _inr(q.discount), valr)])
     tot_rows.append([Paragraph(f"GST ({(q.gst_pct or 0):g}%)", val), Paragraph(_inr(q.gst_amount), valr)])
-    tot_rows.append([Paragraph('<font color="white"><b>TOTAL</b></font>', val),
-                     Paragraph('<font color="white"><b>' + _inr(q.total) + "</b></font>", valr)])
+    tot_lbl = ParagraphStyle("tl", parent=val, fontName="Times-Bold", fontSize=11, textColor=NAVY)
+    tot_val = ParagraphStyle("tv", parent=valr, fontName="Times-Bold", fontSize=11, textColor=NAVY)
+    tot_rows.append([Paragraph("TOTAL", tot_lbl), Paragraph(_inr(q.total), tot_val)])
     totals = Table(tot_rows, colWidths=[36 * mm, 42 * mm])
     totals.setStyle(TableStyle([
         ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("LINEBELOW", (0, 0), (-1, -2), 0.4, LINE),
-        ("BACKGROUND", (0, -1), (-1, -1), NAVY),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.35, LINE),
+        ("LINEABOVE", (0, -1), (-1, -1), 1.0, NAVY),
+        ("LINEBELOW", (0, -1), (-1, -1), 1.6, GOLD),
+        ("TOPPADDING", (0, -1), (-1, -1), 6), ("BOTTOMPADDING", (0, -1), (-1, -1), 6),
     ]))
     el.append(Table([[words_block, totals]], colWidths=[102 * mm, 78 * mm],
                     style=TableStyle([("VALIGN", (0, 0), (0, 0), "TOP"),
                                       ("VALIGN", (1, 0), (1, 0), "TOP"),
                                       ("LEFTPADDING", (0, 0), (-1, -1), 0),
                                       ("RIGHTPADDING", (0, 0), (-1, -1), 0)])))
-    el.append(Spacer(1, 16))
+    el.append(Spacer(1, 18))
 
     # ---- terms + signature side by side
-    terms_block = [Paragraph("TERMS &amp; CONDITIONS", ParagraphStyle("t", parent=lbl,
-                             fontName="Helvetica-Bold", textColor=BLUE, fontSize=8))]
+    terms_block = [_tag("TERMS & CONDITIONS")]
     if q.terms:
         for ln in str(q.terms).split("\n"):
             ln = ln.strip()
             if ln:
                 terms_block.append(Paragraph("•&nbsp; " + ln, small))
-    sign_block = [Paragraph("For <b>" + GROUP + "</b>", val), Spacer(1, 24),
-                  Paragraph("Authorised Signatory", small)]
+    sign_block = [Paragraph("For", small),
+                  Paragraph(GROUP, ParagraphStyle("g", parent=val, fontName="Times-Bold",
+                            fontSize=11, textColor=NAVY, leading=14)),
+                  Spacer(1, 26), Paragraph("Authorised Signatory", small)]
     el.append(Table([[terms_block, sign_block]], colWidths=[108 * mm, 72 * mm],
                     style=TableStyle([("VALIGN", (0, 0), (0, 0), "TOP"),
                                       ("VALIGN", (1, 0), (1, 0), "TOP"),
@@ -283,11 +291,14 @@ def build_quotation_pdf(q) -> bytes:
 
     def _page(canvas, docu):
         canvas.saveState()
+        # slim premium top rule: thin navy + gold hairline
         canvas.setFillColor(NAVY)
-        canvas.rect(0, A4[1] - 6 * mm, A4[0], 6 * mm, stroke=0, fill=1)
-        canvas.setFillColor(BLUE)
-        canvas.rect(0, A4[1] - 7.3 * mm, A4[0], 1.3 * mm, stroke=0, fill=1)
-        canvas.setStrokeColor(LINE)
+        canvas.rect(0, A4[1] - 3 * mm, A4[0], 3 * mm, stroke=0, fill=1)
+        canvas.setFillColor(GOLD)
+        canvas.rect(0, A4[1] - 3.7 * mm, A4[0], 0.7 * mm, stroke=0, fill=1)
+        # footer
+        canvas.setStrokeColor(GOLD)
+        canvas.setLineWidth(0.6)
         canvas.line(15 * mm, 12 * mm, 195 * mm, 12 * mm)
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(GRAY)
