@@ -25,13 +25,13 @@
 
   <!-- public link + QR -->
   <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-5 mb-5 flex flex-col sm:flex-row gap-5 items-start">
-    <div id="qrbox" class="shrink-0 bg-white ring-1 ring-metfraa-gray-200 rounded-lg relative flex items-center justify-center" style="width:152px;height:152px;"></div>
+    <img src="/crm/ledger/qr.png" alt="Ledger form QR" class="shrink-0 bg-white ring-1 ring-metfraa-gray-200 rounded-lg" style="width:140px;height:140px;">
     <div class="flex-1">
       <div class="lbl mb-1">Public ledger form link</div>
       <div class="font-mono text-sm bg-metfraa-gray-50 rounded px-3 py-2 break-all" x-text="publicLink"></div>
       <div class="flex gap-2 mt-3 flex-wrap">
         <button @click="copy(publicLink)" class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-semibold">Copy link</button>
-        <button @click="downloadQR()" class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-semibold">Download QR</button>
+        <a href="/crm/ledger/qr.png?download=1" class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-semibold">Download QR</a>
         <a :href="'https://wa.me/?text='+encodeURIComponent('Please fill the Metfraa ledger form: '+publicLink)" target="_blank" class="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold">Share on WhatsApp</a>
       </div>
       <p class="text-xs text-metfraa-gray-400 mt-2">Anyone with this link can submit. For a specific customer, open a confirmed quotation in the CRM and use “Ledger form”.</p>
@@ -118,7 +118,6 @@
 
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
   function ledgerAdmin(){
     return {
@@ -129,18 +128,6 @@
       showDetail:false, d:{}, fields:[],
       async init(){
         try{ const r=await fetch('/crm/ledger/api/meta'); if(r.ok){ const m=await r.json(); this.publicLink=m.public_link; } }catch(e){}
-        this.$nextTick(()=>{ try{
-          const el=document.getElementById('qrbox');
-          new QRCode(el,{text:this.publicLink||this.base+'/crm/kyc',width:132,height:132,
-                         colorDark:'#0A2B66',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.H});
-          // small round white centre badge holding the group logo
-          const ov=document.createElement('div');
-          ov.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);'
-            +'width:34px;height:34px;background:#fff;border-radius:50%;display:flex;'
-            +'align-items:center;justify-content:center;box-shadow:0 0 0 2px #fff;';
-          const im=document.createElement('img'); im.src='/static/img/bsg_group_logo.png';
-          im.style.cssText='max-width:26px;max-height:26px;display:block;'; ov.appendChild(im); el.appendChild(ov);
-        }catch(e){} });
         this.load();
       },
       badge(s){ return {submitted:'bg-amber-50 text-amber-700',link_sent:'bg-sky-50 text-sky-700',approved:'bg-emerald-50 text-emerald-700',in_sap:'bg-indigo-50 text-indigo-700',rejected:'bg-red-50 text-red-600'}[s]||'bg-metfraa-gray-100 text-metfraa-gray-600'; },
@@ -153,20 +140,6 @@
       async saveStatus(){ await fetch('/crm/ledger/api/'+this.d.id+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:this.d.status,remarks:this.d.remarks||''})}); this.showDetail=false; if(window.toast)toast('Updated','success'); this.load(); },
       async del(r){ if(!confirm('Delete '+r.ref+'?'))return; await fetch('/crm/ledger/api/'+r.id+'/delete',{method:'POST'}); this.load(); },
       copy(t){ navigator.clipboard.writeText(t).then(()=>{ if(window.toast)toast('Copied','success'); }); },
-      downloadQR(){ try{
-        const box=document.getElementById('qrbox'); const cv=box.querySelector('canvas');
-        const size=264, out=document.createElement('canvas'); out.width=size; out.height=size;
-        const ctx=out.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,size,size);
-        const finish=()=>{ const logo=new Image(); logo.onload=()=>{
-            const r=size*0.14;
-            ctx.beginPath(); ctx.arc(size/2,size/2,r,0,2*Math.PI); ctx.fillStyle='#fff'; ctx.fill();
-            const maxd=r*1.4; let lw=maxd, lh=lw*logo.height/logo.width; if(lh>maxd){ lh=maxd; lw=lh*logo.width/logo.height; }
-            ctx.drawImage(logo,(size-lw)/2,(size-lh)/2,lw,lh);
-            const a=document.createElement('a'); a.href=out.toDataURL('image/png'); a.download='metfraa-ledger-qr.png'; a.click(); };
-          logo.src='/static/img/bsg_group_logo.png'; };
-        if(cv){ ctx.drawImage(cv,0,0,size,size); finish(); }
-        else { const qi=box.querySelector('img'); if(!qi){ if(window.toast)toast('QR not ready','error'); return; } const q=new Image(); q.onload=()=>{ ctx.drawImage(q,0,0,size,size); finish(); }; q.src=qi.src; }
-      }catch(e){ if(window.toast)toast('Could not download QR','error'); } },
     };
   }
 </script>

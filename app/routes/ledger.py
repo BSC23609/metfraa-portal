@@ -8,7 +8,9 @@ it lands in the admin "Ledger forms" list to review, approve and mark in SAP.
 Public (customer-facing) endpoints take only the link token and need no
 login. Admin endpoints require a logged-in portal user.
 """
+import io
 import os
+import pathlib
 import secrets
 from datetime import datetime
 
@@ -294,6 +296,46 @@ def admin_page(request: Request, user: Employee = Depends(get_current_user),
 def admin_meta(user: Employee = Depends(get_current_user)):
     return {"public_link": f"{PUBLIC_BASE}/crm/kyc", "statuses": STATUSES,
             "status_label": STATUS_LABEL}
+
+
+def _branded_qr_png(text: str) -> bytes:
+    """Square navy QR for `text` with the Bharat Steel Group logo in a round
+    white centre badge."""
+    import qrcode
+    from qrcode.constants import ERROR_CORRECT_H
+    from PIL import Image, ImageDraw
+    qr = qrcode.QRCode(error_correction=ERROR_CORRECT_H, box_size=12, border=2)
+    qr.add_data(text)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color=(10, 43, 102), back_color="white").convert("RGBA")
+    w, h = img.size
+    logo_path = (pathlib.Path(__file__).resolve().parent.parent
+                 / "static" / "img" / "bsg_group_logo.png")
+    try:
+        if logo_path and logo_path.exists():
+            d = int(w * 0.26)
+            badge = Image.new("RGBA", (d, d), (0, 0, 0, 0))
+            ImageDraw.Draw(badge).ellipse([0, 0, d - 1, d - 1], fill=(255, 255, 255, 255))
+            logo = Image.open(str(logo_path)).convert("RGBA")
+            md = int(d * 0.74)
+            lw, lh = logo.size
+            r = min(md / lw, md / lh)
+            logo = logo.resize((max(1, int(lw * r)), max(1, int(lh * r))), Image.LANCZOS)
+            badge.alpha_composite(logo, ((d - logo.size[0]) // 2, (d - logo.size[1]) // 2))
+            img.alpha_composite(badge, ((w - d) // 2, (h - d) // 2))
+    except Exception:
+        pass
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@router.get("/ledger/qr.png")
+def ledger_qr(download: int = 0, user: Employee = Depends(get_current_user)):
+    data = _branded_qr_png(f"{PUBLIC_BASE}/crm/kyc")
+    disp = "attachment" if download else "inline"
+    return Response(content=data, media_type="image/png",
+                    headers={"Content-Disposition": f'{disp}; filename="metfraa-ledger-qr.png"'})
 
 
 def _row_json(db, f: CrmLedgerForm):
