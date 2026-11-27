@@ -133,13 +133,13 @@
           const el=document.getElementById('qrbox');
           new QRCode(el,{text:this.publicLink||this.base+'/crm/kyc',width:132,height:132,
                          colorDark:'#0A2B66',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.H});
-          // square white centre tile holding the group logo
+          // small round white centre badge holding the group logo
           const ov=document.createElement('div');
           ov.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);'
-            +'width:36px;height:36px;background:#fff;border-radius:5px;display:flex;'
+            +'width:34px;height:34px;background:#fff;border-radius:50%;display:flex;'
             +'align-items:center;justify-content:center;box-shadow:0 0 0 2px #fff;';
           const im=document.createElement('img'); im.src='/static/img/bsg_group_logo.png';
-          im.style.cssText='max-width:30px;max-height:30px;display:block;'; ov.appendChild(im); el.appendChild(ov);
+          im.style.cssText='max-width:26px;max-height:26px;display:block;'; ov.appendChild(im); el.appendChild(ov);
         }catch(e){} });
         this.load();
       },
@@ -158,10 +158,9 @@
         const size=264, out=document.createElement('canvas'); out.width=size; out.height=size;
         const ctx=out.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,size,size);
         const finish=()=>{ const logo=new Image(); logo.onload=()=>{
-            const tile=size*0.28, tx=(size-tile)/2, ty=(size-tile)/2;
-            ctx.fillStyle='#fff'; ctx.fillRect(tx,ty,tile,tile);
-            const pad=tile*0.16, maxw=tile-2*pad, maxh=tile-2*pad;
-            let lw=maxw, lh=lw*logo.height/logo.width; if(lh>maxh){ lh=maxh; lw=lh*logo.width/logo.height; }
+            const r=size*0.14;
+            ctx.beginPath(); ctx.arc(size/2,size/2,r,0,2*Math.PI); ctx.fillStyle='#fff'; ctx.fill();
+            const maxd=r*1.4; let lw=maxd, lh=lw*logo.height/logo.width; if(lh>maxd){ lh=maxd; lw=lh*logo.width/logo.height; }
             ctx.drawImage(logo,(size-lw)/2,(size-lh)/2,lw,lh);
             const a=document.createElement('a'); a.href=out.toDataURL('image/png'); a.download='metfraa-ledger-qr.png'; a.click(); };
           logo.src='/static/img/bsg_group_logo.png'; };
