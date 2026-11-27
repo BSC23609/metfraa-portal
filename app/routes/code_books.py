@@ -1,18 +1,20 @@
 """Code Books — reference standards (IS / ASCE / AISC …) for the design team.
 
-The PDFs are large (10-30 MB), so they are hosted in external storage
-(Vercel Blob) and referenced here by public URL. Any logged-in user can
-view/download; only admins can add or remove entries.
+The PDFs are large (10-30 MB) and licensed, so they live in a PRIVATE Vercel
+Blob store. Entries hold the blob pathname; the portal streams each file to the
+viewer through a login-gated route, so only signed-in staff can open them.
+Any logged-in user can view/download; only admins can add or remove entries.
 """
-import os
 import re
-from urllib.parse import unquote, urlparse
+from contextlib import AsyncExitStack
+from urllib.parse import quote, unquote, urlparse
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
 from ..database import engine, get_db
 from ..deps import get_current_user
@@ -29,37 +31,49 @@ def _ensure():
         pass
 
 
-def _title_from_url(url: str) -> str:
-    name = unquote(urlparse(url).path.rsplit("/", 1)[-1])
+def _title_from_ref(ref: str) -> str:
+    name = unquote(urlparse(ref).path.rsplit("/", 1)[-1] if "://" in ref else ref.rsplit("/", 1)[-1])
     name = re.sub(r"\.(pdf|PDF)$", "", name)
     name = name.replace("_", " ").replace("-", " ")
     name = re.sub(r"\s+", " ", name).strip()
     return name or "Document"
 
 
+def _is_url(s: str) -> bool:
+    return s.lower().startswith(("http://", "https://"))
+
+
+def _links(ref: str):
+    """View + download links for a stored reference. A blob pathname is streamed
+    through our login-gated /file route; a legacy full URL is passed through."""
+    if _is_url(ref):
+        return ref, ref + ("&" if "?" in ref else "?") + "download=1"
+    base = "/code-books/file?p=" + quote(ref, safe="")
+    return base, base + "&download=1"
+
+
 def _parse_lines(text: str):
-    """Each line: 'Title | URL | Category', 'Title | URL', or just 'URL'."""
+    """Each line, positional: 'Title | ref | Category', 'Title | ref', or 'ref'.
+    `ref` is a blob pathname (e.g. code-books/800.pdf) or a full URL."""
     out = []
     for raw in (text or "").splitlines():
         line = raw.strip()
         if not line:
             continue
         parts = [p.strip() for p in line.split("|")]
-        title = url = category = ""
-        url_parts = [p for p in parts if p.lower().startswith(("http://", "https://"))]
-        if not url_parts:
+        parts = [p for p in parts if p]
+        if not parts:
             continue
-        url = url_parts[0]
-        others = [p for p in parts if p is not url and not p.lower().startswith(("http://", "https://"))]
-        if len(others) >= 1 and others[0]:
-            title = others[0]
-        if len(others) >= 2 and others[1]:
-            category = others[1]
-        out.append({
-            "title": title or _title_from_url(url),
-            "url": url,
-            "category": category or "Code Books",
-        })
+        if len(parts) == 1:
+            title, ref, category = "", parts[0], ""
+        elif len(parts) == 2:
+            title, ref, category = parts[0], parts[1], ""
+        else:
+            title, ref, category = parts[0], parts[1], parts[2]
+        if not ref:
+            continue
+        out.append({"title": title or _title_from_ref(ref), "ref": ref,
+                    "category": category or "Code Books"})
     return out
 
 
@@ -83,12 +97,34 @@ def api_list(user: Employee = Depends(get_current_user), db: Session = Depends(g
         rows = []
     groups = {}
     for r in rows:
+        view, download = _links(r.url or "")
         groups.setdefault(r.category or "Code Books", []).append(
-            {"id": r.id, "title": r.title, "url": r.url})
+            {"id": r.id, "title": r.title, "view": view, "download": download})
     ordered = sorted(groups.keys(),
                      key=lambda c: (_ORDER.index(c) if c in _ORDER else 99, c.lower()))
     return {"groups": [{"category": c, "items": groups[c]} for c in ordered],
             "can_edit": bool(user.is_admin), "total": len(rows)}
+
+
+@router.get("/file")
+async def stream_file(p: str, download: int = 0,
+                      user: Employee = Depends(get_current_user)):
+    """Stream a private blob to a signed-in user. `p` is the blob pathname."""
+    if _is_url(p):
+        raise HTTPException(400, "Not a blob pathname.")
+    stack = AsyncExitStack()
+    try:
+        from vercel import blob as vblob
+        dl = await stack.enter_async_context(vblob.stream_blob(p, access="private"))
+    except Exception as e:
+        await stack.aclose()
+        raise HTTPException(404, f"File not available: {e}")
+    fname = p.rsplit("/", 1)[-1] or "file.pdf"
+    disp = "attachment" if download else "inline"
+    headers = {"Content-Disposition": f'{disp}; filename="{fname}"',
+               "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=600"}
+    return StreamingResponse(dl, media_type=(dl.metadata.content_type or "application/pdf"),
+                             headers=headers, background=BackgroundTask(stack.aclose))
 
 
 class AddIn(BaseModel):
@@ -103,11 +139,11 @@ def api_add(p: AddIn, user: Employee = Depends(get_current_user),
     _ensure()
     items = _parse_lines(p.text)
     if not items:
-        raise HTTPException(400, "No valid URLs found. Paste one URL per line.")
+        raise HTTPException(400, "Nothing to add. Paste one file path (or URL) per line.")
     base = db.query(CodeBook).count()
     for i, it in enumerate(items):
         db.add(CodeBook(category=it["category"][:120], title=it["title"][:300],
-                        url=it["url"], sort=base + i, created_by=user.name))
+                        url=it["ref"], sort=base + i, created_by=user.name))
     db.commit()
     return {"ok": True, "added": len(items)}
 
@@ -135,18 +171,18 @@ async def api_upload(file: UploadFile = File(...),
     try:
         from vercel import blob as vblob
         res = await vblob.put_blob(
-            f"code-books/{file.filename}", data, access="public",
+            f"code-books/{file.filename}", data, access="private",
             add_random_suffix=True, content_type=file.content_type or "application/pdf")
-        url = res.url
+        ref = res.pathname
     except Exception as e:
-        raise HTTPException(500, f"Blob upload failed: {e}. Is the Blob store connected "
-                                 "to this project (BLOB_READ_WRITE_TOKEN)?")
+        raise HTTPException(500, f"Blob upload failed: {e}. Is the private Blob store "
+                                 "connected to this project (BLOB_READ_WRITE_TOKEN)?")
     _ensure()
     db.add(CodeBook(category=(category or "Code Books").strip()[:120],
-                    title=(title or "").strip()[:300] or _title_from_url(file.filename),
-                    url=url, sort=db.query(CodeBook).count(), created_by=user.name))
+                    title=(title or "").strip()[:300] or _title_from_ref(file.filename),
+                    url=ref, sort=db.query(CodeBook).count(), created_by=user.name))
     db.commit()
-    return {"ok": True, "url": url}
+    return {"ok": True}
 
 
 @router.post("/api/{cid}/delete")
