@@ -23,8 +23,11 @@ GRAY = colors.HexColor("#64748B")
 LIGHT = colors.HexColor("#F1F5F9")
 LINE = colors.HexColor("#CBD5E1")
 
-_LOGO = pathlib.Path(__file__).resolve().parent.parent / "static" / "img" / "metfraa_logo.png"
+_LOGO = pathlib.Path(__file__).resolve().parent.parent / "static" / "img" / "bsg_group_logo.png"
 
+# Entity the quotation is signed by (header shows the group logo instead of
+# the company name).
+GROUP = os.getenv("QUOTE_GROUP_NAME", "The Bharat Steel Group")
 COMPANY = os.getenv("METFRAA_QUOTE_COMPANY", "Metfraa Steel Buildings Pvt. Ltd.")
 TAGLINE = os.getenv("METFRAA_QUOTE_TAGLINE", "Steeling the Future")
 ADDRESS = os.getenv("METFRAA_QUOTE_ADDRESS", "")
@@ -76,12 +79,12 @@ def build_quotation_pdf(q) -> bytes:
 
     el = []
 
-    # ---- header: logo + company | title block
-    comp_lines = [Paragraph(COMPANY, h_name), Paragraph(TAGLINE, h_tag)]
+    # ---- header: group logo | contact block (company name & phone removed)
+    comp_lines = [Paragraph(TAGLINE, h_tag)]
     meta = []
     if ADDRESS:
         meta.append(ADDRESS)
-    meta.append(f"Ph: {PHONE} &nbsp; | &nbsp; {EMAIL} &nbsp; | &nbsp; {WEB}")
+    meta.append(f"{EMAIL} &nbsp; | &nbsp; {WEB}")
     if GSTIN:
         meta.append(f"GSTIN: {GSTIN}")
     comp_lines.append(Paragraph("<br/>".join(meta), small))
@@ -89,11 +92,11 @@ def build_quotation_pdf(q) -> bytes:
     logo_cell = ""
     if _LOGO.exists():
         try:
-            logo_cell = Image(str(_LOGO), width=34 * mm, height=34 * mm, kind="proportional")
+            logo_cell = Image(str(_LOGO), width=58 * mm, height=22 * mm, kind="proportional")
         except Exception:
             logo_cell = ""
 
-    head = Table([[logo_cell, comp_lines]], colWidths=[36 * mm, 144 * mm])
+    head = Table([[logo_cell, comp_lines]], colWidths=[64 * mm, 116 * mm])
     head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                               ("LEFTPADDING", (0, 0), (-1, -1), 0),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
@@ -201,7 +204,7 @@ def build_quotation_pdf(q) -> bytes:
     el.append(Spacer(1, 16))
 
     # ---- signature
-    sign = Table([[Paragraph("For <b>" + COMPANY + "</b>", body)],
+    sign = Table([[Paragraph("For <b>" + GROUP + "</b>", body)],
                   [Spacer(1, 22)],
                   [Paragraph("Authorised Signatory", small)]], colWidths=[70 * mm])
     el.append(Table([["", sign]], colWidths=[110 * mm, 70 * mm],
@@ -214,7 +217,7 @@ def build_quotation_pdf(q) -> bytes:
         canvas.line(15 * mm, 12 * mm, 195 * mm, 12 * mm)
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(GRAY)
-        canvas.drawString(15 * mm, 8 * mm, f"{COMPANY}  ·  {PHONE}  ·  {EMAIL}")
+        canvas.drawString(15 * mm, 8 * mm, f"{EMAIL}  ·  {WEB}")
         canvas.drawRightString(195 * mm, 8 * mm, f"Page {docu.page}")
         canvas.restoreState()
 
