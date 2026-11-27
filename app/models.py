@@ -1681,3 +1681,20 @@ class CrmLedgerDoc(Base):
     size_bytes = Column(Integer, default=0)
     content = Column(LargeBinary, nullable=False)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CodeBook(Base):
+    """A reference code book / standard (IS, ASCE, AISC …) linked by URL.
+
+    The PDFs are large (10-30 MB each), so they live in external storage
+    (Vercel Blob) rather than the app bundle; we keep only the public URL.
+    """
+    __tablename__ = "code_books"
+
+    id = Column(Integer, primary_key=True)
+    category = Column(String(120), default="Code Books", index=True)  # e.g. IS codes
+    title = Column(String(300), nullable=False)
+    url = Column(Text, nullable=False)                     # public view/download URL
+    sort = Column(Integer, default=0)
+    created_by = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
