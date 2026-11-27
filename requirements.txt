@@ -22,3 +22,4 @@ passlib[bcrypt]>=1.7.4
 bcrypt>=4.0.1
 
 qrcode>=7.4          # branded QR for the CRM ledger public form link
+vercel-blob>=0.5.0   # Vercel Blob Python SDK — code-book PDF uploads

@@ -8,7 +8,7 @@ import os
 import re
 from urllib.parse import unquote, urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -110,6 +110,43 @@ def api_add(p: AddIn, user: Employee = Depends(get_current_user),
                         url=it["url"], sort=base + i, created_by=user.name))
     db.commit()
     return {"ok": True, "added": len(items)}
+
+
+# Vercel Hobby caps the request body at ~4.5MB, so the in-portal uploader is
+# limited; larger code books are pushed to Blob with the bulk upload script.
+MAX_UPLOAD = 4 * 1024 * 1024
+
+
+@router.post("/api/upload")
+async def api_upload(file: UploadFile = File(...),
+                     category: str = Form("Code Books"),
+                     title: str = Form(""),
+                     user: Employee = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    if not user.is_admin:
+        raise HTTPException(403, "Only admins can upload code books.")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Empty file.")
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(413, f"{file.filename} is {len(data) // 1048576} MB — the "
+                                 "in-portal uploader is limited to 4 MB on this plan. "
+                                 "Use the bulk upload script for large files.")
+    try:
+        from vercel import blob as vblob
+        res = await vblob.put_blob(
+            f"code-books/{file.filename}", data, access="public",
+            add_random_suffix=True, content_type=file.content_type or "application/pdf")
+        url = res.url
+    except Exception as e:
+        raise HTTPException(500, f"Blob upload failed: {e}. Is the Blob store connected "
+                                 "to this project (BLOB_READ_WRITE_TOKEN)?")
+    _ensure()
+    db.add(CodeBook(category=(category or "Code Books").strip()[:120],
+                    title=(title or "").strip()[:300] or _title_from_url(file.filename),
+                    url=url, sort=db.query(CodeBook).count(), created_by=user.name))
+    db.commit()
+    return {"ok": True, "url": url}
 
 
 @router.post("/api/{cid}/delete")
