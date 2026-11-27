@@ -94,7 +94,7 @@ def build_quotation_pdf(q) -> bytes:
     group_cell = _img(_LOGO, 66 * mm, 18 * mm)
     metfraa_cell = _img(_METFRAA_LOGO, 66 * mm, 18 * mm)
     head_title = ParagraphStyle("htitle", parent=ss["Normal"], fontName="Helvetica-Bold",
-                                fontSize=22, textColor=NAVY, alignment=TA_CENTER, leading=26)
+                                fontSize=22, textColor=colors.black, alignment=TA_CENTER, leading=26)
 
     head = Table([[group_cell, Paragraph("QUOTATION", head_title), metfraa_cell]],
                  colWidths=[66 * mm, 48 * mm, 66 * mm])
