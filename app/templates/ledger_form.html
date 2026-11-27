@@ -60,9 +60,9 @@
           <label class="flex items-center gap-2 text-sm border border-slate-200 rounded-lg px-3 py-2">
             <input type="checkbox" :value="b" x-model="f.type_of_buyer" class="rounded text-[#0A2B66]"><span x-text="b"></span></label>
         </template>
-        <label class="flex items-center gap-2 text-sm border border-slate-200 rounded-lg px-3 py-2">
-          <input type="checkbox" value="Other" x-model="f.type_of_buyer" class="rounded text-[#0A2B66]">Other:
-          <input x-model="f.type_of_buyer_other" placeholder="Please specify" class="flex-1 rounded border-slate-300 text-xs py-1"></label>
+        <label class="flex flex-col gap-1.5 text-sm border border-slate-200 rounded-lg px-3 py-2">
+          <span class="flex items-center gap-2"><input type="checkbox" value="Other" x-model="f.type_of_buyer" class="rounded text-[#0A2B66]">Other</span>
+          <input x-show="f.type_of_buyer.includes('Other')" x-model="f.type_of_buyer_other" placeholder="Please specify" class="w-full rounded border-slate-300 text-xs py-1"></label>
       </div>
     </div>
 
@@ -74,9 +74,9 @@
           <label class="flex items-center gap-2 text-sm px-1 py-1">
             <input type="radio" name="seg" :value="s" x-model="f.industry_segment" class="text-[#0A2B66]"><span x-text="s"></span></label>
         </template>
-        <label class="flex items-center gap-2 text-sm px-1 py-1">
-          <input type="radio" name="seg" value="Other" x-model="f.industry_segment" class="text-[#0A2B66]">Other:
-          <input x-model="f.industry_segment_other" placeholder="Please specify" class="flex-1 rounded border-slate-300 text-xs py-1"></label>
+        <label class="flex flex-col gap-1 text-sm px-1 py-1">
+          <span class="flex items-center gap-2"><input type="radio" name="seg" value="Other" x-model="f.industry_segment" class="text-[#0A2B66]">Other</span>
+          <input x-show="f.industry_segment==='Other'" x-model="f.industry_segment_other" placeholder="Please specify" class="w-full rounded border-slate-300 text-xs py-1"></label>
       </div>
     </div>
 
