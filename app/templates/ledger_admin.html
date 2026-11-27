@@ -123,15 +123,15 @@
   function ledgerAdmin(){
     return {
       base: location.origin, publicLink:'', status:'submitted', q:'', rows:[], counts:{},
-      statuses:['link_sent','submitted','approved','in_sap','rejected'],
-      statusLabel:{link_sent:'Link sent',submitted:'To process',approved:'Approved',in_sap:'In SAP',rejected:'Rejected'},
-      tabs:[{id:'submitted',label:'To process'},{id:'link_sent',label:'Links sent'},{id:'approved',label:'Approved'},{id:'in_sap',label:'In SAP'},{id:'rejected',label:'Rejected'},{id:'all',label:'All'}],
+      statuses:['link_sent','submitted','approved','rejected'],
+      statusLabel:{link_sent:'Link sent',submitted:'To process',approved:'Approved',rejected:'Rejected'},
+      tabs:[{id:'submitted',label:'To process'},{id:'link_sent',label:'Links sent'},{id:'approved',label:'Approved'},{id:'rejected',label:'Rejected'},{id:'all',label:'All'}],
       showDetail:false, d:{}, fields:[],
       async init(){
         try{ const r=await fetch('/crm/ledger/api/meta'); if(r.ok){ const m=await r.json(); this.publicLink=m.public_link; } }catch(e){}
         this.load();
       },
-      badge(s){ return {submitted:'bg-amber-50 text-amber-700',link_sent:'bg-sky-50 text-sky-700',approved:'bg-emerald-50 text-emerald-700',in_sap:'bg-indigo-50 text-indigo-700',rejected:'bg-red-50 text-red-600'}[s]||'bg-metfraa-gray-100 text-metfraa-gray-600'; },
+      badge(s){ return {submitted:'bg-amber-50 text-amber-700',link_sent:'bg-sky-50 text-sky-700',approved:'bg-emerald-50 text-emerald-700',rejected:'bg-red-50 text-red-600'}[s]||'bg-metfraa-gray-100 text-metfraa-gray-600'; },
       docLabel(k){ return {gst_billing:'GST (billing)',cheque:'Cancelled cheque',gst_shipping:'GST (shipping)'}[k]||k; },
       fmt(s){ if(!s) return '—'; const d=new Date(s); return d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}); },
       async load(){ const p=new URLSearchParams(); p.set('status',this.status); if(this.q)p.set('q',this.q); const r=await fetch('/crm/ledger/api/list?'+p); if(r.ok){ const d=await r.json(); this.rows=d.forms||[]; this.counts=d.counts||{}; } },

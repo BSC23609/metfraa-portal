@@ -32,9 +32,9 @@ templates = Jinja2Templates(directory="app/templates")
 DOC_MAX_MB = int(os.getenv("CRM_DOC_MAX_MB", "4"))
 PUBLIC_BASE = os.getenv("PUBLIC_BASE_URL", "https://app.metfraa.com").rstrip("/")
 
-STATUSES = ["link_sent", "submitted", "approved", "in_sap", "rejected"]
+STATUSES = ["link_sent", "submitted", "approved", "rejected"]
 STATUS_LABEL = {"link_sent": "Link sent", "submitted": "To process",
-                "approved": "Approved", "in_sap": "In SAP", "rejected": "Rejected"}
+                "approved": "Approved", "rejected": "Rejected"}
 
 BUYER_TYPES = ["OEM", "Government Contractor Project", "Fabricator",
                "Capex / Expansion Work", "Individual House Buyer",
@@ -144,7 +144,7 @@ def _by_token(db, token):
 def public_get(token: str, db: Session = Depends(get_db)):
     f = _by_token(db, token)
     return {"ok": True, "form": _public_fields(f), "docs": _docs_json(db, f.id),
-            "locked": f.status in ("approved", "in_sap")}
+            "locked": f.status == "approved"}
 
 
 @router.post("/ledger/public/{token}/upload")
@@ -218,7 +218,7 @@ def _s(v):
 @router.post("/ledger/public/{token}/submit")
 def public_submit(token: str, p: SubmitIn, db: Session = Depends(get_db)):
     f = _by_token(db, token)
-    if f.status in ("approved", "in_sap"):
+    if f.status == "approved":
         raise HTTPException(400, "This form is already processed and locked.")
 
     required = {
