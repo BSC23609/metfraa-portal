@@ -108,8 +108,11 @@ def build_quotation_pdf(q) -> bytes:
                     style=TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1.3, NAVY)])))
     el.append(Spacer(1, 10))
 
-    # ---- QUOTATION title, centred above the details
-    el.append(Paragraph("QUOTATION", head_title))
+    # ---- QUOTATION banner, centred above the details
+    el.append(Table([[Paragraph("QUOTATION", title)]], colWidths=[180 * mm],
+                    style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), NAVY),
+                                      ("TOPPADDING", (0, 0), (-1, -1), 6),
+                                      ("BOTTOMPADDING", (0, 0), (-1, -1), 6)])))
     el.append(Spacer(1, 10))
 
     # ---- customer + meta two columns
