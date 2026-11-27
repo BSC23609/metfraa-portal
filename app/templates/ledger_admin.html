@@ -28,7 +28,8 @@
     <img src="/crm/ledger/qr.png" alt="Ledger form QR" class="shrink-0 bg-white ring-1 ring-metfraa-gray-200 rounded-lg" style="width:140px;height:140px;">
     <div class="flex-1">
       <div class="lbl mb-1">Public ledger form link</div>
-      <div class="font-mono text-sm bg-metfraa-gray-50 rounded px-3 py-2 break-all" x-text="publicLink"></div>
+      <a :href="publicLink" target="_blank" rel="noopener"
+         class="block font-mono text-sm text-metfraa-blue hover:underline bg-metfraa-gray-50 rounded px-3 py-2 break-all" x-text="publicLink"></a>
       <div class="flex gap-2 mt-3 flex-wrap">
         <button @click="copy(publicLink)" class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-semibold">Copy link</button>
         <a href="/crm/ledger/qr.png?download=1" class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-semibold">Download QR</a>
