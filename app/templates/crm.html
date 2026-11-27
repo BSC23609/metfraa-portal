@@ -462,7 +462,7 @@
       showEnquiry:false, enq:{}, enqDocs:[], pendingDocs:[], uploadingDocs:false,
       showQuote:false, quote:{}, quoteErr:'',
 
-      async init(){ const r=await fetch('/crm/api/meta'); if(r.ok) this.meta=await r.json(); await this.loadSummary(); await this.loadAllLeads(); this.loadLedgerCount(); },
+      async init(){ try{ const t=new URLSearchParams(location.search).get('tab'); if(['dashboard','leads','enquiries','quotations'].includes(t)) this.tab=t; }catch(e){} const r=await fetch('/crm/api/meta'); if(r.ok) this.meta=await r.json(); await this.loadSummary(); await this.loadAllLeads(); this.loadLedgerCount(); this.onTab(); },
       async loadLedgerCount(){ try{ const r=await fetch('/crm/ledger/api/list?status=submitted'); if(r.ok){ const d=await r.json(); this.ledgerCount=(d.counts&&d.counts.submitted)||0; } }catch(e){} },
       onTab(){ if(this.tab==='dashboard') this.loadSummary(); if(this.tab==='leads') this.loadLeads(); if(this.tab==='enquiries') this.loadEnquiries(); if(this.tab==='quotations') this.loadQuotes(); },
       money(v){ const n=Number(v||0); return '₹'+n.toLocaleString('en-IN',{maximumFractionDigits:0}); },
