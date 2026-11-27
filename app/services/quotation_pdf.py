@@ -96,18 +96,20 @@ def build_quotation_pdf(q) -> bytes:
     head_title = ParagraphStyle("htitle", parent=ss["Normal"], fontName="Helvetica-Bold",
                                 fontSize=22, textColor=colors.black, alignment=TA_CENTER, leading=26)
 
-    head = Table([[metfraa_cell, Paragraph("QUOTATION", head_title), group_cell]],
-                 colWidths=[66 * mm, 48 * mm, 66 * mm])
+    head = Table([[metfraa_cell, group_cell]], colWidths=[90 * mm, 90 * mm])
     head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                               ("ALIGN", (0, 0), (0, 0), "LEFT"),
-                              ("ALIGN", (1, 0), (1, 0), "CENTER"),
-                              ("ALIGN", (2, 0), (2, 0), "RIGHT"),
+                              ("ALIGN", (1, 0), (1, 0), "RIGHT"),
                               ("LEFTPADDING", (0, 0), (-1, -1), 0),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
     el.append(head)
     el.append(Spacer(1, 6))
     el.append(Table([[""]], colWidths=[180 * mm],
                     style=TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1.3, NAVY)])))
+    el.append(Spacer(1, 10))
+
+    # ---- QUOTATION title, centred above the details
+    el.append(Paragraph("QUOTATION", head_title))
     el.append(Spacer(1, 10))
 
     # ---- customer + meta two columns
