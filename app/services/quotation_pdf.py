@@ -90,27 +90,24 @@ def build_quotation_pdf(q) -> bytes:
                 return ""
         return ""
 
-    group_cell = _img(_LOGO, 58 * mm, 24 * mm)
+    group_cell = _img(_LOGO, 56 * mm, 24 * mm)
     metfraa_cell = _img(_METFRAA_LOGO, 48 * mm, 22 * mm)
+    head_title = ParagraphStyle("htitle", parent=ss["Normal"], fontName="Helvetica-Bold",
+                                fontSize=18, textColor=NAVY, alignment=TA_CENTER, leading=20)
 
-    head = Table([[group_cell, metfraa_cell]], colWidths=[90 * mm, 90 * mm])
+    head = Table([[group_cell, Paragraph("QUOTATION", head_title), metfraa_cell]],
+                 colWidths=[66 * mm, 48 * mm, 66 * mm])
     head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                               ("ALIGN", (0, 0), (0, 0), "LEFT"),
-                              ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                              ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                              ("ALIGN", (2, 0), (2, 0), "RIGHT"),
                               ("LEFTPADDING", (0, 0), (-1, -1), 0),
                               ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
     el.append(head)
     el.append(Spacer(1, 6))
     el.append(Table([[""]], colWidths=[180 * mm],
                     style=TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1.3, NAVY)])))
-    el.append(Spacer(1, 8))
-
-    # ---- QUOTATION banner
-    el.append(Table([[Paragraph("QUOTATION", title)]], colWidths=[180 * mm],
-                    style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), NAVY),
-                                      ("TOPPADDING", (0, 0), (-1, -1), 5),
-                                      ("BOTTOMPADDING", (0, 0), (-1, -1), 5)])))
-    el.append(Spacer(1, 8))
+    el.append(Spacer(1, 10))
 
     # ---- customer + meta two columns
     cust = [Paragraph("TO", small),
