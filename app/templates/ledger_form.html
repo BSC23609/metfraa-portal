@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAP Ledger Creation Data Sheet — Metfraa</title>
+  <link rel="icon" href="/static/img/metfraa_logo.png">
+  <script src="https://cdn.tailwindcss.com/3.4.5"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.1/cdn.min.js"></script>
+  <style>
+    :root { color-scheme: light; }
+    body { background:#eef1f6; }
+    .navy { background:#0A2B66; }
+    .req::after { content:" *"; color:#dc2626; }
+    [x-cloak]{display:none!important;}
+  </style>
+</head>
+<body class="text-[#1E1D1D]">
+<div class="max-w-3xl mx-auto px-3 sm:px-5 py-6" x-data="ledger()" x-init="init()" x-cloak>
+
+  <!-- brand header -->
+  <div class="bg-white rounded-xl shadow-sm p-5 mb-4">
+    <img src="/static/img/metfraa_logo.png" alt="Metfraa" class="h-9 mb-3">
+    <div class="text-[11px] font-semibold tracking-wide text-[#0A2B66]">METFRAA STEEL BUILDINGS · LEDGER DATA</div>
+    <h1 class="text-2xl font-bold text-[#0A2B66] mt-1">SAP Ledger Creation Data Sheet</h1>
+    <p class="text-sm text-slate-500 mt-1">Please fill in your company, billing, bank and shipping details so we can open your customer account. It takes about 5 minutes. Keep your GST certificate and a cancelled cheque ready to upload.</p>
+    <p class="text-xs text-slate-400 mt-2"><span class="text-red-500">*</span> Required</p>
+  </div>
+
+  <!-- thank you -->
+  <div x-show="done" class="bg-white rounded-xl shadow-sm p-8 text-center">
+    <div class="text-4xl mb-2">✅</div>
+    <h2 class="text-xl font-bold text-[#0A2B66]">Thank you!</h2>
+    <p class="text-sm text-slate-600 mt-2">Your ledger data sheet <b x-text="ref"></b> has been submitted to the Metfraa accounts team.</p>
+  </div>
+
+  <form x-show="!done" @submit.prevent="submit()" class="space-y-4">
+    <!-- company -->
+    <div class="bg-white rounded-xl shadow-sm p-5 space-y-4">
+      <label class="block"><span class="text-sm font-semibold req">Company Name</span>
+        <input x-model="f.company_name" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+      <label class="block"><span class="text-sm font-semibold req">Company Type</span>
+        <input x-model="f.company_type" placeholder="e.g. Manufacturer, Fabricator, Trader, Contractor" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+      <div class="grid sm:grid-cols-2 gap-4">
+        <label class="block"><span class="text-sm font-semibold req">Contact Number</span>
+          <input x-model="f.contact_number" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+        <label class="block"><span class="text-sm font-semibold req">Email Address</span>
+          <input x-model="f.email" type="email" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+      </div>
+      <label class="block"><span class="text-sm font-semibold">Contact Person</span>
+        <input x-model="f.contact_person" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+    </div>
+
+    <!-- type of buyer -->
+    <div class="bg-white rounded-xl shadow-sm p-5">
+      <div class="text-sm font-semibold req">Type of Buyer</div>
+      <div class="text-xs text-slate-400 mb-2">Check all that apply.</div>
+      <div class="grid sm:grid-cols-3 gap-2">
+        <template x-for="b in buyerTypes" :key="b">
+          <label class="flex items-center gap-2 text-sm border border-slate-200 rounded-lg px-3 py-2">
+            <input type="checkbox" :value="b" x-model="f.type_of_buyer" class="rounded text-[#0A2B66]"><span x-text="b"></span></label>
+        </template>
+        <label class="flex items-center gap-2 text-sm border border-slate-200 rounded-lg px-3 py-2">
+          <input type="checkbox" value="Other" x-model="f.type_of_buyer" class="rounded text-[#0A2B66]">Other:
+          <input x-model="f.type_of_buyer_other" class="flex-1 rounded border-slate-300 text-xs py-1"></label>
+      </div>
+    </div>
+
+    <!-- industry segment -->
+    <div class="bg-white rounded-xl shadow-sm p-5">
+      <div class="text-sm font-semibold req mb-2">Customer Industry Segment</div>
+      <div class="grid sm:grid-cols-3 gap-1.5">
+        <template x-for="s in segments" :key="s">
+          <label class="flex items-center gap-2 text-sm px-1 py-1">
+            <input type="radio" name="seg" :value="s" x-model="f.industry_segment" class="text-[#0A2B66]"><span x-text="s"></span></label>
+        </template>
+        <label class="flex items-center gap-2 text-sm px-1 py-1">
+          <input type="radio" name="seg" value="Other" x-model="f.industry_segment" class="text-[#0A2B66]">Other:
+          <input x-model="f.industry_segment_other" class="flex-1 rounded border-slate-300 text-xs py-1"></label>
+      </div>
+    </div>
+
+    <!-- usage -->
+    <div class="bg-white rounded-xl shadow-sm p-5">
+      <div class="text-sm font-semibold req mb-2">Usage</div>
+      <div class="space-y-1">
+        <template x-for="u in usageOpts" :key="u">
+          <label class="flex items-center gap-2 text-sm"><input type="radio" name="usage" :value="u" x-model="f.usage" class="text-[#0A2B66]"><span x-text="u"></span></label>
+        </template>
+      </div>
+    </div>
+
+    <!-- BILLING -->
+    <div class="navy text-white rounded-t-xl px-5 py-2.5 text-sm font-bold tracking-wide">BILLING ADDRESS</div>
+    <div class="bg-white rounded-b-xl shadow-sm p-5 space-y-4 -mt-4 pt-6">
+      <label class="block"><span class="text-sm font-semibold req">Billing Address</span>
+        <textarea x-model="f.billing_address" rows="2" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></textarea></label>
+      <div class="grid sm:grid-cols-2 gap-4">
+        <label class="block"><span class="text-sm font-semibold req">Pincode</span>
+          <input x-model="f.billing_pincode" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+        <label class="block"><span class="text-sm font-semibold req">District</span>
+          <input x-model="f.billing_district" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+      </div>
+      <label class="block"><span class="text-sm font-semibold req">State</span>
+        <select x-model="f.billing_state" class="mt-1 w-full rounded-lg border-slate-300 text-sm">
+          <option value="">Choose</option><template x-for="s in states" :key="s"><option :value="s" x-text="s"></option></template></select></label>
+      <label class="block"><span class="text-sm font-semibold req">GST Number</span>
+        <input x-model="f.billing_gstin" placeholder="15-character GSTIN" maxlength="15" class="mt-1 w-full rounded-lg border-slate-300 text-sm uppercase"></label>
+      <div><span class="text-sm font-semibold req">GST Certificate (Billing Address)</span>
+        <div class="mt-1">
+          <template x-if="uploads['gst_billing']"><div class="flex items-center gap-2 text-sm"><span class="text-emerald-700 font-semibold">✓ <span x-text="uploads['gst_billing'] && uploads['gst_billing'].filename"></span></span><button type="button" @click="removeFile('gst_billing')" class="text-red-500 text-xs">remove</button></div></template>
+          <template x-if="!uploads['gst_billing']"><div><label class="inline-flex items-center gap-2 cursor-pointer text-sm border border-slate-300 rounded-lg px-3 py-1.5"><span>⬆ Add file</span><input type="file" class="hidden" @change="pick('gst_billing',$event)"></label><div class="text-[11px] text-slate-400 mt-1">PDF or photo, up to 4 MB.</div></div></template>
+        </div></div>
+      <div><div class="text-sm font-semibold req mb-1">Company Registration Type</div>
+        <div class="space-y-1">
+          <template x-for="r in regTypes" :key="r"><label class="flex items-center gap-2 text-sm"><input type="radio" name="reg" :value="r" x-model="f.company_reg_type" class="text-[#0A2B66]"><span x-text="r"></span></label></template>
+        </div></div>
+    </div>
+
+    <!-- BANK -->
+    <div class="navy text-white rounded-t-xl px-5 py-2.5 text-sm font-bold tracking-wide">BANK DETAILS
+      <span class="font-normal text-slate-300 text-xs block">For refunds in case of excess advance available with us</span></div>
+    <div class="bg-white rounded-b-xl shadow-sm p-5 space-y-4 -mt-4 pt-6">
+      <label class="block"><span class="text-sm font-semibold">Bank Trade Name</span>
+        <input x-model="f.bank_trade_name" placeholder="Account holder name as per bank records" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+      <div class="grid sm:grid-cols-2 gap-4">
+        <label class="block"><span class="text-sm font-semibold req">Bank Account Number</span>
+          <input x-model="f.bank_account_number" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+        <label class="block"><span class="text-sm font-semibold req">IFSC Code</span>
+          <input x-model="f.ifsc_code" class="mt-1 w-full rounded-lg border-slate-300 text-sm uppercase"></label>
+      </div>
+      <div><span class="text-sm font-semibold req">Cancelled Cheque Copy</span>
+        <div class="mt-1">
+          <template x-if="uploads['cheque']"><div class="flex items-center gap-2 text-sm"><span class="text-emerald-700 font-semibold">✓ <span x-text="uploads['cheque'] && uploads['cheque'].filename"></span></span><button type="button" @click="removeFile('cheque')" class="text-red-500 text-xs">remove</button></div></template>
+          <template x-if="!uploads['cheque']"><div><label class="inline-flex items-center gap-2 cursor-pointer text-sm border border-slate-300 rounded-lg px-3 py-1.5"><span>⬆ Add file</span><input type="file" class="hidden" @change="pick('cheque',$event)"></label><div class="text-[11px] text-slate-400 mt-1">PDF or photo, up to 4 MB.</div></div></template>
+        </div></div>
+    </div>
+
+    <!-- SHIPPING -->
+    <div class="navy text-white rounded-t-xl px-5 py-2.5 text-sm font-bold tracking-wide">SHIPPING ADDRESS</div>
+    <div class="bg-white rounded-b-xl shadow-sm p-5 space-y-4 -mt-4 pt-6">
+      <label class="flex items-center gap-2 text-sm font-semibold text-[#0A2B66]">
+        <input type="checkbox" x-model="f.shipping_same" class="rounded text-[#0A2B66]"> Shipping address is the same as billing address</label>
+      <template x-if="!f.shipping_same">
+        <div class="space-y-4">
+          <label class="block"><span class="text-sm font-semibold req">Trade Name</span>
+            <input x-model="f.shipping_trade_name" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+          <label class="block"><span class="text-sm font-semibold req">Shipping Address</span>
+            <textarea x-model="f.shipping_address" rows="2" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></textarea></label>
+          <div class="grid sm:grid-cols-2 gap-4">
+            <label class="block"><span class="text-sm font-semibold req">Pincode</span>
+              <input x-model="f.shipping_pincode" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+            <label class="block"><span class="text-sm font-semibold req">District</span>
+              <input x-model="f.shipping_district" class="mt-1 w-full rounded-lg border-slate-300 text-sm"></label>
+          </div>
+          <label class="block"><span class="text-sm font-semibold req">State</span>
+            <select x-model="f.shipping_state" class="mt-1 w-full rounded-lg border-slate-300 text-sm">
+              <option value="">Choose</option><template x-for="s in states" :key="s"><option :value="s" x-text="s"></option></template></select></label>
+          <label class="block"><span class="text-sm font-semibold req">GST Number</span>
+            <input x-model="f.shipping_gstin" maxlength="15" class="mt-1 w-full rounded-lg border-slate-300 text-sm uppercase"></label>
+          <div><span class="text-sm font-semibold req">GST Certificate (Shipping Address)</span>
+            <div class="mt-1">
+              <template x-if="uploads['gst_shipping']"><div class="flex items-center gap-2 text-sm"><span class="text-emerald-700 font-semibold">✓ <span x-text="uploads['gst_shipping'] && uploads['gst_shipping'].filename"></span></span><button type="button" @click="removeFile('gst_shipping')" class="text-red-500 text-xs">remove</button></div></template>
+              <template x-if="!uploads['gst_shipping']"><div><label class="inline-flex items-center gap-2 cursor-pointer text-sm border border-slate-300 rounded-lg px-3 py-1.5"><span>⬆ Add file</span><input type="file" class="hidden" @change="pick('gst_shipping',$event)"></label><div class="text-[11px] text-slate-400 mt-1">PDF or photo, up to 4 MB.</div></div></template>
+            </div></div>
+        </div>
+      </template>
+    </div>
+
+    <p x-show="err" class="text-sm font-semibold text-red-600" x-text="err"></p>
+    <div class="flex items-center gap-3">
+      <button type="submit" :disabled="busy" class="navy text-white text-sm font-bold px-6 py-2.5 rounded-lg disabled:opacity-50">
+        <span x-show="!busy">Submit</span><span x-show="busy">Submitting…</span></button>
+      <span class="text-xs text-slate-400">Your details are shared only with Metfraa's accounts team.</span>
+    </div>
+  </form>
+
+  <p class="text-center text-xs text-slate-400 mt-6">Metfraa Steel Buildings Pvt. Ltd. · info@metfraa.com</p>
+</div>
+
+<script>
+  function ledger(){
+    return {
+      token: "{{ token }}", ref:'', done:false, busy:false, err:'',
+      buyerTypes: [], segments: [], usageOpts: [], regTypes: [], states: [],
+      uploads: {},  // kind -> {id, filename}
+      f: { type_of_buyer: [], shipping_same:false },
+      async init(){
+        // static option lists (kept in JS to avoid another round-trip)
+        this.buyerTypes = ["OEM","Government Contractor Project","Fabricator","Capex / Expansion Work","Individual House Buyer","Maintenance Activity","Re-seller"];
+        this.segments = ["Agriculture","Auto Ancillary/Body","Auto OEM","Boilers & Pressure Valves","Cold - Forming","Containers","Defence","Earth Moving Equipments","Electrical Equipment","Electrode manufacturer","Forging","Furniture","General fabrication","Heavy Machinery","Housing Construction","Infrastructure","LPG Cylinder","Machine Tools","MSME Plant Based","Packaging","Power","Pre-eng Building Str","Railways","Re Sale","Re-rolling","Ship building","Distributor","Project Sales","Tube-making"];
+        this.usageOpts = ["Once","Monthly Requirement"];
+        this.regTypes = ["PVT LTD","GOVT PSU","LLP","Proprietorship"];
+        this.states = ["Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa","Gujarat","Haryana","Himachal Pradesh","Jharkhand","Karnataka","Kerala","Madhya Pradesh","Maharashtra","Manipur","Meghalaya","Mizoram","Nagaland","Odisha","Punjab","Rajasthan","Sikkim","Tamil Nadu","Telangana","Tripura","Uttar Pradesh","Uttarakhand","West Bengal","Andaman & Nicobar","Chandigarh","Dadra & Nagar Haveli and Daman & Diu","Delhi","Jammu & Kashmir","Ladakh","Lakshadweep","Puducherry"];
+        if(!this.token){ try{ const r=await fetch('/crm/ledger/public/start',{method:'POST'}); const d=await r.json(); this.token=d.token; }catch(e){} }
+        else { try{ const r=await fetch('/crm/ledger/public/'+this.token); if(r.ok){ const d=await r.json(); const fm=d.form||{}; this.f=Object.assign({type_of_buyer:fm.type_of_buyer||[], shipping_same:!!fm.shipping_same}, fm); const u={}; (d.docs||[]).forEach(x=>{u[x.kind]={id:x.id,filename:x.filename};}); this.uploads=u; if(d.locked) this.done=true; } }catch(e){} }
+      },
+      async pick(kind, ev){
+        const file=ev.target.files[0]; if(!file){ return; }
+        if(file.size>4*1048576){ this.err=file.name+' is over 4 MB'; return; }
+        this.err='';
+        const fd=new FormData(); fd.append('files',file);
+        try{ const r=await fetch('/crm/ledger/public/'+this.token+'/upload?kind='+kind,{method:'POST',body:fd}); const d=await r.json(); if(r.ok){ this.uploads={...this.uploads,[kind]:{id:d.doc.id,filename:d.doc.filename}}; } else { this.err=d.detail||'Upload failed'; } }catch(e){ this.err='Upload failed'; }
+      },
+      async removeFile(kind){
+        const u=this.uploads[kind]; if(!u){ return; }
+        try{ await fetch('/crm/ledger/public/'+this.token+'/doc/'+u.id+'/delete',{method:'POST'}); }catch(e){}
+        const nu={...this.uploads}; delete nu[kind]; this.uploads=nu;
+      },
+      async submit(){
+        this.busy=true; this.err='';
+        try{
+          const r=await fetch('/crm/ledger/public/'+this.token+'/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(this.f)});
+          const d=await r.json();
+          if(!r.ok){ this.err=d.detail||'Please check the form'; window.scrollTo(0,0); return; }
+          this.ref=d.ref; this.done=true; window.scrollTo(0,0);
+        }catch(e){ this.err='Could not submit — please try again'; }
+        finally{ this.busy=false; }
+      },
+    };
+  }
+</script>
+</body>
+</html>

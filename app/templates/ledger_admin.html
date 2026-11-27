@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Ledger forms — Metfraa CRM{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="ledgerAdmin()" x-init="init()" x-cloak>
+
+  <div class="flex items-center justify-between flex-wrap gap-3 mb-5">
+    <div>
+      <div class="lbl mb-1">Metfraa CRM</div>
+      <h1 class="display display-xl text-3xl text-metfraa-ink leading-none">Ledger forms (KYC)</h1>
+      <p class="text-sm text-metfraa-gray-500 mt-2">Customer ledger-creation data sheets. Generate a link after a quotation is confirmed; review and approve submissions here.</p>
+    </div>
+    <a href="/crm/" class="text-sm font-semibold text-metfraa-blue hover:underline">&larr; Back to CRM</a>
+  </div>
+
+  <!-- public link + QR -->
+  <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 p-5 mb-5 flex flex-col sm:flex-row gap-5 items-start">
+    <div id="qrbox" class="shrink-0 p-2 bg-white ring-1 ring-metfraa-gray-200 rounded-lg"></div>
+    <div class="flex-1">
+      <div class="lbl mb-1">Public ledger form link</div>
+      <div class="font-mono text-sm bg-metfraa-gray-50 rounded px-3 py-2 break-all" x-text="publicLink"></div>
+      <div class="flex gap-2 mt-3 flex-wrap">
+        <button @click="copy(publicLink)" class="px-3 py-1.5 rounded-lg ring-1 ring-metfraa-gray-300 text-xs font-semibold">Copy link</button>
+        <a :href="'https://wa.me/?text='+encodeURIComponent('Please fill the Metfraa ledger form: '+publicLink)" target="_blank" class="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold">Share on WhatsApp</a>
+        <a href="/crm/ledger/api/excel" class="px-3 py-1.5 rounded-lg ring-1 ring-green-600 text-green-700 text-xs font-semibold">Excel</a>
+      </div>
+      <p class="text-xs text-metfraa-gray-400 mt-2">Anyone with this link can submit. For a specific customer, open a confirmed quotation in the CRM and use “Ledger form”.</p>
+    </div>
+  </div>
+
+  <!-- tabs -->
+  <div class="flex gap-2 mb-4 flex-wrap">
+    <template x-for="t in tabs" :key="t.id">
+      <button @click="status=t.id; load()" :class="status===t.id ? 'bg-metfraa-blue text-white' : 'bg-white ring-1 ring-metfraa-gray-200 text-metfraa-gray-600'"
+        class="px-3 py-1.5 rounded-lg text-sm font-semibold">
+        <span x-text="t.label"></span> <span class="opacity-70" x-text="'('+(counts[t.id]||0)+')'"></span>
+      </button>
+    </template>
+    <input x-model="q" @input.debounce.300ms="load()" placeholder="Search company, GSTIN, ref" class="ml-auto text-sm rounded-lg border-metfraa-gray-300 min-w-[14rem]">
+  </div>
+
+  <div class="bg-white rounded-xl ring-1 ring-metfraa-gray-200 overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead><tr class="text-left text-xs uppercase tracking-wide text-metfraa-gray-500 border-b border-metfraa-gray-200">
+        <th class="py-2.5 px-3">Ref</th><th class="py-2.5 px-3">Company</th><th class="py-2.5 px-3">GSTIN</th>
+        <th class="py-2.5 px-3">Segment</th><th class="py-2.5 px-3">Location</th><th class="py-2.5 px-3 text-center">Docs</th>
+        <th class="py-2.5 px-3">Status</th><th class="py-2.5 px-3">Received</th><th class="py-2.5 px-3 text-right">Actions</th>
+      </tr></thead>
+      <tbody>
+        <template x-for="r in rows" :key="r.id">
+          <tr class="border-b border-metfraa-gray-100 hover:bg-metfraa-gray-50">
+            <td class="py-2 px-3 font-semibold text-metfraa-ink" x-text="r.ref"></td>
+            <td class="py-2 px-3"><button @click="open(r.id)" class="text-left"><span class="font-semibold text-metfraa-ink" x-text="r.company_name||'—'"></span><span class="block text-xs text-metfraa-gray-500" x-text="r.email||''"></span></button></td>
+            <td class="py-2 px-3 text-xs font-mono text-metfraa-gray-600" x-text="r.gstin||'—'"></td>
+            <td class="py-2 px-3 text-xs text-metfraa-gray-600"><span x-text="r.segment||'—'"></span><span class="block text-metfraa-gray-400" x-text="r.usage||''"></span></td>
+            <td class="py-2 px-3 text-xs text-metfraa-gray-600" x-text="r.location||'—'"></td>
+            <td class="py-2 px-3 text-center text-metfraa-gray-600" x-text="r.doc_count"></td>
+            <td class="py-2 px-3"><span class="text-[11px] font-semibold px-1.5 py-0.5 rounded" :class="badge(r.status)" x-text="r.status_label"></span></td>
+            <td class="py-2 px-3 text-xs text-metfraa-gray-500" x-text="fmt(r.submitted_at||r.created_at)"></td>
+            <td class="py-2 px-3 text-right whitespace-nowrap">
+              <button @click="open(r.id)" class="text-xs font-semibold text-metfraa-blue hover:underline">View</button>
+              <button @click="copy(base+'/crm/kyc/'+r.token)" class="text-xs font-semibold text-metfraa-gray-600 hover:underline ml-2">Link</button>
+              <button @click="del(r)" class="text-xs font-semibold text-red-600 hover:underline ml-2">Del</button>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="rows.length===0"><td colspan="9" class="py-10 text-center text-metfraa-gray-400 text-sm">Nothing here yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- detail -->
+  <div x-show="showDetail" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto p-4" @click.self="showDetail=false">
+    <div class="bg-white rounded-xl w-full max-w-3xl my-6 p-5 shadow-xl" x-show="d.id">
+      <div class="flex items-start justify-between mb-3">
+        <div><h3 class="display text-xl text-metfraa-ink" x-text="d.company_name||d.ref"></h3>
+          <div class="text-sm text-metfraa-gray-500"><span x-text="d.ref"></span> · <span x-text="d.company_type||''"></span></div></div>
+        <button @click="showDetail=false" class="text-metfraa-gray-400 text-2xl leading-none">&times;</button>
+      </div>
+
+      <div class="grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-sm mb-4">
+        <template x-for="row in fields" :key="row[0]">
+          <div class="flex gap-2" x-show="row[1]"><span class="text-metfraa-gray-500 w-32 shrink-0" x-text="row[0]"></span><span class="font-medium text-metfraa-ink" x-text="row[1]"></span></div>
+        </template>
+      </div>
+
+      <div class="mb-4" x-show="(d.docs||[]).length">
+        <div class="lbl mb-1">Documents</div>
+        <div class="flex flex-wrap gap-2">
+          <template x-for="doc in d.docs" :key="doc.id">
+            <a :href="'/crm/ledger/api/doc/'+doc.id" target="_blank" class="text-xs font-semibold text-metfraa-blue hover:underline bg-metfraa-gray-50 rounded px-2 py-1" x-text="docLabel(doc.kind)+': '+doc.filename"></a>
+          </template>
+        </div>
+      </div>
+
+      <div class="border-t border-metfraa-gray-100 pt-4 flex items-end gap-3 flex-wrap">
+        <label class="block"><span class="lbl">Status</span>
+          <select x-model="d.status" class="mt-1 text-sm rounded-lg border-metfraa-gray-300">
+            <template x-for="s in statuses" :key="s"><option :value="s" x-text="statusLabel[s]"></option></template>
+          </select></label>
+        <label class="block flex-1 min-w-[12rem]"><span class="lbl">Remarks</span>
+          <input x-model="d.remarks" class="mt-1 w-full text-sm rounded-lg border-metfraa-gray-300"></label>
+        <button @click="saveStatus()" class="px-5 py-2 rounded-lg bg-metfraa-blue text-white text-sm font-bold">Save</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+  function ledgerAdmin(){
+    return {
+      base: location.origin, publicLink:'', status:'submitted', q:'', rows:[], counts:{},
+      statuses:['link_sent','submitted','approved','in_sap','rejected'],
+      statusLabel:{link_sent:'Link sent',submitted:'To process',approved:'Approved',in_sap:'In SAP',rejected:'Rejected'},
+      tabs:[{id:'submitted',label:'To process'},{id:'link_sent',label:'Links sent'},{id:'approved',label:'Approved'},{id:'in_sap',label:'In SAP'},{id:'rejected',label:'Rejected'},{id:'all',label:'All'}],
+      showDetail:false, d:{}, fields:[],
+      async init(){
+        try{ const r=await fetch('/crm/ledger/api/meta'); if(r.ok){ const m=await r.json(); this.publicLink=m.public_link; } }catch(e){}
+        this.$nextTick(()=>{ try{ new QRCode(document.getElementById('qrbox'),{text:this.publicLink||this.base+'/crm/kyc',width:96,height:96}); }catch(e){} });
+        this.load();
+      },
+      badge(s){ return {submitted:'bg-amber-50 text-amber-700',link_sent:'bg-sky-50 text-sky-700',approved:'bg-emerald-50 text-emerald-700',in_sap:'bg-indigo-50 text-indigo-700',rejected:'bg-red-50 text-red-600'}[s]||'bg-metfraa-gray-100 text-metfraa-gray-600'; },
+      docLabel(k){ return {gst_billing:'GST (billing)',cheque:'Cancelled cheque',gst_shipping:'GST (shipping)'}[k]||k; },
+      fmt(s){ if(!s) return '—'; const d=new Date(s); return d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}); },
+      async load(){ const p=new URLSearchParams(); p.set('status',this.status); if(this.q)p.set('q',this.q); const r=await fetch('/crm/ledger/api/list?'+p); if(r.ok){ const d=await r.json(); this.rows=d.forms||[]; this.counts=d.counts||{}; } },
+      async open(id){ const r=await fetch('/crm/ledger/api/form/'+id); if(!r.ok) return; this.d=await r.json();
+        this.fields=[['Company',this.d.company_name],['Type',this.d.company_type],['Contact',this.d.contact_number],['Email',this.d.email],['Contact person',this.d.contact_person],['Buyer type',(this.d.type_of_buyer||[]).join(', ')+(this.d.type_of_buyer_other?(' / '+this.d.type_of_buyer_other):'')],['Segment',this.d.industry_segment],['Usage',this.d.usage],['Billing addr',this.d.billing_address],['Billing pin',this.d.billing_pincode],['District',this.d.billing_district],['State',this.d.billing_state],['GSTIN',this.d.billing_gstin],['Reg type',this.d.company_reg_type],['Bank name',this.d.bank_trade_name],['Bank A/C',this.d.bank_account_number],['IFSC',this.d.ifsc_code],['Ship same',this.d.shipping_same?'Yes':'No'],['Ship addr',this.d.shipping_address],['Ship GSTIN',this.d.shipping_gstin]];
+        this.showDetail=true; },
+      async saveStatus(){ await fetch('/crm/ledger/api/'+this.d.id+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:this.d.status,remarks:this.d.remarks||''})}); this.showDetail=false; if(window.toast)toast('Updated','success'); this.load(); },
+      async del(r){ if(!confirm('Delete '+r.ref+'?'))return; await fetch('/crm/ledger/api/'+r.id+'/delete',{method:'POST'}); this.load(); },
+      copy(t){ navigator.clipboard.writeText(t).then(()=>{ if(window.toast)toast('Copied','success'); }); },
+    };
+  }
+</script>
+{% endblock %}

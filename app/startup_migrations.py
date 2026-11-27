@@ -427,6 +427,38 @@ CRM_MIGRATIONS = [
     " uploaded_by VARCHAR(120),"
     " uploaded_at TIMESTAMP DEFAULT now())",
     "CREATE INDEX IF NOT EXISTS idx_crm_doc_enq ON crm_enquiry_docs(enquiry_id)",
+    "CREATE TABLE IF NOT EXISTS crm_ledger_forms ("
+    " id SERIAL PRIMARY KEY,"
+    " ref VARCHAR(40) UNIQUE,"
+    " token VARCHAR(40) UNIQUE,"
+    " lead_id INTEGER REFERENCES crm_leads(id),"
+    " quotation_id INTEGER REFERENCES crm_quotations(id),"
+    " status VARCHAR(20) NOT NULL DEFAULT 'link_sent',"
+    " company_name VARCHAR(200), company_type VARCHAR(160),"
+    " contact_number VARCHAR(60), email VARCHAR(160), contact_person VARCHAR(160),"
+    " type_of_buyer JSON, type_of_buyer_other VARCHAR(160),"
+    " industry_segment VARCHAR(120), industry_segment_other VARCHAR(120),"
+    " usage VARCHAR(40),"
+    " billing_address TEXT, billing_pincode VARCHAR(20), billing_district VARCHAR(120),"
+    " billing_state VARCHAR(120), billing_gstin VARCHAR(20), company_reg_type VARCHAR(60),"
+    " bank_trade_name VARCHAR(200), bank_account_number VARCHAR(60), ifsc_code VARCHAR(20),"
+    " shipping_same BOOLEAN DEFAULT FALSE, shipping_trade_name VARCHAR(200),"
+    " shipping_address TEXT, shipping_pincode VARCHAR(20), shipping_district VARCHAR(120),"
+    " shipping_state VARCHAR(120), shipping_gstin VARCHAR(20),"
+    " remarks TEXT, reviewed_by VARCHAR(120), created_by VARCHAR(120),"
+    " created_at TIMESTAMP DEFAULT now(), submitted_at TIMESTAMP,"
+    " updated_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_crm_ledger_status ON crm_ledger_forms(status)",
+    "CREATE TABLE IF NOT EXISTS crm_ledger_docs ("
+    " id SERIAL PRIMARY KEY,"
+    " ledger_id INTEGER NOT NULL REFERENCES crm_ledger_forms(id),"
+    " kind VARCHAR(30),"
+    " filename VARCHAR(300) NOT NULL,"
+    " mime_type VARCHAR(100) DEFAULT 'application/octet-stream',"
+    " size_bytes INTEGER DEFAULT 0,"
+    " content BYTEA NOT NULL,"
+    " uploaded_at TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_crm_ledger_doc ON crm_ledger_docs(ledger_id)",
 ]
 STARTUP_MIGRATIONS = STARTUP_MIGRATIONS + CRM_MIGRATIONS
 

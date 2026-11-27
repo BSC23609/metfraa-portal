@@ -1615,3 +1615,69 @@ class CrmEnquiryDoc(Base):
     content = Column(LargeBinary, nullable=False)
     uploaded_by = Column(String(120), nullable=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ---------------------------------------------------------------- CRM Ledger / KYC
+class CrmLedgerForm(Base):
+    """A customer ledger-creation (KYC) data sheet, usually generated after a
+    quotation is confirmed. Filled by the customer on a public tokenised link."""
+    __tablename__ = "crm_ledger_forms"
+
+    id = Column(Integer, primary_key=True)
+    ref = Column(String(40), unique=True, index=True)       # KYC-YYYY-####
+    token = Column(String(40), unique=True, index=True)     # public link token
+    lead_id = Column(Integer, ForeignKey("crm_leads.id"), nullable=True, index=True)
+    quotation_id = Column(Integer, ForeignKey("crm_quotations.id"), nullable=True, index=True)
+    # link_sent -> submitted -> approved / in_sap / rejected
+    status = Column(String(20), nullable=False, default="link_sent")
+
+    company_name = Column(String(200), nullable=True)
+    company_type = Column(String(160), nullable=True)
+    contact_number = Column(String(60), nullable=True)
+    email = Column(String(160), nullable=True)
+    contact_person = Column(String(160), nullable=True)
+    type_of_buyer = Column(JSON, nullable=True)             # ["OEM", ...]
+    type_of_buyer_other = Column(String(160), nullable=True)
+    industry_segment = Column(String(120), nullable=True)
+    industry_segment_other = Column(String(120), nullable=True)
+    usage = Column(String(40), nullable=True)              # Once / Monthly Requirement
+
+    billing_address = Column(Text, nullable=True)
+    billing_pincode = Column(String(20), nullable=True)
+    billing_district = Column(String(120), nullable=True)
+    billing_state = Column(String(120), nullable=True)
+    billing_gstin = Column(String(20), nullable=True)
+    company_reg_type = Column(String(60), nullable=True)   # PVT LTD / GOVT PSU / LLP / Proprietorship
+
+    bank_trade_name = Column(String(200), nullable=True)
+    bank_account_number = Column(String(60), nullable=True)
+    ifsc_code = Column(String(20), nullable=True)
+
+    shipping_same = Column(Boolean, default=False)
+    shipping_trade_name = Column(String(200), nullable=True)
+    shipping_address = Column(Text, nullable=True)
+    shipping_pincode = Column(String(20), nullable=True)
+    shipping_district = Column(String(120), nullable=True)
+    shipping_state = Column(String(120), nullable=True)
+    shipping_gstin = Column(String(20), nullable=True)
+
+    remarks = Column(Text, nullable=True)                  # admin notes
+    reviewed_by = Column(String(120), nullable=True)
+    created_by = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    submitted_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CrmLedgerDoc(Base):
+    """A document uploaded against a ledger form (GST cert, cancelled cheque)."""
+    __tablename__ = "crm_ledger_docs"
+
+    id = Column(Integer, primary_key=True)
+    ledger_id = Column(Integer, ForeignKey("crm_ledger_forms.id"), nullable=False, index=True)
+    kind = Column(String(30), nullable=True)               # gst_billing / cheque / gst_shipping
+    filename = Column(String(300), nullable=False)
+    mime_type = Column(String(100), default="application/octet-stream")
+    size_bytes = Column(Integer, default=0)
+    content = Column(LargeBinary, nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
